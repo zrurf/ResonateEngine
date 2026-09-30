@@ -1,0 +1,22 @@
+# Xmake cache
+.xmake/
+build/
+
+# MacOS cache
+.DS_Store
+
+# IDE cache
+.vs/
+.vscode/
+.idea/
+
+# Compile cache
+.compile/
+
+# Agent and editor scratch
+.claude/
+.codex/
+.trae/
+.zcode/
+
+/dev-note/

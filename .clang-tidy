@@ -1,0 +1,35 @@
+Checks: >
+  bugprone-*,
+  performance-*,
+  portability-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-exception-escape,
+  -performance-no-int-to-ptr,
+  -portability-simd-intrinsics
+
+HeaderFilterRegex: 'packages/.*/include/.*'
+
+# The C ABI is consumed by out-of-tree modules; unchecked pointer arithmetic at
+# that boundary is the one place a warning is worth the noise.
+CheckOptions:
+  - key: bugprone-sizeof-expression.WarnOnSizeOfConstant
+    value: false
+  - key: bugprone-sizeof-expression.WarnOnSizeOfPointer
+    value: false
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.VariableCase
+    value: camelBack
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.EnumConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.GlobalConstantPrefix
+    value: '^RESONATE_'
+
+FormatStyle: file

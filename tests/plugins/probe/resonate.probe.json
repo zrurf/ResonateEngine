@@ -1,0 +1,12 @@
+{
+  "id": "resonate.probe",
+  "name": "Probe",
+  "version": "0.1.0",
+  "abi": 1,
+  "min_host_abi": 1,
+  "summary": "A test module that exercises the engine's own facilities.",
+  "provides": [],
+  "requires": [],
+  "optional": [],
+  "depends_on": []
+}

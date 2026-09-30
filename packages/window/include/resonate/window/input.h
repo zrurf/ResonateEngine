@@ -1,0 +1,345 @@
+#ifndef RESONATE_WINDOW_INPUT_H
+#define RESONATE_WINDOW_INPUT_H
+
+#include <resonate/module/capability.h>
+
+#ifdef __cplusplus
+#    include <resonate/module/capability_id.hpp>
+#endif
+#include <resonate/module/types.h>
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+/*
+ * Key codes: the numbering is the USB HID usage table, with gaps where no key
+ * exists, and matches SDL3's scancodes. These values are fixed and platform
+ * independent; nothing here is derived from SDL.
+ */
+typedef enum ResonateKey : uint16_t
+{
+    RESONATE_KEY_UNKNOWN = 0,
+
+    RESONATE_KEY_A = 4,
+    RESONATE_KEY_B = 5,
+    RESONATE_KEY_C = 6,
+    RESONATE_KEY_D = 7,
+    RESONATE_KEY_E = 8,
+    RESONATE_KEY_F = 9,
+    RESONATE_KEY_G = 10,
+    RESONATE_KEY_H = 11,
+    RESONATE_KEY_I = 12,
+    RESONATE_KEY_J = 13,
+    RESONATE_KEY_K = 14,
+    RESONATE_KEY_L = 15,
+    RESONATE_KEY_M = 16,
+    RESONATE_KEY_N = 17,
+    RESONATE_KEY_O = 18,
+    RESONATE_KEY_P = 19,
+    RESONATE_KEY_Q = 20,
+    RESONATE_KEY_R = 21,
+    RESONATE_KEY_S = 22,
+    RESONATE_KEY_T = 23,
+    RESONATE_KEY_U = 24,
+    RESONATE_KEY_V = 25,
+    RESONATE_KEY_W = 26,
+    RESONATE_KEY_X = 27,
+    RESONATE_KEY_Y = 28,
+    RESONATE_KEY_Z = 29,
+
+    RESONATE_KEY_1 = 30,
+    RESONATE_KEY_2 = 31,
+    RESONATE_KEY_3 = 32,
+    RESONATE_KEY_4 = 33,
+    RESONATE_KEY_5 = 34,
+    RESONATE_KEY_6 = 35,
+    RESONATE_KEY_7 = 36,
+    RESONATE_KEY_8 = 37,
+    RESONATE_KEY_9 = 38,
+    RESONATE_KEY_0 = 39,
+
+    RESONATE_KEY_RETURN = 40,
+    RESONATE_KEY_ESCAPE = 41,
+    RESONATE_KEY_BACKSPACE = 42,
+    RESONATE_KEY_TAB = 43,
+    RESONATE_KEY_SPACE = 44,
+    RESONATE_KEY_MINUS = 45,
+    RESONATE_KEY_EQUALS = 46,
+    RESONATE_KEY_LEFTBRACKET = 47,
+    RESONATE_KEY_RIGHTBRACKET = 48,
+    RESONATE_KEY_BACKSLASH = 49,
+    RESONATE_KEY_NONUSHASH = 50, /* where an ISO layout has no backslash */
+    RESONATE_KEY_SEMICOLON = 51,
+    RESONATE_KEY_APOSTROPHE = 52,
+    RESONATE_KEY_GRAVE = 53,
+    RESONATE_KEY_COMMA = 54,
+    RESONATE_KEY_PERIOD = 55,
+    RESONATE_KEY_SLASH = 56,
+    RESONATE_KEY_CAPSLOCK = 57,
+
+    RESONATE_KEY_F1 = 58,
+    RESONATE_KEY_F2 = 59,
+    RESONATE_KEY_F3 = 60,
+    RESONATE_KEY_F4 = 61,
+    RESONATE_KEY_F5 = 62,
+    RESONATE_KEY_F6 = 63,
+    RESONATE_KEY_F7 = 64,
+    RESONATE_KEY_F8 = 65,
+    RESONATE_KEY_F9 = 66,
+    RESONATE_KEY_F10 = 67,
+    RESONATE_KEY_F11 = 68,
+    RESONATE_KEY_F12 = 69,
+
+    RESONATE_KEY_PRINTSCREEN = 70,
+    RESONATE_KEY_SCROLLLOCK = 71,
+    RESONATE_KEY_PAUSE = 72,
+    RESONATE_KEY_INSERT = 73,
+    RESONATE_KEY_HOME = 74,
+    RESONATE_KEY_PAGEUP = 75,
+    RESONATE_KEY_DELETE = 76,
+    RESONATE_KEY_END = 77,
+    RESONATE_KEY_PAGEDOWN = 78,
+    RESONATE_KEY_RIGHT = 79,
+    RESONATE_KEY_LEFT = 80,
+    RESONATE_KEY_DOWN = 81,
+    RESONATE_KEY_UP = 82,
+    RESONATE_KEY_NUMLOCKCLEAR = 83,
+
+    RESONATE_KEY_KP_DIVIDE = 84,
+    RESONATE_KEY_KP_MULTIPLY = 85,
+    RESONATE_KEY_KP_MINUS = 86,
+    RESONATE_KEY_KP_PLUS = 87,
+    RESONATE_KEY_KP_ENTER = 88,
+    RESONATE_KEY_KP_1 = 89,
+    RESONATE_KEY_KP_2 = 90,
+    RESONATE_KEY_KP_3 = 91,
+    RESONATE_KEY_KP_4 = 92,
+    RESONATE_KEY_KP_5 = 93,
+    RESONATE_KEY_KP_6 = 94,
+    RESONATE_KEY_KP_7 = 95,
+    RESONATE_KEY_KP_8 = 96,
+    RESONATE_KEY_KP_9 = 97,
+    RESONATE_KEY_KP_0 = 98,
+    RESONATE_KEY_KP_PERIOD = 99,
+
+    RESONATE_KEY_NONUSBACKSLASH = 100,
+    RESONATE_KEY_APPLICATION = 101,
+    RESONATE_KEY_POWER = 102,
+    RESONATE_KEY_KP_EQUALS = 103,
+
+    RESONATE_KEY_F13 = 104,
+    RESONATE_KEY_F14 = 105,
+    RESONATE_KEY_F15 = 106,
+    RESONATE_KEY_F16 = 107,
+    RESONATE_KEY_F17 = 108,
+    RESONATE_KEY_F18 = 109,
+    RESONATE_KEY_F19 = 110,
+    RESONATE_KEY_F20 = 111,
+    RESONATE_KEY_F21 = 112,
+    RESONATE_KEY_F22 = 113,
+    RESONATE_KEY_F23 = 114,
+    RESONATE_KEY_F24 = 115,
+
+    RESONATE_KEY_EXECUTE = 116,
+    RESONATE_KEY_HELP = 117,
+    RESONATE_KEY_MENU = 118,
+    RESONATE_KEY_SELECT = 119,
+    RESONATE_KEY_STOP = 120,
+    RESONATE_KEY_AGAIN = 121,
+    RESONATE_KEY_UNDO = 122,
+    RESONATE_KEY_CUT = 123,
+    RESONATE_KEY_COPY = 124,
+    RESONATE_KEY_PASTE = 125,
+    RESONATE_KEY_FIND = 126,
+    RESONATE_KEY_MUTE = 127,
+    RESONATE_KEY_VOLUMEUP = 128,
+    RESONATE_KEY_VOLUMEDOWN = 129,
+
+    RESONATE_KEY_KP_COMMA = 133,
+    RESONATE_KEY_KP_EQUALSAS400 = 134,
+
+    RESONATE_KEY_INTERNATIONAL1 = 135,
+    RESONATE_KEY_INTERNATIONAL2 = 136,
+    RESONATE_KEY_INTERNATIONAL3 = 137, /* Yen */
+    RESONATE_KEY_INTERNATIONAL4 = 138,
+    RESONATE_KEY_INTERNATIONAL5 = 139,
+    RESONATE_KEY_INTERNATIONAL6 = 140,
+    RESONATE_KEY_INTERNATIONAL7 = 141,
+    RESONATE_KEY_INTERNATIONAL8 = 142,
+    RESONATE_KEY_INTERNATIONAL9 = 143,
+
+    RESONATE_KEY_LANG1 = 144, /* Hangul/English toggle */
+    RESONATE_KEY_LANG2 = 145, /* Hanja conversion */
+    RESONATE_KEY_LANG3 = 146, /* Katakana */
+    RESONATE_KEY_LANG4 = 147, /* Hiragana */
+    RESONATE_KEY_LANG5 = 148, /* Zenkaku/Hankaku */
+    RESONATE_KEY_LANG6 = 149,
+    RESONATE_KEY_LANG7 = 150,
+    RESONATE_KEY_LANG8 = 151,
+    RESONATE_KEY_LANG9 = 152,
+
+    RESONATE_KEY_ALTERASE = 153,
+    RESONATE_KEY_SYSREQ = 154,
+    RESONATE_KEY_CANCEL = 155,
+    RESONATE_KEY_CLEAR = 156,
+    RESONATE_KEY_PRIOR = 157,
+    RESONATE_KEY_RETURN2 = 158,
+    RESONATE_KEY_SEPARATOR = 159,
+    RESONATE_KEY_OUT = 160,
+    RESONATE_KEY_OPER = 161,
+    RESONATE_KEY_CLEARAGAIN = 162,
+    RESONATE_KEY_CRSEL = 163,
+    RESONATE_KEY_EXSEL = 164,
+
+    RESONATE_KEY_KP_00 = 176,
+    RESONATE_KEY_KP_000 = 177,
+    RESONATE_KEY_THOUSANDSSEPARATOR = 178,
+    RESONATE_KEY_DECIMALSEPARATOR = 179,
+    RESONATE_KEY_CURRENCYUNIT = 180,
+    RESONATE_KEY_CURRENCYSUBUNIT = 181,
+    RESONATE_KEY_KP_LEFTPAREN = 182,
+    RESONATE_KEY_KP_RIGHTPAREN = 183,
+    RESONATE_KEY_KP_LEFTBRACE = 184,
+    RESONATE_KEY_KP_RIGHTBRACE = 185,
+    RESONATE_KEY_KP_TAB = 186,
+    RESONATE_KEY_KP_BACKSPACE = 187,
+    RESONATE_KEY_KP_A = 188,
+    RESONATE_KEY_KP_B = 189,
+    RESONATE_KEY_KP_C = 190,
+    RESONATE_KEY_KP_D = 191,
+    RESONATE_KEY_KP_E = 192,
+    RESONATE_KEY_KP_F = 193,
+    RESONATE_KEY_KP_XOR = 194,
+    RESONATE_KEY_KP_POWER = 195,
+    RESONATE_KEY_KP_PERCENT = 196,
+    RESONATE_KEY_KP_LESS = 197,
+    RESONATE_KEY_KP_GREATER = 198,
+    RESONATE_KEY_KP_AMPERSAND = 199,
+    RESONATE_KEY_KP_DBLAMPERSAND = 200,
+    RESONATE_KEY_KP_VERTICALBAR = 201,
+    RESONATE_KEY_KP_DBLVERTICALBAR = 202,
+    RESONATE_KEY_KP_COLON = 203,
+    RESONATE_KEY_KP_HASH = 204,
+    RESONATE_KEY_KP_SPACE = 205,
+    RESONATE_KEY_KP_AT = 206,
+    RESONATE_KEY_KP_EXCLAM = 207,
+    RESONATE_KEY_KP_MEMSTORE = 208,
+    RESONATE_KEY_KP_MEMRECALL = 209,
+    RESONATE_KEY_KP_MEMCLEAR = 210,
+    RESONATE_KEY_KP_MEMADD = 211,
+    RESONATE_KEY_KP_MEMSUBTRACT = 212,
+    RESONATE_KEY_KP_MEMMULTIPLY = 213,
+    RESONATE_KEY_KP_MEMDIVIDE = 214,
+    RESONATE_KEY_KP_PLUSMINUS = 215,
+    RESONATE_KEY_KP_CLEAR = 216,
+    RESONATE_KEY_KP_CLEARENTRY = 217,
+    RESONATE_KEY_KP_BINARY = 218,
+    RESONATE_KEY_KP_OCTAL = 219,
+    RESONATE_KEY_KP_DECIMAL = 220,
+    RESONATE_KEY_KP_HEXADECIMAL = 221,
+
+    RESONATE_KEY_LCTRL = 224,
+    RESONATE_KEY_LSHIFT = 225,
+    RESONATE_KEY_LALT = 226,
+    RESONATE_KEY_LGUI = 227,
+    RESONATE_KEY_RCTRL = 228,
+    RESONATE_KEY_RSHIFT = 229,
+    RESONATE_KEY_RALT = 230,
+    RESONATE_KEY_RGUI = 231,
+
+    RESONATE_KEY_MODE = 257,
+    RESONATE_KEY_SLEEP = 258,
+    RESONATE_KEY_WAKE = 259,
+    RESONATE_KEY_CHANNEL_INCREMENT = 260,
+    RESONATE_KEY_CHANNEL_DECREMENT = 261,
+    RESONATE_KEY_MEDIA_PLAY = 262,
+    RESONATE_KEY_MEDIA_PAUSE = 263,
+    RESONATE_KEY_MEDIA_RECORD = 264,
+    RESONATE_KEY_MEDIA_FAST_FORWARD = 265,
+    RESONATE_KEY_MEDIA_REWIND = 266,
+    RESONATE_KEY_MEDIA_NEXT_TRACK = 267,
+    RESONATE_KEY_MEDIA_PREVIOUS_TRACK = 268,
+    RESONATE_KEY_MEDIA_STOP = 269,
+    RESONATE_KEY_MEDIA_EJECT = 270,
+    RESONATE_KEY_MEDIA_PLAY_PAUSE = 271,
+    RESONATE_KEY_MEDIA_SELECT = 272,
+    RESONATE_KEY_AC_NEW = 273,
+    RESONATE_KEY_AC_OPEN = 274,
+    RESONATE_KEY_AC_CLOSE = 275,
+    RESONATE_KEY_AC_EXIT = 276,
+    RESONATE_KEY_AC_SAVE = 277,
+    RESONATE_KEY_AC_PRINT = 278,
+    RESONATE_KEY_AC_PROPERTIES = 279,
+    RESONATE_KEY_AC_SEARCH = 280,
+    RESONATE_KEY_AC_HOME = 281,
+    RESONATE_KEY_AC_BACK = 282,
+    RESONATE_KEY_AC_FORWARD = 283,
+    RESONATE_KEY_AC_STOP = 284,
+    RESONATE_KEY_AC_REFRESH = 285,
+    RESONATE_KEY_AC_BOOKMARKS = 286,
+    RESONATE_KEY_SOFTLEFT = 287,
+    RESONATE_KEY_SOFTRIGHT = 288,
+    RESONATE_KEY_CALL = 289,
+    RESONATE_KEY_ENDCALL = 290,
+
+    /* For codes a backend must report that this table does not name. */
+    RESONATE_KEY_RESERVED = 400,
+
+    /* Not a key: the table size, for array bounds and for masking. */
+    RESONATE_KEY_COUNT = 512
+} ResonateKey;
+
+typedef enum ResonateMouseButton : uint8_t
+{
+    RESONATE_MOUSE_LEFT = 0,
+    RESONATE_MOUSE_RIGHT = 1,
+    RESONATE_MOUSE_MIDDLE = 2,
+    RESONATE_MOUSE_X1 = 3,
+    RESONATE_MOUSE_X2 = 4,
+    RESONATE_MOUSE_BUTTON_COUNT = 5
+} ResonateMouseButton;
+
+/* Snapshot of input state for the current frame. */
+typedef struct ResonateInput
+{
+    ResonateCapabilityHeader header;
+
+    /* Held at the moment of the query. */
+    int32_t (*key_down)(void* self, ResonateKey key);
+
+    /* Went down since the previous frame. */
+    int32_t (*key_pressed)(void* self, ResonateKey key);
+
+    int32_t (*mouse_down)(void* self, ResonateMouseButton button);
+
+    /* Cursor position in window coordinates, which on a scaled display is not the
+       pixel space ResonateWindow::width reports. */
+    void (*pointer_position)(void* self, ResonateVec2* out_position);
+
+    /* Movement since the previous frame. */
+    void (*pointer_delta)(void* self, ResonateVec2* out_delta);
+
+    /* Provider state. Every call above receives this as its first argument; the
+       host never interprets it. */
+    void* self;
+} ResonateInput;
+
+#ifdef __cplusplus
+} // extern "C"
+
+namespace resonate::detail
+{
+template <> struct CapabilityTraits<ResonateInput>
+{
+    static constexpr const char* name = "Resonate.Input";
+    /* Inline so the whole program shares one definition; not constexpr, because
+       the hash is a library call. */
+    static inline const Id id{name};
+    static constexpr std::uint32_t version = 1;
+};
+} // namespace resonate::detail
+#endif
+
+#endif /* RESONATE_WINDOW_INPUT_H */

@@ -1,0 +1,28 @@
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: Latest
+
+IndentWidth: 4
+ColumnLimit: 100
+TabWidth: 4
+UseTab: Never
+
+BreakBeforeBraces: Allman
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+
+PointerAlignment: Left
+DerivePointerAlignment: false
+SpaceAfterCStyleCast: false
+
+IndentCaseLabels: true
+IndentPPDirectives: AfterHash
+
+# Keeps the body of an `extern "C" { }` block flush left, which is how a C ABI
+# header is read.
+IndentExternBlock: NoIndent
+
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
