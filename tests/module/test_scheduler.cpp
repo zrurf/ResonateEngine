@@ -145,6 +145,36 @@ TEST_CASE("a removed system stops running", "[module][scheduler]")
     resonate_scheduler_destroy(scheduler);
 }
 
+TEST_CASE("exact removal takes the matching registration among same-named ones",
+          "[module][scheduler]")
+{
+    resonate::test::FakeHost fake;
+    ResonateScheduler* scheduler = nullptr;
+    REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
+
+    std::vector<std::string> order;
+    Recorder first = {&order, "first"};
+    Recorder second = {&order, "second"};
+    Recorder unregistered = {&order, "unregistered"};
+
+    /* Same name, different contexts: the name alone cannot say which one goes. */
+    ResonateSystemDesc first_desc = describe(first, RESONATE_STAGE_UPDATE, "system", 0, 0);
+    ResonateSystemDesc second_desc = describe(second, RESONATE_STAGE_UPDATE, "system", 0, 0);
+    REQUIRE(resonate_scheduler_add_system(scheduler, &first_desc) == RESONATE_OK);
+    REQUIRE(resonate_scheduler_add_system(scheduler, &second_desc) == RESONATE_OK);
+
+    /* A triple that matches nothing removes nothing. */
+    resonate_scheduler_remove_system_exact(scheduler, "system", &Recorder::run, &unregistered);
+    resonate_scheduler_remove_system_exact(scheduler, "absent", &Recorder::run, &first);
+
+    resonate_scheduler_remove_system_exact(scheduler, "system", &Recorder::run, &second);
+
+    resonate_scheduler_run_frame(scheduler, 0.016F);
+    REQUIRE(order == std::vector<std::string>{"first"});
+
+    resonate_scheduler_destroy(scheduler);
+}
+
 TEST_CASE("a malformed descriptor is refused", "[module][scheduler]")
 {
     resonate::test::FakeHost fake;

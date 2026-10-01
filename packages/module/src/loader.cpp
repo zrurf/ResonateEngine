@@ -162,6 +162,17 @@ struct ModuleHost::Impl
         std::vector<ResonateSignalStorage*> signals;
         std::vector<ResonateMessageWriter*> writers;
 
+        /* Systems this module registered on the schedule, withdrawn at detach the
+           same way. Matched by name, run and context at removal: a name alone can
+           be shared across modules, the triple cannot. */
+        struct RegisteredSystem
+        {
+            std::string name;
+            ResonateSystemFn run;
+            void* context;
+        };
+        std::vector<RegisteredSystem> systems;
+
         /* Host memory this module holds: same treatment, and what lets a module
            treat giving it back as optional. */
         std::vector<std::pair<void*, std::size_t>> allocations;
@@ -233,6 +244,8 @@ struct ModuleHost::Impl
         context->api.message_open_reader = &Impl::messageOpenReaderForModule;
         context->api.message_close_reader = &Impl::messageCloseReaderForModule;
         context->api.message_cursor_begin = &Impl::messageCursorBeginForModule;
+        context->api.system_add = &Impl::systemAddForModule;
+        context->api.system_remove = &Impl::systemRemoveForModule;
 
         contexts.push_back(context);
         return context;
@@ -282,6 +295,9 @@ struct ModuleHost::Impl
     static void messageCloseReaderForModule(void* user_data, ResonateMessageStream* stream);
     static ResonateMessageCursor messageCursorBeginForModule(void* user_data,
                                                              const ResonateMessageStream* stream);
+
+    static ResonateStatus systemAddForModule(void* user_data, const ResonateSystemDesc* desc);
+    static void systemRemoveForModule(void* user_data, const char* name);
 
     /* Withdraws every host resource this module took: the capabilities it
        published and the facility storage it created. Runs for a module that
@@ -588,6 +604,52 @@ ResonateMessageCursor
 ModuleHost::Impl::messageCursorBeginForModule(void*, const ResonateMessageStream* stream)
 {
     return resonate_message_cursor_begin(stream);
+}
+
+ResonateStatus ModuleHost::Impl::systemAddForModule(void* user_data, const ResonateSystemDesc* desc)
+{
+    auto* context = static_cast<Context*>(user_data);
+    if (desc == nullptr)
+    {
+        return RESONATE_E_INVALID;
+    }
+
+    const ResonateStatus status = resonate_scheduler_add_system(context->impl->scheduler, desc);
+    if (status == RESONATE_OK)
+    {
+        context->systems.push_back({desc->name != nullptr ? desc->name : "", desc->run,
+                                    desc->context});
+    }
+    return status;
+}
+
+void ModuleHost::Impl::systemRemoveForModule(void* user_data, const char* name)
+{
+    auto* context = static_cast<Context*>(user_data);
+    const std::string key(name != nullptr ? name : "");
+    std::vector<Context::RegisteredSystem>& systems = context->systems;
+
+    const bool held =
+        std::any_of(systems.begin(), systems.end(),
+                    [&key](const Context::RegisteredSystem& system) { return system.name == key; });
+    if (!held)
+    {
+        context->impl->writeFrom(RESONATE_LOG_WARN, context->record->manifest.id,
+                                 "removed a system it does not hold");
+        return;
+    }
+
+    for (auto entry = systems.begin(); entry != systems.end();)
+    {
+        if (entry->name != key)
+        {
+            ++entry;
+            continue;
+        }
+        resonate_scheduler_remove_system_exact(context->impl->scheduler, key.c_str(), entry->run,
+                                               entry->context);
+        entry = systems.erase(entry);
+    }
 }
 
 ResonateStatus parseManifest(std::string_view json_text, ModuleManifest& out_manifest)
@@ -928,6 +990,15 @@ void ModuleHost::Impl::reclaim(ModuleRecord& record)
         writeFrom(RESONATE_LOG_WARN, record.manifest.id,
                   "left a message writer alive through detach");
         resonate_message_writer_destroy(writer);
+    }
+    while (!context->systems.empty())
+    {
+        const Context::RegisteredSystem system = context->systems.back();
+        context->systems.pop_back();
+        writeFrom(RESONATE_LOG_WARN, record.manifest.id,
+                  "left a system registered through detach");
+        resonate_scheduler_remove_system_exact(scheduler, system.name.c_str(), system.run,
+                                               system.context);
     }
 
     /* And the memory: everything the module took from the allocator and did not

@@ -73,6 +73,13 @@ ResonateStatus resonate_scheduler_add_system(ResonateScheduler* scheduler,
 
 void resonate_scheduler_remove_system(ResonateScheduler* scheduler, const char* name);
 
+/* Removes the first system whose name, run function and context all match. The
+   host withdraws one module's registrations through this: a name can be shared,
+   the full triple cannot, so the removal cannot hit another module's
+   same-named system. */
+void resonate_scheduler_remove_system_exact(ResonateScheduler* scheduler, const char* name,
+                                            ResonateSystemFn run, void* context);
+
 /* Runs the systems of one stage, in registration order. */
 void resonate_scheduler_run_stage(ResonateScheduler* scheduler, ResonateStage stage,
                                   float delta_seconds);

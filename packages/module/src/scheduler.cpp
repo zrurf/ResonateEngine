@@ -98,6 +98,37 @@ void reportConflicts(ResonateScheduler* scheduler, const System& added)
     }
 }
 
+/* Index of the first system matching the key, or count when none does. */
+uint32_t indexOf(const ResonateScheduler* scheduler, const char* name, ResonateSystemFn run,
+                 void* context, bool exact)
+{
+    for (uint32_t index = 0; index < scheduler->count; ++index)
+    {
+        const System& system = scheduler->systems[index];
+        if (std::strcmp(system.name, name) != 0)
+        {
+            continue;
+        }
+        if (!exact || (system.desc.run == run && system.desc.context == context))
+        {
+            return index;
+        }
+    }
+    return scheduler->count;
+}
+
+void removeAt(ResonateScheduler* scheduler, uint32_t index)
+{
+    System& system = scheduler->systems[index];
+    resonate::detail::hostDeallocate(scheduler->host, system.name,
+                                     std::strlen(system.name) + 1U);
+    for (uint32_t move = index; move + 1U < scheduler->count; ++move)
+    {
+        scheduler->systems[move] = scheduler->systems[move + 1U];
+    }
+    --scheduler->count;
+}
+
 } // namespace
 
 extern "C"
@@ -197,22 +228,25 @@ void resonate_scheduler_remove_system(ResonateScheduler* scheduler, const char* 
         return;
     }
 
-    for (uint32_t index = 0; index < scheduler->count; ++index)
+    const uint32_t index = indexOf(scheduler, name, nullptr, nullptr, false);
+    if (index < scheduler->count)
     {
-        System& system = scheduler->systems[index];
-        if (std::strcmp(system.name, name) != 0)
-        {
-            continue;
-        }
+        removeAt(scheduler, index);
+    }
+}
 
-        resonate::detail::hostDeallocate(scheduler->host, system.name,
-                                         std::strlen(system.name) + 1U);
-        for (uint32_t move = index; move + 1U < scheduler->count; ++move)
-        {
-            scheduler->systems[move] = scheduler->systems[move + 1U];
-        }
-        --scheduler->count;
+void resonate_scheduler_remove_system_exact(ResonateScheduler* scheduler, const char* name,
+                                            ResonateSystemFn run, void* context)
+{
+    if (scheduler == nullptr || name == nullptr)
+    {
         return;
+    }
+
+    const uint32_t index = indexOf(scheduler, name, run, context, true);
+    if (index < scheduler->count)
+    {
+        removeAt(scheduler, index);
     }
 }
 

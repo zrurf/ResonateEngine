@@ -3,9 +3,10 @@
  * suite covers the one thing it cannot otherwise reach: what a plugin can
  * actually link. It depends on the ABI target alone — adding a dependency on
  * ResonateEngine.Module would hide exactly the mistake it exists to catch — and
- * it uses a signal and a message stream, whose entry points live in the host.
+ * it uses a signal, a message stream and per-frame systems, whose entry points
+ * live in the host.
  *
- * Its second job is to leave storage behind, because "the host reclaims what a
+ * Its second job is to leave things behind, because "the host reclaims what a
  * module did not destroy" is only observable from the host's log.
  */
 
@@ -70,7 +71,9 @@ class ProbeModule final : public resonate::Module
   public:
     resonate::Status onAttach(resonate::Host& host) override
     {
-        if (signalRoundTrip(host) != RESONATE_OK || messageRoundTrip(host) != RESONATE_OK)
+        host_ = host;
+        if (signalRoundTrip(host) != RESONATE_OK || messageRoundTrip(host) != RESONATE_OK ||
+            systemsRoundTrip(host) != RESONATE_OK)
         {
             return RESONATE_E_INTERNAL;
         }
@@ -93,6 +96,12 @@ class ProbeModule final : public resonate::Module
            cleans up after itself does it. */
         signal_.destroy();
         writer_.destroy();
+
+        /* One registration withdrawn itself, one name it never held — the host
+           reports that instead of ignoring it — and one left for the host to
+           withdraw. */
+        host_.removeSystem("probe.removed");
+        host_.removeSystem("probe.absent");
     }
 
   private:
@@ -133,6 +142,47 @@ class ProbeModule final : public resonate::Module
         reader.close();
         return RESONATE_OK;
     }
+
+    resonate::Status systemsRoundTrip(const resonate::Host& host)
+    {
+        removed_tick_.api = host.raw();
+        reclaimed_tick_.api = host.raw();
+
+        /* The host copies the name, so one descriptor can serve both. */
+        ResonateSystemDesc desc = {};
+        desc.struct_size = sizeof(ResonateSystemDesc);
+        desc.stage = RESONATE_STAGE_UPDATE;
+        desc.run = &tick;
+
+        desc.context = &removed_tick_;
+        desc.name = "probe.removed";
+        if (host.addSystem(desc) != RESONATE_OK)
+        {
+            return RESONATE_E_INTERNAL;
+        }
+
+        desc.context = &reclaimed_tick_;
+        desc.name = "probe.reclaimed";
+        return host.addSystem(desc) == RESONATE_OK ? RESONATE_OK : RESONATE_E_INTERNAL;
+    }
+
+    /* The system body logs, because "the registered system ran" is observable
+       from the host's log and nowhere else the test can reach. */
+    struct Tick
+    {
+        const ResonateHostApi* api = nullptr;
+        const char* label = nullptr;
+    };
+
+    static void tick(void* context, float)
+    {
+        const auto* self = static_cast<const Tick*>(context);
+        self->api->log(self->api->user_data, RESONATE_LOG_INFO, __FILE__, __LINE__, self->label);
+    }
+
+    resonate::Host host_{nullptr};
+    Tick removed_tick_ = {nullptr, "probe.removed ticked"};
+    Tick reclaimed_tick_ = {nullptr, "probe.reclaimed ticked"};
 
     int calls_ = 0;
     std::function<void(int)> handler_ = [this](int value) { calls_ += value; };

@@ -90,6 +90,7 @@ typedef struct ResonateCapabilityRecord
 typedef struct ResonateSignalStorage ResonateSignalStorage;
 typedef struct ResonateMessageWriter ResonateMessageWriter;
 typedef struct ResonateMessageStreamVTable ResonateMessageStreamVTable;
+typedef struct ResonateSystemDesc ResonateSystemDesc;
 
 /* Subscriber-side connection node. Place one inside the subscriber object; it
    must outlive every connection made from it.
@@ -225,6 +226,21 @@ typedef struct ResonateHostApi
     /* Fresh cursor positioned before the oldest retained message. */
     ResonateMessageCursor (*message_cursor_begin)(void* user_data,
                                                   const ResonateMessageStream* stream);
+
+    /*
+     * Per-frame work: a system this module contributes to the host's schedule.
+     * The host copies the descriptor's name, so the descriptor can be a
+     * temporary; the run function and context stay the caller's and must
+     * outlive the registration. A system runs every frame from registration
+     * until removed or the module detaches, and one the module leaves behind is
+     * withdrawn at on_detach.
+     */
+
+    ResonateStatus (*system_add)(void* user_data, const ResonateSystemDesc* desc);
+
+    /* Removes every system this module registered under name. A name the module
+       never registered is reported, not silently ignored. */
+    void (*system_remove)(void* user_data, const char* name);
 } ResonateHostApi;
 
 typedef struct ResonateModuleInfo

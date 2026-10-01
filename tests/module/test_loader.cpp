@@ -342,7 +342,7 @@ TEST_CASE("a module that fails to attach leaves nothing of its own behind", "[mo
     REQUIRE(log.contains("left capability"));
 }
 
-TEST_CASE("a plugin uses a signal and a message stream, and the host reclaims what it leaves",
+TEST_CASE("a plugin registers per-frame systems and the host reclaims what it leaves",
           "[module][loader]")
 {
     /* Built as a dependency of this target, like the shipped plugins. */
@@ -360,11 +360,18 @@ TEST_CASE("a plugin uses a signal and a message stream, and the host reclaims wh
     REQUIRE(host->records().size() == 1U);
 
     /* The probe reports what it exercised by failing to attach, so a green
-       attach is the assertion: its signal delivered and its stream round-tripped,
-       through entry points that are on the host API rather than in its own
-       library's link line. */
+       attach is the assertion: its signal delivered, its stream round-tripped and
+       both systems registered, through entry points that are on the host API
+       rather than in its own library's link line. */
     REQUIRE(host->resolve() == RESONATE_OK);
     REQUIRE(host->attachAll() == RESONATE_OK);
+
+    /* Both systems the probe registered run in a frame; its system bodies log,
+       which is the only thing the test can read them through. */
+    log.lines.clear();
+    host->runFrame(1.0F / 60.0F);
+    REQUIRE(log.contains("probe.removed ticked"));
+    REQUIRE(log.contains("probe.reclaimed ticked"));
 
     /* Cleared before the loop, so it is not the assertion below passing on
        something else. */
@@ -372,9 +379,16 @@ TEST_CASE("a plugin uses a signal and a message stream, and the host reclaims wh
 
     host->detachAll();
 
+    REQUIRE(log.contains("removed a system it does not hold"));
+    REQUIRE(log.contains("left a system registered through detach"));
     REQUIRE(log.contains("left a signal alive through detach"));
     REQUIRE(log.contains("left a message writer alive through detach"));
     REQUIRE(log.contains("allocated through detach"));
+
+    /* The withdrawal is real: neither system survives into the next frame. */
+    log.lines.clear();
+    host->runFrame(1.0F / 60.0F);
+    REQUIRE(log.lines.empty());
 
     /* Unloading the library destroys the module's own members, and those release
        storage the host has already reclaimed. The tracking turns that into a

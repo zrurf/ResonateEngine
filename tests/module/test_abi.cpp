@@ -1,5 +1,7 @@
 #include <catch2/catch_all.hpp>
 
+#include <cstddef>
+
 #include <resonate/module/module.hpp>
 
 using resonate::Id;
@@ -31,4 +33,18 @@ TEST_CASE("status codes are distinct", "[module][abi]")
     }
 
     REQUIRE(RESONATE_OK == 0u);
+}
+
+TEST_CASE("a host without the facility tail refuses facility use", "[module][abi]")
+{
+    /* struct_size stops before the facility entries, which is what a host built
+       against headers older than these writes. */
+    ResonateHostApi api = {};
+    api.struct_size = offsetof(ResonateHostApi, signal_create);
+
+    resonate::Host host(&api);
+
+    ResonateSystemDesc desc = {};
+    desc.struct_size = sizeof(ResonateSystemDesc);
+    REQUIRE(host.addSystem(desc) == RESONATE_E_UNSUPPORTED);
 }

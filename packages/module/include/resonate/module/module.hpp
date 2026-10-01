@@ -164,6 +164,25 @@ class Host
                                     detail::CapabilityTraits<Capability>::id.value(), &instance);
     }
 
+    /* Contributes per-frame work to the host's schedule. The host copies the
+       descriptor's name, so the descriptor can be a temporary; the run function
+       and context must outlive the registration. */
+    ResonateStatus addSystem(const ResonateSystemDesc& desc) const
+    {
+        if (!hasFacilities())
+        {
+            return RESONATE_E_UNSUPPORTED;
+        }
+        return api_->system_add(api_->user_data, &desc);
+    }
+
+    /* Removes every system this module registered under name. */
+    void removeSystem(std::string_view name) const
+    {
+        const std::string owned(name);
+        api_->system_remove(api_->user_data, owned.c_str());
+    }
+
   private:
     const ResonateHostApi* api_ = nullptr;
 };
