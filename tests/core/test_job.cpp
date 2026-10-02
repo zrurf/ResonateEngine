@@ -336,6 +336,15 @@ TEST_CASE("the worker count can be tuned down and up", "[core][job]")
 
     jobs->requestWorkerCount(2);
     settle(2);
+
+    /* One batch warms the pool before the measurement. A worker that read the
+       target before the shrink is allowed to run the one job its next decision
+       picks up — the adjustment takes effect at the next decision, which the
+       thread model states — so a straggler can legitimately appear once; the
+       warm-up lets it do that and park before the run below is counted. */
+    submitBatch(64);
+    registry.workerIds.clear();
+
     submitBatch(64);
     {
         std::lock_guard<std::mutex> lock(registry.mutex);
@@ -418,4 +427,38 @@ TEST_CASE("destroying with outstanding work drains it", "[core][job]")
 
     delete jobs;
     REQUIRE(ran.load() == 32);
+}
+
+TEST_CASE("a full slot pool slows submission instead of dropping the job", "[core][job]")
+{
+    JobSystem* jobs = resonate::createJobSystem();
+
+    /* No workers: this thread is the only runner, so nothing retires until the
+       submissions themselves or the drain reaches it, and the number of
+       outstanding jobs reaches the pool's own slot count. */
+    jobs->requestWorkerCount(0);
+    int settled = 0;
+    for (int spin = 0; spin < 10000000 && settled < 1000; ++spin)
+    {
+        settled = jobs->workerCount() == 0 ? settled + 1 : 0;
+    }
+    REQUIRE(settled == 1000);
+
+    /* Past the slot count a submission has no slot left. It must run queued work
+       until one frees, not return a handle that reads as already completed with
+       the job silently gone. */
+    std::atomic<std::uint32_t> ran{0};
+    constexpr std::uint32_t COUNT = 4096U + 512U;
+    for (std::uint32_t index = 0; index < COUNT; ++index)
+    {
+        const JobIndex handle = jobs->submitSingle(
+            [](void* context) { static_cast<std::atomic<std::uint32_t>*>(context)->fetch_add(1); },
+            &ran, 0, 0, JobPriorityNormal, resonate::JobAffinityThroughput);
+        REQUIRE(handle != 0);
+    }
+
+    jobs->waitAll();
+    REQUIRE(ran.load() == COUNT);
+
+    delete jobs;
 }

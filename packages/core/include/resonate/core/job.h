@@ -19,8 +19,11 @@ namespace resonate
  * Submission is fire-and-forget; the returned index is a handle for waiting,
  * where a stale or unknown index reads as already completed. Waiting
  * participates: the calling thread runs queued work, which is what keeps a
- * waiting main thread from idling while workers are busy. Bodies run on worker
- * threads or on a waiting thread and must not throw.
+ * waiting main thread from idling while workers are busy. A submission into a
+ * full pool participates too: when every slot is held by work that has not
+ * retired, the submitter runs queued work until one frees, so a burst of
+ * submissions slows down rather than dropping a job. Bodies run on worker
+ * threads or on a waiting or submitting thread and must not throw.
  */
 
 using JobIndex = std::uint32_t;

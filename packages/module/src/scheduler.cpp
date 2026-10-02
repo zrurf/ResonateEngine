@@ -347,17 +347,6 @@ void resonate_scheduler_run_stage(ResonateScheduler* scheduler, ResonateStage st
         run.handle =
             scheduler->jobs->submitSingle(&runScheduled, &run, system.desc.reads, writes,
                                           resonate::JobPriorityHigh, resonate::JobAffinityLatency);
-        if (run.handle == 0)
-        {
-            /* Every slot is held by work that has not retired. Reported rather
-               than run here: a system run inline would be concurrent with the
-               ones this submission order serialises it against. */
-            char message[256] = {};
-            std::snprintf(message, sizeof(message), "system '%s' did not run: the job pool is full",
-                          system.name);
-            resonate::detail::hostLog(scheduler->host, RESONATE_LOG_ERROR, message);
-            continue;
-        }
         ++scheduled;
     }
 
@@ -385,3 +374,13 @@ void resonate_scheduler_run_frame(ResonateScheduler* scheduler, float delta_seco
 }
 
 } // extern "C"
+
+namespace resonate
+{
+
+JobSystem* jobsOf(ResonateScheduler* scheduler)
+{
+    return scheduler != nullptr ? scheduler->jobs : nullptr;
+}
+
+} // namespace resonate

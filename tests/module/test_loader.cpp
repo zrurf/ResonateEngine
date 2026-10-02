@@ -1,12 +1,17 @@
 #include <catch2/catch_all.hpp>
 
+#include <atomic>
+#include <cstdint>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <resonate/core/allocator.h>
+#include <resonate/core/job.h>
 #include <resonate/module/host.hpp>
 #include <resonate/module/module.hpp>
 #include <resonate/pal/io.h>
+#include <resonate/pal/thread.h>
 #include <resonate/window/host.hpp>
 
 #include "fake_host.h"
@@ -77,6 +82,32 @@ std::size_t positionOf(const std::vector<resonate::ModuleRecord*>& order, const 
     }
     return order.size();
 }
+
+constexpr ResonateResourceGroup HELD_GROUP = RESONATE_GROUP_DECLARE(0);
+
+/* A job held open until the test releases it, and the system body that must not
+   run while it is held — both writing HELD_GROUP. */
+struct HeldJob
+{
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+    std::atomic<bool> system_ran{false};
+
+    static void hold(void* context)
+    {
+        auto* self = static_cast<HeldJob*>(context);
+        self->entered.store(true);
+        while (!self->release.load())
+        {
+            resonate_pal_thread_yield();
+        }
+    }
+
+    static void system(void* context, float)
+    {
+        static_cast<HeldJob*>(context)->system_ran.store(true);
+    }
+};
 
 int frames = 0;
 
@@ -397,4 +428,54 @@ TEST_CASE("a plugin registers per-frame systems and the host reclaims what it le
     host.reset();
     REQUIRE(log.contains("destroyed a signal it does not hold"));
     REQUIRE(log.contains("released memory it does not hold"));
+}
+
+TEST_CASE("the host exposes the job pool its schedule runs on", "[module][loader]")
+{
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+
+    /* The pool exists from creation — a module attaches onto a schedule whose
+       substrate is already there — and it is one pool, not a new one per call. */
+    resonate::JobSystem* jobs = host->jobs();
+    REQUIRE(jobs != nullptr);
+    REQUIRE(host->jobs() == jobs);
+
+    /* And it is the pool the schedule orders against, not merely one that runs
+       work: a system writing the group a held job writes must wait for that job.
+       A fresh pool behind the accessor would let the system run while the job is
+       still held, which the flag below would show. */
+    HeldJob gate;
+    const resonate::JobIndex held =
+        jobs->submitSingle(&HeldJob::hold, &gate, 0, HELD_GROUP, resonate::JobPriorityNormal,
+                           resonate::JobAffinityThroughput);
+    REQUIRE(held != 0);
+
+    ResonateSystemDesc desc = {};
+    desc.struct_size = sizeof(ResonateSystemDesc);
+    desc.stage = RESONATE_STAGE_UPDATE;
+    desc.run = &HeldJob::system;
+    desc.writes = HELD_GROUP;
+    desc.context = &gate;
+    desc.name = "held-check";
+    REQUIRE(resonate_scheduler_add_system(host->scheduler(), &desc) == RESONATE_OK);
+
+    std::thread runner([&host] { host->runFrame(1.0F / 60.0F); });
+
+    for (int spin = 0; spin < 2000000 && !gate.entered.load(); ++spin)
+    {
+        resonate_pal_thread_yield();
+    }
+    REQUIRE(gate.entered.load());
+    for (int spin = 0; spin < 200000; ++spin)
+    {
+        resonate_pal_thread_yield();
+    }
+    const bool ran_while_held = gate.system_ran.load();
+
+    gate.release.store(true);
+    runner.join();
+
+    REQUIRE_FALSE(ran_while_held);
+    REQUIRE(gate.system_ran.load());
 }

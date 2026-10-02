@@ -430,11 +430,41 @@ class JobSystemImpl final : public JobSystem
     JobIndex submit(JobFunction slice, JobTask task, void* context, std::uint32_t count,
                     JobGroup reads, JobGroup writes, JobPriority priority, JobAffinity affinity)
     {
+        for (;;)
+        {
+            JobIndex index = 0;
+            if (trySubmit(slice, task, context, count, reads, writes, priority, affinity, index))
+            {
+                return index;
+            }
+
+            /* Every slot is held by work that has not retired. Running queued
+               work is what frees one — the same participation a wait does — so a
+               burst of submissions slows down instead of dropping a job. Found
+               work may be any ready job, including one whose retirement frees
+               the slot this loop is after. */
+            if (Job* next = findJob(kNoWorker))
+            {
+                run(next);
+                continue;
+            }
+            resonate_pal_thread_yield();
+        }
+    }
+
+    /* The body of a submission: takes the slot, registers the dependencies and
+       publishes, all under the dependency mutex. False when every slot is held,
+       which leaves the pool untouched for the caller to retry after running
+       queued work. */
+    bool trySubmit(JobFunction slice, JobTask task, void* context, std::uint32_t count,
+                   JobGroup reads, JobGroup writes, JobPriority priority, JobAffinity affinity,
+                   JobIndex& out_index)
+    {
         Lock lock(dagMutex_);
         Job* job = takeSlot();
         if (job == nullptr)
         {
-            return 0;
+            return false;
         }
 
         job->slice = slice;
@@ -451,9 +481,9 @@ class JobSystemImpl final : public JobSystem
            and completes as it stands. */
         if (count == 0)
         {
-            const JobIndex index = indexOf(*job);
+            out_index = indexOf(*job);
             releaseSlot(job);
-            return index;
+            return true;
         }
 
         job->next.store(0, std::memory_order_relaxed);
@@ -497,12 +527,12 @@ class JobSystemImpl final : public JobSystem
         }
         incomplete_.fetch_add(1, std::memory_order_release);
 
-        const JobIndex index = indexOf(*job);
+        out_index = indexOf(*job);
         if (deps.empty())
         {
             publish(job);
         }
-        return index;
+        return true;
     }
 
     /* Queues one entry per worker, round-robin from a shared cursor, so a
@@ -636,7 +666,9 @@ class JobSystemImpl final : public JobSystem
     }
 
     /* One allocation, constructed in place: Job carries atomics and cannot be
-       moved, so the pool never grows. */
+       moved, so the pool never grows. Running out of slots is not a failure —
+       a submitter with none left runs queued work until one frees (see
+       submit). */
     std::vector<Job> nodes_ = std::vector<Job>(kSlotCount);
     std::vector<std::uint32_t> freeSlots_;
     std::uint32_t slotsTaken_ = 0;

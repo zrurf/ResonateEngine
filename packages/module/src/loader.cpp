@@ -1033,6 +1033,11 @@ ResonateScheduler* ModuleHost::scheduler() const noexcept
     return impl_->scheduler;
 }
 
+JobSystem* ModuleHost::jobs() const noexcept
+{
+    return jobsOf(impl_->scheduler);
+}
+
 void ModuleHost::setLogSink(void* user_data, ResonateLogFn sink)
 {
     impl_->log_user_data = user_data;

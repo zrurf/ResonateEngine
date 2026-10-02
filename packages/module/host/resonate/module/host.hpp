@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "resonate/core/allocator.h"
+#include "resonate/core/job.h"
 #include "resonate/module/abi.h"
 #include "resonate/module/capability.h"
 #include "resonate/module/manifest.hpp"
@@ -85,6 +86,15 @@ class ModuleHost
     [[nodiscard]] ResonateCapabilityRegistry* capabilities() const noexcept;
     [[nodiscard]] ResonateScheduler* scheduler() const noexcept;
 
+    /* The pool the schedule runs on, borrowed and owned by the scheduler. It is
+       the one execution substrate of the run: engine-side C++ (the ECS's
+       parallel iteration, later the assets' decode jobs) submits its own work
+       here, and `requestWorkerCount` is what a runtime config tunes.
+
+       Null only if the pool could not be created, in which case stages run in
+       registration order and there is nothing to submit to. */
+    [[nodiscard]] JobSystem* jobs() const noexcept;
+
     [[nodiscard]] const std::vector<ModuleRecord>& records() const noexcept
     {
         return records_;
@@ -109,6 +119,11 @@ class ModuleHost
 
 /* Returns RESONATE_E_INVALID, naming the offending field in the host log. */
 ResonateStatus parseManifest(std::string_view json_text, ModuleManifest& out_manifest);
+
+/* The pool a schedule runs on, or null for one that could not create it. Host
+   side only: the C surface the scheduler is called through has no type for it,
+   and a plugin reaches work through its own system registrations. */
+JobSystem* jobsOf(ResonateScheduler* scheduler);
 
 } // namespace resonate
 
