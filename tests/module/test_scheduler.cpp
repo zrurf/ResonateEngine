@@ -1,9 +1,13 @@
 #include <catch2/catch_all.hpp>
 
+#include <atomic>
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include <resonate/module/stage.h>
+#include <resonate/pal/sync.h>
+#include <resonate/pal/thread.h>
 
 #include "fake_host.h"
 
@@ -22,55 +26,301 @@ struct Recorder
     }
 };
 
-ResonateSystemDesc describe(Recorder& recorder, ResonateStage stage, const char* name,
-                            ResonateResourceGroup reads, ResonateResourceGroup writes)
+ResonateSystemDesc describeRun(ResonateSystemFn run, void* context, ResonateStage stage,
+                               const char* name, ResonateResourceGroup reads,
+                               ResonateResourceGroup writes)
 {
     ResonateSystemDesc desc = {};
     desc.struct_size = sizeof(ResonateSystemDesc);
     desc.stage = stage;
-    desc.run = &Recorder::run;
+    desc.run = run;
     desc.reads = reads;
     desc.writes = writes;
     desc.exclusive_stage = 0;
-    desc.context = &recorder;
+    desc.context = context;
     desc.name = name;
     return desc;
 }
 
+ResonateSystemDesc describe(Recorder& recorder, ResonateStage stage, const char* name,
+                            ResonateResourceGroup reads, ResonateResourceGroup writes)
+{
+    return describeRun(&Recorder::run, &recorder, stage, name, reads, writes);
+}
+
 constexpr ResonateResourceGroup TRANSFORMS = RESONATE_GROUP_DECLARE(0);
 constexpr ResonateResourceGroup RENDER_LIST = RESONATE_GROUP_DECLARE(1);
+constexpr ResonateResourceGroup AUDIO_MIX = RESONATE_GROUP_DECLARE(2);
+
+/* Records the worst number of bodies ever inside at once and stamps a completion
+   rank, so a test can tell serialisation from order alone. Atomics only: these
+   bodies run on the pool's threads. */
+struct Racer
+{
+    std::atomic<std::uint32_t>* next = nullptr;
+    std::atomic<std::uint32_t>* rank = nullptr;
+    std::atomic<std::uint32_t>* inside = nullptr;
+    std::atomic<std::uint32_t>* worst = nullptr;
+    std::uint32_t spins = 0;
+
+    static void run(void* context, float)
+    {
+        auto* self = static_cast<Racer*>(context);
+        const std::uint32_t now = self->inside->fetch_add(1) + 1;
+        std::uint32_t worst = self->worst->load(std::memory_order_relaxed);
+        while (worst < now &&
+               !self->worst->compare_exchange_weak(worst, now, std::memory_order_relaxed))
+        {
+        }
+
+        for (std::uint32_t spin = 0; spin < self->spins; ++spin)
+        {
+            resonate_pal_thread_yield();
+        }
+
+        self->inside->fetch_sub(1);
+        self->rank->store(self->next->fetch_add(1, std::memory_order_relaxed),
+                          std::memory_order_relaxed);
+    }
+};
+
+/* Two bodies that wait for each other inside, so the pair completes only if both
+   were running at the same time; the bounded spin reports failure instead of
+   hanging if the schedule never lets them meet. */
+struct Rendezvous
+{
+    std::atomic<std::uint32_t> enteredA{0};
+    std::atomic<std::uint32_t> enteredB{0};
+    std::atomic<bool> sawEachOther{false};
+
+    static void first(void* context, float)
+    {
+        pair(context, true);
+    }
+
+    static void second(void* context, float)
+    {
+        pair(context, false);
+    }
+
+  private:
+    static void pair(void* context, bool is_first)
+    {
+        auto* self = static_cast<Rendezvous*>(context);
+        std::atomic<std::uint32_t>& entered = is_first ? self->enteredA : self->enteredB;
+        std::atomic<std::uint32_t>& other = is_first ? self->enteredB : self->enteredA;
+
+        entered.fetch_add(1);
+        for (int spin = 0; spin < 2000000 && other.load() == 0; ++spin)
+        {
+            resonate_pal_thread_yield();
+        }
+        if (other.load() != 0)
+        {
+            self->sawEachOther.store(true);
+        }
+        entered.fetch_sub(1);
+    }
+};
+
+/* Burns its spins, then marks itself finished. */
+struct SlowBody
+{
+    std::atomic<bool> done{false};
+    std::uint32_t spins = 0;
+
+    static void run(void* context, float)
+    {
+        auto* self = static_cast<SlowBody*>(context);
+        for (std::uint32_t spin = 0; spin < self->spins; ++spin)
+        {
+            resonate_pal_thread_yield();
+        }
+        self->done.store(true);
+    }
+};
 
 } // namespace
 
-TEST_CASE("stages run in order and systems run in registration order", "[module][scheduler]")
+TEST_CASE("stages run in order, and systems that declare no group keep registration order",
+          "[module][scheduler]")
 {
     resonate::test::FakeHost fake;
     ResonateScheduler* scheduler = nullptr;
     REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
 
-    std::vector<std::string> order;
-
-    Recorder late = {&order, "late"};
-    Recorder early = {&order, "early"};
-    Recorder early_second = {&order, "early-second"};
+    /* Declaring no group claims nothing, so these three are serialised in
+       submission order even though they share nothing: were the two EARLY_UPDATE
+       bodies allowed to run together, the overlap watermark would show it. */
+    std::atomic<std::uint32_t> inside{0};
+    std::atomic<std::uint32_t> worst{0};
+    std::atomic<std::uint32_t> next{0};
+    std::atomic<std::uint32_t> ranks[3] = {};
+    Racer racers[3] = {{&next, &ranks[0], &inside, &worst, 20000},
+                       {&next, &ranks[1], &inside, &worst, 20000},
+                       {&next, &ranks[2], &inside, &worst, 0}};
 
     /* Registered out of stage order on purpose: the stage decides, not registration. */
-    ResonateSystemDesc late_desc =
-        describe(late, RESONATE_STAGE_LATE_UPDATE, "late", 0, TRANSFORMS);
-    ResonateSystemDesc early_desc = describe(early, RESONATE_STAGE_EARLY_UPDATE, "early", 0, 0);
-    ResonateSystemDesc second_desc =
-        describe(early_second, RESONATE_STAGE_EARLY_UPDATE, "early-second", 0, 0);
+    ResonateSystemDesc late =
+        describeRun(&Racer::run, &racers[2], RESONATE_STAGE_LATE_UPDATE, "late", 0, TRANSFORMS);
+    ResonateSystemDesc early =
+        describeRun(&Racer::run, &racers[0], RESONATE_STAGE_EARLY_UPDATE, "early", 0, 0);
+    ResonateSystemDesc second =
+        describeRun(&Racer::run, &racers[1], RESONATE_STAGE_EARLY_UPDATE, "early-second", 0, 0);
 
-    REQUIRE(resonate_scheduler_add_system(scheduler, &late_desc) == RESONATE_OK);
-    REQUIRE(resonate_scheduler_add_system(scheduler, &early_desc) == RESONATE_OK);
-    REQUIRE(resonate_scheduler_add_system(scheduler, &second_desc) == RESONATE_OK);
+    REQUIRE(resonate_scheduler_add_system(scheduler, &late) == RESONATE_OK);
+    REQUIRE(resonate_scheduler_add_system(scheduler, &early) == RESONATE_OK);
+    REQUIRE(resonate_scheduler_add_system(scheduler, &second) == RESONATE_OK);
 
     resonate_scheduler_run_frame(scheduler, 0.016F);
 
-    REQUIRE(order.size() == 3);
-    REQUIRE(order[0] == "early");
-    REQUIRE(order[1] == "early-second");
-    REQUIRE(order[2] == "late");
+    REQUIRE(worst.load() == 1);
+    for (std::uint32_t index = 0; index < 3U; ++index)
+    {
+        REQUIRE(ranks[index].load() == index);
+    }
+
+    resonate_scheduler_destroy(scheduler);
+}
+
+TEST_CASE("systems that share a group run one at a time in registration order",
+          "[module][scheduler]")
+{
+    resonate::test::FakeHost fake;
+    ResonateScheduler* scheduler = nullptr;
+    REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
+
+    constexpr std::uint32_t COUNT = 4;
+    std::atomic<std::uint32_t> inside{0};
+    std::atomic<std::uint32_t> worst{0};
+    std::atomic<std::uint32_t> next{0};
+    std::atomic<std::uint32_t> ranks[COUNT] = {};
+    Racer racers[COUNT] = {};
+    ResonateSystemDesc descs[COUNT] = {};
+
+    for (std::uint32_t index = 0; index < COUNT; ++index)
+    {
+        racers[index] = Racer{&next, &ranks[index], &inside, &worst, 20000};
+        descs[index] =
+            describeRun(&Racer::run, &racers[index], RESONATE_STAGE_UPDATE, "racer", 0, TRANSFORMS);
+        REQUIRE(resonate_scheduler_add_system(scheduler, &descs[index]) == RESONATE_OK);
+    }
+
+    resonate_scheduler_run_frame(scheduler, 0.016F);
+
+    REQUIRE(worst.load() == 1);
+    for (std::uint32_t index = 0; index < COUNT; ++index)
+    {
+        REQUIRE(ranks[index].load() == index);
+    }
+
+    resonate_scheduler_destroy(scheduler);
+}
+
+TEST_CASE("systems that do not conflict can run at the same time", "[module][scheduler]")
+{
+    if (resonate_pal_sync_hardware_concurrency() < 2)
+    {
+        SKIP("needs a second core");
+    }
+
+    resonate::test::FakeHost fake;
+    ResonateScheduler* scheduler = nullptr;
+    REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
+
+    Rendezvous pair;
+
+    SECTION("writers of different groups")
+    {
+        ResonateSystemDesc first =
+            describeRun(&Rendezvous::first, &pair, RESONATE_STAGE_UPDATE, "first", 0, TRANSFORMS);
+        ResonateSystemDesc second = describeRun(&Rendezvous::second, &pair, RESONATE_STAGE_UPDATE,
+                                                "second", 0, RENDER_LIST);
+        REQUIRE(resonate_scheduler_add_system(scheduler, &first) == RESONATE_OK);
+        REQUIRE(resonate_scheduler_add_system(scheduler, &second) == RESONATE_OK);
+
+        resonate_scheduler_run_frame(scheduler, 0.016F);
+        REQUIRE(pair.sawEachOther.load());
+    }
+
+    SECTION("readers of one group")
+    {
+        ResonateSystemDesc first =
+            describeRun(&Rendezvous::first, &pair, RESONATE_STAGE_UPDATE, "first", TRANSFORMS, 0);
+        ResonateSystemDesc second =
+            describeRun(&Rendezvous::second, &pair, RESONATE_STAGE_UPDATE, "second", TRANSFORMS, 0);
+        REQUIRE(resonate_scheduler_add_system(scheduler, &first) == RESONATE_OK);
+        REQUIRE(resonate_scheduler_add_system(scheduler, &second) == RESONATE_OK);
+
+        resonate_scheduler_run_frame(scheduler, 0.016F);
+        REQUIRE(pair.sawEachOther.load());
+    }
+
+    resonate_scheduler_destroy(scheduler);
+}
+
+TEST_CASE("a stage returns only after its systems have finished", "[module][scheduler]")
+{
+    resonate::test::FakeHost fake;
+    ResonateScheduler* scheduler = nullptr;
+    REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
+
+    /* Disjoint groups, one slow: the run must not return while either is still
+       on a worker. */
+    SlowBody slow = {.spins = 500000};
+    SlowBody fast = {.spins = 0};
+
+    ResonateSystemDesc slow_desc =
+        describeRun(&SlowBody::run, &slow, RESONATE_STAGE_UPDATE, "slow", 0, TRANSFORMS);
+    ResonateSystemDesc fast_desc =
+        describeRun(&SlowBody::run, &fast, RESONATE_STAGE_UPDATE, "fast", 0, RENDER_LIST);
+    REQUIRE(resonate_scheduler_add_system(scheduler, &slow_desc) == RESONATE_OK);
+    REQUIRE(resonate_scheduler_add_system(scheduler, &fast_desc) == RESONATE_OK);
+
+    resonate_scheduler_run_frame(scheduler, 0.016F);
+
+    REQUIRE(slow.done.load());
+    REQUIRE(fast.done.load());
+
+    resonate_scheduler_destroy(scheduler);
+}
+
+TEST_CASE("an exclusive system is ordered against systems it does not conflict with",
+          "[module][scheduler]")
+{
+    resonate::test::FakeHost fake;
+    ResonateScheduler* scheduler = nullptr;
+    REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
+
+    std::atomic<std::uint32_t> inside{0};
+    std::atomic<std::uint32_t> worst{0};
+    std::atomic<std::uint32_t> next{0};
+    std::atomic<std::uint32_t> ranks[3] = {};
+    Racer racers[3] = {{&next, &ranks[0], &inside, &worst, 20000},
+                       {&next, &ranks[1], &inside, &worst, 20000},
+                       {&next, &ranks[2], &inside, &worst, 0}};
+
+    /* The middle one declares a group its neighbours do not touch; exclusive
+       still forces it between them, and nothing shares the stage with it. */
+    ResonateSystemDesc first =
+        describeRun(&Racer::run, &racers[0], RESONATE_STAGE_UPDATE, "first", 0, TRANSFORMS);
+    ResonateSystemDesc middle =
+        describeRun(&Racer::run, &racers[1], RESONATE_STAGE_UPDATE, "middle", 0, RENDER_LIST);
+    middle.exclusive_stage = 1;
+    ResonateSystemDesc last =
+        describeRun(&Racer::run, &racers[2], RESONATE_STAGE_UPDATE, "last", 0, AUDIO_MIX);
+
+    REQUIRE(resonate_scheduler_add_system(scheduler, &first) == RESONATE_OK);
+    REQUIRE(resonate_scheduler_add_system(scheduler, &middle) == RESONATE_OK);
+    REQUIRE(resonate_scheduler_add_system(scheduler, &last) == RESONATE_OK);
+
+    resonate_scheduler_run_frame(scheduler, 0.016F);
+
+    REQUIRE(worst.load() == 1);
+    for (std::uint32_t index = 0; index < 3U; ++index)
+    {
+        REQUIRE(ranks[index].load() == index);
+    }
 
     resonate_scheduler_destroy(scheduler);
 }

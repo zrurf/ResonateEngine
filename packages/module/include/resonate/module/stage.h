@@ -5,8 +5,11 @@
  * Frame stages and scheduling.
  *
  * A system registers work against a stage and declares the resource groups it
- * reads and writes. Systems run in registration order, and conflicting
- * registrations are reported when they are added.
+ * reads and writes. The systems of one stage run as a dependency graph: two
+ * systems whose declared groups do not conflict may run at the same time, and
+ * ones that conflict — or that declare no group at all — run one after another
+ * in registration order. A stage is a barrier: it returns once every one of its
+ * systems has completed.
  */
 
 #include "resonate/module/abi.h"
@@ -45,15 +48,18 @@ typedef struct ResonateSystemDesc
     ResonateSystemFn run;
 
     /* Bitmask of read and write groups. Two systems in the same stage that share
-       a group, with at least one of them writing, are reported as conflicting
-       when the second is added. Systems in different stages are ordered by the
-       schedule, so they are not compared. */
+       a group, with at least one of them writing, are serialised in registration
+       order and reported when the second is added. Systems in different stages
+       are separated by the stage barrier. A system that declares no group is
+       serialised with every other system of its stage: running in parallel is
+       opt-in, so declaring nothing is not a claim of independence. */
     ResonateResourceGroup reads;
     ResonateResourceGroup writes;
 
-    /* Set when a system must observe the frame's effects immediately, e.g.
-       physics. Recorded, but the scheduler runs one stage at a time and does not
-       yet act on it. */
+    /* Set when a system must not share its stage with anything, e.g. physics:
+       it starts only after every system registered before it in the stage has
+       completed, and every system after it waits for its completion. Takes
+       effect in addition to the resource groups. */
     int exclusive_stage;
 
     void* context;
@@ -80,7 +86,8 @@ void resonate_scheduler_remove_system(ResonateScheduler* scheduler, const char* 
 void resonate_scheduler_remove_system_exact(ResonateScheduler* scheduler, const char* name,
                                             ResonateSystemFn run, void* context);
 
-/* Runs the systems of one stage, in registration order. */
+/* Runs one stage's dependency graph and returns when all of its systems have
+   completed. */
 void resonate_scheduler_run_stage(ResonateScheduler* scheduler, ResonateStage stage,
                                   float delta_seconds);
 
