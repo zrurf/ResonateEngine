@@ -48,7 +48,7 @@ target("ResonateEngine.Tests")
     set_group("tests")
 
     add_files("main.cpp", "render/**.cpp", "core/**.cpp", "module/**.cpp", "pal/**.cpp",
-              "runtime/**.cpp", "window/**.cpp")
+              "runtime/**.cpp", "window/**.cpp", "ecs/**.cpp")
     add_tests("default")
 
     -- For paths.h, which every test that needs a build artifact includes.
@@ -59,7 +59,8 @@ target("ResonateEngine.Tests")
     -- package that owns the domain, not to the plugin that implements it.
     add_deps("ResonateEngine.Module", "ResonateEngine.Window", "ResonateEngine.Render",
              "ResonateEngine.UI.Abi", "ResonateEngine.PAL", "ResonateEngine.Runtime",
-             "ResonateEngine.Core.Container", "ResonateEngine.Core.Math", "ResonateEngine.Core.Job")
+             "ResonateEngine.Core.Container", "ResonateEngine.Core.Math", "ResonateEngine.Core.Job",
+             "ResonateEngine.ECS")
 
     -- The plugins, order-only: their directory is what the end-to-end tests load,
     -- and a `xmake test` that did not build them once reported a green suite whose

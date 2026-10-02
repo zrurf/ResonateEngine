@@ -8,13 +8,14 @@ Licensed under Apache-2.0 with the LLVM exception (see [LICENSE](LICENSE)).
 ```
 packages/pal          platform abstraction: chrono, event, io, memory, sync, thread
 packages/core         containers, memory, math, jobs
+packages/ecs          the authoritative state: archetype storage, queries, commands
 packages/module       plugin ABI: the C contract and the C++ authoring layer
 packages/render       the render domain's interfaces: the target and the device
 packages/window       window and input (SDL3), statically linked
 packages/physics      the physics domain's interface
 packages/audio        the audio domain's interface
 packages/ui           the UI domain's interface
-packages/runtime      frame loop, ECS seam, asset registry, application entry
+packages/runtime      frame loop, module host, asset registry, application entry
 packages/startup      the run the launcher and the editor share
 packages/modules/*    the plugins themselves: physics, audio, render, ui
 packages/editor       editor binary

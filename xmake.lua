@@ -126,6 +126,7 @@ task("format")
 
 includes("packages/pal")
 includes("packages/core")
+includes("packages/ecs")
 includes("packages/module")
 includes("packages/render")
 includes("packages/window")
