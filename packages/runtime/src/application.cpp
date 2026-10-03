@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <resonate/core/allocator.h>
+#include <resonate/ecs/world.h>
 #include <resonate/module/host.hpp>
 #include <resonate/pal/chrono.h>
 #include <resonate/pal/io.h>
@@ -114,12 +115,18 @@ Application::Config Application::configFromCommandLine(const std::vector<std::st
 
 int Application::run(const Config& config)
 {
+    /* The world is the run's state, declared before the host because the host
+       borrows it: its systems' command buffers release reservations through it,
+       so the world has to be the one that outlives them. */
+    ecs::World world(systemAllocator());
+
     std::unique_ptr<ModuleHost> host = ModuleHost::create(systemAllocator());
     if (host == nullptr)
     {
         std::fprintf(stderr, "resonate: the module host could not be created\n");
         return EXIT_FAILURE;
     }
+    host->setWorld(&world);
 
     if (config.publish)
     {
@@ -127,6 +134,18 @@ int Application::run(const Config& config)
         if (published != RESONATE_OK)
         {
             std::fprintf(stderr, "resonate: the host's own capabilities were not published\n");
+            return EXIT_FAILURE;
+        }
+    }
+
+    /* The run's own C++ systems, registered before the modules attach: they are
+       known first, so a module that collides with one gets the report. */
+    if (config.systems)
+    {
+        const ResonateStatus registered = config.systems(*host, world);
+        if (registered != RESONATE_OK)
+        {
+            std::fprintf(stderr, "resonate: the run's systems were not registered\n");
             return EXIT_FAILURE;
         }
     }

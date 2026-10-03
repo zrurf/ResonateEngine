@@ -41,6 +41,12 @@ typedef uint32_t ResonateResourceGroup;
 
 typedef void (*ResonateSystemFn)(void* context, float delta_seconds);
 
+/* A system that works on the world: called instead of `run` when set. The world
+   and the command buffer are the host's — a system records structural changes
+   into `commands` and the frame's sync points play it. */
+typedef void (*ResonateSystemWorldFn)(void* context, ResonateWorld* world,
+                                      ResonateCommands* commands, float delta_seconds);
+
 typedef struct ResonateSystemDesc
 {
     uint32_t struct_size;
@@ -66,7 +72,35 @@ typedef struct ResonateSystemDesc
 
     /* Names the system in conflict reports and for removal. */
     const char* name;
+
+    /*
+     * The world-aware form, appended after the fields above: a descriptor from
+     * a header older than these keeps working, because they are read only when
+     * struct_size covers them (a zero size claims nothing past the base).
+     *
+     * run_world, when set, is called instead of run with the host-filled world
+     * handle and this system's own command buffer. Structural changes go into
+     * that buffer and play at the frame's sync points. A world-aware system is
+     * serialised with every other system of its stage, groups or not: recording
+     * shares the world's slot table, which takes one thread.
+     */
+    ResonateSystemWorldFn run_world;
+
+    /* Filled by the host at registration, never by the caller. */
+    ResonateWorld* world;
+    ResonateCommands* commands;
 } ResonateSystemDesc;
+
+/* How much of a descriptor is always there, whatever the writer's size says. */
+#define RESONATE_SYSTEM_DESC_BASE_SIZE ((uint32_t)offsetof(ResonateSystemDesc, run_world))
+
+/* Whether the writer's struct_size covers the world-aware tail. Anything that
+   claims less — an older descriptor, a zero — reads as the base alone, so the
+   reader never touches a tail the writer did not write. */
+static inline int resonate_system_desc_has_world(const ResonateSystemDesc* desc)
+{
+    return desc->struct_size >= (uint32_t)sizeof(ResonateSystemDesc);
+}
 
 typedef struct ResonateScheduler ResonateScheduler;
 
@@ -92,7 +126,10 @@ void resonate_scheduler_run_stage(ResonateScheduler* scheduler, ResonateStage st
                                   float delta_seconds);
 
 /* Runs every stage from EARLY_UPDATE through PRESENT; RESONATE_STAGE_LOADING is
-   one-shot and not part of the frame. */
+   one-shot and not part of the frame. This is the schedule alone: the command
+   buffers a world-aware system records into are played by the host's frame
+   (ModuleHost::runFrame), which is what puts the sync points between the
+   stages. */
 void resonate_scheduler_run_frame(ResonateScheduler* scheduler, float delta_seconds);
 
 #ifdef __cplusplus

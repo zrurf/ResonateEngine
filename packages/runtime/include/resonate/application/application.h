@@ -10,12 +10,20 @@
 namespace resonate
 {
 
+class ModuleHost;
+
+namespace ecs
+{
+class World;
+}
+
 /* Startup sequence shared by the launcher and the editor.
  *
- * The runtime knows nothing about displays. It owns the module host and the frame
- * loop; whatever the host itself provides and whatever it does per frame arrive
- * as two hooks the caller supplies, so a windowed run, an offscreen run and a
- * server are the same loop with different wiring. */
+ * The runtime knows nothing about displays. It owns the module host, the world
+ * the run's systems record into, and the frame loop; whatever the host itself
+ * provides and whatever it does per frame arrive as hooks the caller supplies,
+ * so a windowed run, an offscreen run and a server are the same loop with
+ * different wiring. */
 class Application
 {
   public:
@@ -32,6 +40,12 @@ class Application
            that requires one of the host's capabilities finds it in the registry.
            Empty means the host provides nothing of its own. */
         std::function<ResonateStatus(ResonateCapabilityRegistry*)> publish;
+
+        /* Called once, after the host exists and the run's world is set, before
+           the modules attach: the run's own C++ systems register here, through
+           addEngineSystem. Empty means the schedule carries plugin systems
+           only. */
+        std::function<ResonateStatus(ModuleHost&, ecs::World&)> systems;
 
         /* Called at the top of every frame, before the stages run. Returning
            false ends the run, which is how a window reports a quit request.

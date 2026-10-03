@@ -481,7 +481,7 @@ TEST_CASE("one hundred thousand entities: create, component churn and destroy",
                 rate / 1e6, seconds * 1e3);
 
     REQUIRE(world.entityCount() == 0U);
-    /* A floor, not the design's 10M reference line: this catches a storage that
-       stopped storing, while surviving sanitizer builds on a loaded machine. */
+    /* A wide floor: it catches a storage that stopped storing, while surviving
+       a sanitizer build on a loaded machine. */
     REQUIRE(rate > 1.0e6);
 }

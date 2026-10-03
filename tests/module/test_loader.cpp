@@ -8,6 +8,7 @@
 
 #include <resonate/core/allocator.h>
 #include <resonate/core/job.h>
+#include <resonate/ecs/world.h>
 #include <resonate/module/host.hpp>
 #include <resonate/module/module.hpp>
 #include <resonate/pal/io.h>
@@ -478,4 +479,66 @@ TEST_CASE("the host exposes the job pool its schedule runs on", "[module][loader
 
     REQUIRE_FALSE(ran_while_held);
     REQUIRE(gate.system_ran.load());
+}
+
+TEST_CASE("a module registers a world-aware system only when the run has a world",
+          "[module][loader]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("probe-plugins");
+    INFO("the probe module is a build dependency of this test target");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    SECTION("with a world, the system runs on the handles the host filled in")
+    {
+        /* Both outlive the host: unloading a module runs its static destructors,
+           which report through the log, and the command buffers a world-aware
+           system holds release through the world. */
+        LogCollector log;
+        resonate::ecs::World world(resonate::systemAllocator());
+
+        auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+        REQUIRE(host != nullptr);
+        host->setLogSink(&log, &LogCollector::sink);
+
+        /* Set before the modules attach: that is when a world-aware
+           registration is filled from it. */
+        host->setWorld(&world);
+        REQUIRE(host->world() == &world);
+
+        REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+        REQUIRE(host->resolve() == RESONATE_OK);
+        REQUIRE(host->attachAll() == RESONATE_OK);
+        REQUIRE_FALSE(log.contains("probe.world ticked"));
+
+        log.lines.clear();
+        host->runFrame(1.0F / 60.0F);
+        REQUIRE(log.contains("probe.world ticked with the world and its commands"));
+        REQUIRE(log.contains("probe.removed ticked"));
+
+        host->detachAll();
+        host.reset();
+    }
+
+    SECTION("without one, the module does not register it")
+    {
+        LogCollector log;
+
+        auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+        REQUIRE(host != nullptr);
+        host->setLogSink(&log, &LogCollector::sink);
+
+        REQUIRE(host->world() == nullptr);
+
+        REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+        REQUIRE(host->resolve() == RESONATE_OK);
+        REQUIRE(host->attachAll() == RESONATE_OK);
+
+        log.lines.clear();
+        host->runFrame(1.0F / 60.0F);
+        REQUIRE(log.contains("probe.removed ticked"));
+        REQUIRE_FALSE(log.contains("probe.world"));
+
+        host->detachAll();
+        host.reset();
+    }
 }

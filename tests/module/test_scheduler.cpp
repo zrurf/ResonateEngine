@@ -496,3 +496,178 @@ TEST_CASE("registration keeps working past the initial capacity", "[module][sche
 
     resonate_scheduler_destroy(scheduler);
 }
+
+namespace
+{
+
+/* A system that carries both run forms, so a test can tell which one the
+   schedule called: only one context, so both would write to the same object. */
+struct DualRunner
+{
+    int plain = 0;
+    int world = 0;
+    ResonateWorld* seen_world = nullptr;
+    ResonateCommands* seen_commands = nullptr;
+    float seen_delta = 0.0F;
+
+    static void run(void* context, float)
+    {
+        ++static_cast<DualRunner*>(context)->plain;
+    }
+
+    static void runWorld(void* context, ResonateWorld* world, ResonateCommands* commands,
+                         float delta)
+    {
+        auto* self = static_cast<DualRunner*>(context);
+        self->seen_world = world;
+        self->seen_commands = commands;
+        self->seen_delta = delta;
+        ++self->world;
+    }
+};
+
+ResonateSystemDesc describeWorld(void* context, ResonateStage stage, const char* name,
+                                 ResonateResourceGroup reads, ResonateResourceGroup writes)
+{
+    ResonateSystemDesc desc = describeRun(nullptr, context, stage, name, reads, writes);
+    desc.run = &DualRunner::run;
+    desc.run_world = &DualRunner::runWorld;
+    return desc;
+}
+
+} // namespace
+
+TEST_CASE("a world-aware system is called with the handles it was registered with",
+          "[module][scheduler]")
+{
+    resonate::test::FakeHost fake;
+    ResonateScheduler* scheduler = nullptr;
+    REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
+
+    int world_marker = 0;
+    int commands_marker = 0;
+    ResonateWorld world = {};
+    world.instance = &world_marker;
+    ResonateCommands commands = {};
+    commands.instance = &commands_marker;
+
+    DualRunner runner;
+    ResonateSystemDesc desc = describeWorld(&runner, RESONATE_STAGE_UPDATE, "world", 0, 0);
+    desc.world = &world;
+    desc.commands = &commands;
+    REQUIRE(resonate_scheduler_add_system(scheduler, &desc) == RESONATE_OK);
+
+    resonate_scheduler_run_frame(scheduler, 0.016F);
+
+    /* The world-aware form replaces the plain one rather than adding to it. */
+    REQUIRE(runner.plain == 0);
+    REQUIRE(runner.world == 1);
+    REQUIRE(runner.seen_world == &world);
+    REQUIRE(runner.seen_commands == &commands);
+    REQUIRE(runner.seen_delta == 0.016F);
+
+    resonate_scheduler_destroy(scheduler);
+}
+
+TEST_CASE("a descriptor that does not cover the world-aware fields keeps its plain run",
+          "[module][scheduler]")
+{
+    for (const uint32_t covered : {RESONATE_SYSTEM_DESC_BASE_SIZE, 0U})
+    {
+        resonate::test::FakeHost fake;
+        ResonateScheduler* scheduler = nullptr;
+        REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
+
+        DualRunner runner;
+        ResonateSystemDesc desc = describeWorld(&runner, RESONATE_STAGE_UPDATE, "legacy", 0, 0);
+        desc.struct_size = covered;
+
+        /* Filled in anyway, the way an uninitialised tail would be: the size is
+           the writer's claim, and it does not cover the tail. */
+        REQUIRE(resonate_scheduler_add_system(scheduler, &desc) == RESONATE_OK);
+        resonate_scheduler_run_frame(scheduler, 0.016F);
+
+        INFO("struct_size " << covered);
+        REQUIRE(runner.plain == 1);
+        REQUIRE(runner.world == 0);
+
+        resonate_scheduler_destroy(scheduler);
+    }
+
+    /* Below the base is not a descriptor of any version. */
+    resonate::test::FakeHost fake;
+    ResonateScheduler* scheduler = nullptr;
+    REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
+
+    ResonateSystemDesc too_small =
+        describeRun(nullptr, nullptr, RESONATE_STAGE_UPDATE, "too-small", 0, 0);
+    too_small.struct_size = RESONATE_SYSTEM_DESC_BASE_SIZE - 1U;
+    REQUIRE(resonate_scheduler_add_system(scheduler, &too_small) == RESONATE_E_VERSION);
+
+    resonate_scheduler_destroy(scheduler);
+}
+
+TEST_CASE("a world-aware system is ordered against every other system of its stage",
+          "[module][scheduler]")
+{
+    resonate::test::FakeHost fake;
+    ResonateScheduler* scheduler = nullptr;
+    REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
+
+    std::atomic<std::uint32_t> inside{0};
+    std::atomic<std::uint32_t> worst{0};
+    std::atomic<std::uint32_t> next{0};
+    std::atomic<std::uint32_t> ranks[3] = {};
+    Racer racers[3] = {{&next, &ranks[0], &inside, &worst, 20000},
+                       {&next, &ranks[1], &inside, &worst, 20000},
+                       {&next, &ranks[2], &inside, &worst, 0}};
+
+    /* The middle registration is world-aware and declares a group its
+       neighbours do not touch. Recording shares the world's slot table, so it
+       takes one thread: the whole stage still runs it alone, in registration
+       order. */
+    struct WorldRacer
+    {
+        Racer* racer = nullptr;
+        static void run(void* context, ResonateWorld*, ResonateCommands*, float)
+        {
+            Racer::run(static_cast<WorldRacer*>(context)->racer, 0.0F);
+        }
+    };
+    WorldRacer world_racer{&racers[1]};
+
+    ResonateSystemDesc first =
+        describeRun(&Racer::run, &racers[0], RESONATE_STAGE_UPDATE, "first", 0, TRANSFORMS);
+    ResonateSystemDesc middle =
+        describeRun(nullptr, &world_racer, RESONATE_STAGE_UPDATE, "middle", 0, RENDER_LIST);
+    middle.run_world = &WorldRacer::run;
+    ResonateSystemDesc last =
+        describeRun(&Racer::run, &racers[2], RESONATE_STAGE_UPDATE, "last", 0, AUDIO_MIX);
+
+    REQUIRE(resonate_scheduler_add_system(scheduler, &first) == RESONATE_OK);
+    REQUIRE(resonate_scheduler_add_system(scheduler, &middle) == RESONATE_OK);
+    REQUIRE(resonate_scheduler_add_system(scheduler, &last) == RESONATE_OK);
+
+    resonate_scheduler_run_frame(scheduler, 0.016F);
+
+    REQUIRE(worst.load() == 1);
+    for (std::uint32_t index = 0; index < 3U; ++index)
+    {
+        REQUIRE(ranks[index].load() == index);
+    }
+
+    resonate_scheduler_destroy(scheduler);
+}
+
+TEST_CASE("a descriptor with neither run function is refused", "[module][scheduler]")
+{
+    resonate::test::FakeHost fake;
+    ResonateScheduler* scheduler = nullptr;
+    REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
+
+    ResonateSystemDesc desc = describeRun(nullptr, nullptr, RESONATE_STAGE_UPDATE, "empty", 0, 0);
+    desc.run = nullptr;
+    REQUIRE(resonate_scheduler_add_system(scheduler, &desc) == RESONATE_E_INVALID);
+
+    resonate_scheduler_destroy(scheduler);
+}

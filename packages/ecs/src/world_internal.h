@@ -26,7 +26,7 @@ inline constexpr std::uint32_t kChunkBytes = 16U * 1024U;
 inline constexpr std::uint32_t kChunkAlignment = 64U;
 
 /* Combination explosion shows up as archetype count long before it shows up as
-   memory; this is the design's warning threshold. */
+   memory, and this is the count worth a warning. */
 inline constexpr std::size_t kArchetypeWarnCount = 200U;
 
 using ArchetypeIndex = std::uint16_t;
@@ -84,7 +84,7 @@ struct Chunk
     std::uint32_t count = 0;
 
     /* Bumped on every structural change to this chunk. A view made before one
-       is stale; ChunkView::valid() reports it (law 6). */
+       is stale; ChunkView::valid() reports it. */
     std::uint32_t version = 0;
 };
 
@@ -243,6 +243,18 @@ struct WorldImpl
     std::atomic<ChangeTick> typeTicks[kMaxComponentTypes] = {};
     std::atomic<std::uint32_t> parallelDepth{0};
 
+    struct ObserverEntry
+    {
+        void* user_data = nullptr;
+        World::ChangeObserver observer = nullptr;
+    };
+
+    std::vector<ObserverEntry> observers[kMaxComponentTypes];
+
+    /* Non-zero while an observer runs: a structural change inside one would move
+       rows under the announcement. */
+    std::uint32_t dispatching = 0;
+
     /* --- reporting: error paths only, so the cost is the message itself --- */
 
     void say(World::Report level, const char* format, ...)
@@ -269,12 +281,18 @@ struct WorldImpl
 
     bool structural()
     {
+        if (dispatching != 0U)
+        {
+            say(World::Report::Error,
+                "structural change refused: a change observer is running; record it in a command "
+                "buffer");
+            return false;
+        }
         if (parallelDepth.load(std::memory_order_relaxed) == 0U)
         {
             return true;
         }
-        say(World::Report::Error,
-            "structural change refused: parallel execution is in flight (law 2)");
+        say(World::Report::Error, "structural change refused: parallel execution is in flight");
         return false;
     }
 

@@ -3,11 +3,14 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include <yyjson.h>
 
+#include <resonate/ecs/command_buffer.h>
+#include <resonate/ecs/world.h>
 #include <resonate/module/message.h>
 #include <resonate/module/signal.h>
 #include <resonate/pal/io.h>
@@ -188,6 +191,38 @@ struct ModuleHost::Impl
     void* log_user_data = nullptr;
     ResonateLogFn log_sink = nullptr;
 
+    /* The world this run's systems record into, borrowed from whoever owns it,
+       and the handle the ABI hands out for it. */
+    ecs::World* world = nullptr;
+    ResonateWorld world_handle = {};
+
+    /* One per world-aware registration: a command buffer of that system's own,
+       and the handle the descriptor carries. Held by pointer because a system
+       keeps the handle across frames, so its address must not move. */
+    struct RecordedSystem
+    {
+        std::string name;
+        ResonateSystemFn run = nullptr;
+        void* context = nullptr;
+        std::unique_ptr<ecs::CommandBuffer> buffer;
+        ResonateCommands handle = {};
+    };
+    std::vector<std::unique_ptr<RecordedSystem>> recorded;
+
+    /* Registers a system, allocating the world-aware form's handles when the
+       descriptor asks for them. Both the module facility and the host's own
+       registrations come through here. */
+    ResonateStatus addSystem(const ResonateSystemDesc& desc);
+
+    /* Sync point: plays every non-empty buffer in registration order. */
+    void playRecorded();
+
+    /* Frame end: reports and drops what no sync point will reach any more. */
+    void discardRecorded();
+
+    /* Frees the buffer of a system that is being removed. */
+    void dropRecorded(const std::string& name, ResonateSystemFn run, void* context);
+
     void write(int32_t level, const std::string& message)
     {
         if (log_sink != nullptr)
@@ -246,6 +281,7 @@ struct ModuleHost::Impl
         context->api.message_cursor_begin = &Impl::messageCursorBeginForModule;
         context->api.system_add = &Impl::systemAddForModule;
         context->api.system_remove = &Impl::systemRemoveForModule;
+        context->api.world = &Impl::worldForModule;
 
         contexts.push_back(context);
         return context;
@@ -298,6 +334,7 @@ struct ModuleHost::Impl
 
     static ResonateStatus systemAddForModule(void* user_data, const ResonateSystemDesc* desc);
     static void systemRemoveForModule(void* user_data, const char* name);
+    static ResonateWorld* worldForModule(void* user_data);
 
     /* Withdraws every host resource this module took: the capabilities it
        published and the facility storage it created. Runs for a module that
@@ -323,6 +360,14 @@ void* queryInterface(void* user_data, ResonateId id, uint32_t min_version, uint3
 {
     return resonate_capability_find(static_cast<ModuleHost::Impl*>(user_data)->registry, id,
                                     min_version, out_version);
+}
+
+/* The host-side half of the world accessor; the module-facing half reads its
+   Context, because that is what user_data is on the other side. */
+ResonateWorld* worldOfHost(void* user_data)
+{
+    ModuleHost::Impl* impl = static_cast<ModuleHost::Impl*>(user_data);
+    return impl->world != nullptr ? &impl->world_handle : nullptr;
 }
 
 /* The host reads no configuration file yet, so every key is unset and a module
@@ -606,6 +651,92 @@ ModuleHost::Impl::messageCursorBeginForModule(void*, const ResonateMessageStream
     return resonate_message_cursor_begin(stream);
 }
 
+ResonateStatus ModuleHost::Impl::addSystem(const ResonateSystemDesc& desc)
+{
+    ResonateSystemDesc filled = desc;
+    const bool world_aware =
+        resonate_system_desc_has_world(&desc) != 0 && desc.run_world != nullptr;
+
+    if (!world_aware)
+    {
+        return resonate_scheduler_add_system(scheduler, &filled);
+    }
+
+    if (world == nullptr)
+    {
+        write(RESONATE_LOG_ERROR, std::string("system '") +
+                                      (desc.name != nullptr ? desc.name : "") +
+                                      "' is world-aware, but this run has no world");
+        return RESONATE_E_STATE;
+    }
+
+    auto entry = std::make_unique<RecordedSystem>();
+    entry->name = desc.name != nullptr ? desc.name : "";
+    entry->run = desc.run;
+    entry->context = desc.context;
+    entry->buffer = std::make_unique<ecs::CommandBuffer>(*world);
+    entry->handle.instance = entry->buffer.get();
+
+    filled.struct_size = sizeof(ResonateSystemDesc);
+    filled.world = &world_handle;
+    filled.commands = &entry->handle;
+
+    const ResonateStatus status = resonate_scheduler_add_system(scheduler, &filled);
+    if (status == RESONATE_OK)
+    {
+        recorded.push_back(std::move(entry));
+    }
+    return status;
+}
+
+void ModuleHost::Impl::playRecorded()
+{
+    if (world == nullptr)
+    {
+        return;
+    }
+
+    for (const std::unique_ptr<RecordedSystem>& entry : recorded)
+    {
+        if (entry->buffer->empty())
+        {
+            continue;
+        }
+
+        /* Refused as a whole while parallel execution is in flight, reported
+           there, and left holding its commands for the next sync point. */
+        world->play(*entry->buffer);
+    }
+}
+
+void ModuleHost::Impl::discardRecorded()
+{
+    for (const std::unique_ptr<RecordedSystem>& entry : recorded)
+    {
+        if (entry->buffer->empty())
+        {
+            continue;
+        }
+
+        write(RESONATE_LOG_WARN, "system '" + entry->name + "' recorded " +
+                                     std::to_string(entry->buffer->commandCount()) +
+                                     " command(s) after the last sync point; dropped");
+        entry->buffer->clear();
+    }
+}
+
+void ModuleHost::Impl::dropRecorded(const std::string& name, ResonateSystemFn run, void* context)
+{
+    for (auto entry = recorded.begin(); entry != recorded.end(); ++entry)
+    {
+        if ((*entry)->name == name && (*entry)->run == run && (*entry)->context == context)
+        {
+            recorded.erase(entry);
+            return;
+        }
+    }
+}
+
 ResonateStatus ModuleHost::Impl::systemAddForModule(void* user_data, const ResonateSystemDesc* desc)
 {
     auto* context = static_cast<Context*>(user_data);
@@ -614,13 +745,19 @@ ResonateStatus ModuleHost::Impl::systemAddForModule(void* user_data, const Reson
         return RESONATE_E_INVALID;
     }
 
-    const ResonateStatus status = resonate_scheduler_add_system(context->impl->scheduler, desc);
+    const ResonateStatus status = context->impl->addSystem(*desc);
     if (status == RESONATE_OK)
     {
-        context->systems.push_back({desc->name != nullptr ? desc->name : "", desc->run,
-                                    desc->context});
+        context->systems.push_back(
+            {desc->name != nullptr ? desc->name : "", desc->run, desc->context});
     }
     return status;
+}
+
+ResonateWorld* ModuleHost::Impl::worldForModule(void* user_data)
+{
+    auto* context = static_cast<Context*>(user_data);
+    return context->impl->world != nullptr ? &context->impl->world_handle : nullptr;
 }
 
 void ModuleHost::Impl::systemRemoveForModule(void* user_data, const char* name)
@@ -648,6 +785,7 @@ void ModuleHost::Impl::systemRemoveForModule(void* user_data, const char* name)
         }
         resonate_scheduler_remove_system_exact(context->impl->scheduler, key.c_str(), entry->run,
                                                entry->context);
+        context->impl->dropRecorded(entry->name, entry->run, entry->context);
         entry = systems.erase(entry);
     }
 }
@@ -696,6 +834,7 @@ std::unique_ptr<ModuleHost> ModuleHost::create(Allocator& allocator)
     impl->host_api.register_capability = &registerCapability;
     impl->host_api.unregister_capability = &unregisterCapability;
     impl->host_api.log = &writeLog;
+    impl->host_api.world = &worldOfHost;
 
     /* The facility entry points are left null here on purpose: they are the
        module-facing half, installed per module in contextOf, and the host reaches
@@ -995,10 +1134,10 @@ void ModuleHost::Impl::reclaim(ModuleRecord& record)
     {
         const Context::RegisteredSystem system = context->systems.back();
         context->systems.pop_back();
-        writeFrom(RESONATE_LOG_WARN, record.manifest.id,
-                  "left a system registered through detach");
+        writeFrom(RESONATE_LOG_WARN, record.manifest.id, "left a system registered through detach");
         resonate_scheduler_remove_system_exact(scheduler, system.name.c_str(), system.run,
                                                system.context);
+        dropRecorded(system.name, system.run, system.context);
     }
 
     /* And the memory: everything the module took from the allocator and did not
@@ -1013,9 +1152,49 @@ void ModuleHost::Impl::reclaim(ModuleRecord& record)
     }
 }
 
+void ModuleHost::setWorld(ecs::World* world) noexcept
+{
+    impl_->world = world;
+    impl_->world_handle.instance = world;
+}
+
+ecs::World* ModuleHost::world() const noexcept
+{
+    return impl_->world;
+}
+
+ResonateStatus ModuleHost::addSystem(const ResonateSystemDesc& desc)
+{
+    return impl_->addSystem(desc);
+}
+
+void ModuleHost::runStage(ResonateStage stage, float delta_seconds)
+{
+    resonate_scheduler_run_stage(impl_->scheduler, stage, delta_seconds);
+}
+
+void ModuleHost::playRecordedCommands()
+{
+    impl_->playRecorded();
+}
+
 void ModuleHost::runFrame(float delta_seconds)
 {
-    resonate_scheduler_run_frame(impl_->scheduler, delta_seconds);
+    /* The frame's spine, with a sync point after UPDATE and one after PHYSICS:
+       what a system records plays before the next stage runs, so a spawn is
+       visible to the same frame's physics and drawable by its render. */
+    runStage(RESONATE_STAGE_EARLY_UPDATE, delta_seconds);
+    runStage(RESONATE_STAGE_UPDATE, delta_seconds);
+    playRecordedCommands(); /* sync point A */
+    runStage(RESONATE_STAGE_PHYSICS, delta_seconds);
+    playRecordedCommands(); /* sync point B */
+    runStage(RESONATE_STAGE_LATE_UPDATE, delta_seconds);
+    runStage(RESONATE_STAGE_RENDER, delta_seconds);
+    runStage(RESONATE_STAGE_PRESENT, delta_seconds);
+
+    /* No sync point is left this frame, so what is still recorded is reported
+       and dropped rather than silently carried into the next frame. */
+    impl_->discardRecorded();
 }
 
 const std::vector<ModuleRecord*>& ModuleHost::order() const noexcept

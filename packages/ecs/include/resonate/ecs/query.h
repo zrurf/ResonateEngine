@@ -35,9 +35,9 @@ struct QueryDesc
 
 /* One chunk's dense contents, as an iteration body sees it. Pointers live for
    the duration of the body only: a structural change invalidates them, and one
-   during iteration is refused — law 2's command buffer is the path. Concurrent
-   bodies (parallel iteration) each have their own chunk; a body must not touch
-   another chunk's arrays. */
+   during iteration is refused, so such a change goes into a command buffer.
+   Concurrent bodies (parallel iteration) each have their own chunk; a body must
+   not touch another chunk's arrays. */
 struct ChunkView
 {
     /* One component of the chunk's archetype. */
@@ -56,8 +56,8 @@ struct ChunkView
     std::uint32_t columnCount = 0;
 
     /* The chunk this view was made from and the structural change count at that
-       moment. A view is only usable until something structural happens to the
-       chunk; `valid()` reports whether one did (law 6). */
+       moment. A view is usable only until something structural happens to the
+       chunk; `valid()` reports whether one did. */
     const void* chunk = nullptr;
     std::uint32_t version = 0;
 

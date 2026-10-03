@@ -21,14 +21,14 @@
  * per-entity tick array.
  *
  * Storage and playback layer: structural changes belong in the entity command
- * buffer (law 2), and the buffer, tests and benchmarks are what call the
- * primitives below. Any structural change is refused while parallel execution
- * is in flight.
+ * buffer, and the buffer, tests and benchmarks are what call the primitives
+ * below. Any structural change is refused while parallel execution is in
+ * flight.
  *
- * Handle discipline (law 6): every access validates the generation and reports
- * the failure; a stale or dead handle fails rather than touching another
- * entity's data. Pointers into a chunk (component addresses) are only valid
- * until the next structural change.
+ * Handle discipline: every access validates the generation and reports the
+ * failure; a stale or dead handle fails rather than touching another entity's
+ * data. Pointers into a chunk (component addresses) are only valid until the
+ * next structural change.
  */
 
 namespace resonate::ecs
@@ -168,6 +168,33 @@ class World
        barrier arrives. */
     void play(CommandBuffer& buffer);
 
+    /* --- change observers --- */
+
+    /* Called for every entity a component arrives on, is stamped on or leaves,
+       from a played command or a direct write alike, with the world in its
+       post-change state; in registration order, on the thread that made the
+       change. A callback must not change structure — a structural call from it
+       is refused and reported. Entity destruction is not announced here. */
+    using ChangeObserver = void (*)(void* user_data, World& world, Entity entity,
+                                    ComponentIndex component);
+
+    /* False, with a report, for a component this world did not register or an
+       observer that is null. */
+    bool addObserver(ComponentIndex component, void* user_data, ChangeObserver observer);
+
+    /* Dropping one that was never added is a no-op. */
+    void removeObserver(ComponentIndex component, void* user_data, ChangeObserver observer);
+
+    template <typename T> bool addObserver(void* user_data, ChangeObserver observer)
+    {
+        return addObserver(ComponentTraits<T>::index, user_data, observer);
+    }
+
+    template <typename T> void removeObserver(void* user_data, ChangeObserver observer)
+    {
+        removeObserver(ComponentTraits<T>::index, user_data, observer);
+    }
+
     /* --- change detection --- */
 
     /* Stamps the entity's tick for the component and advances the type's global
@@ -240,6 +267,9 @@ class World
 
     /* The erased registration the template above funnels into. */
     ComponentIndex registerComponent(const char* name, std::uint32_t size, std::uint32_t alignment);
+
+    /* Calls the observers of one component, in registration order. */
+    void notifyChange(Entity entity, ComponentIndex component);
 
     void enterParallel() noexcept;
     void leaveParallel() noexcept;

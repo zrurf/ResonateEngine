@@ -183,6 +183,14 @@ class Host
         api_->system_remove(api_->user_data, owned.c_str());
     }
 
+    /* The run's ECS world, or nullptr when this run has none. What a module asks
+       before registering a world-aware system, since one cannot be registered
+       without a world to record into. */
+    [[nodiscard]] ResonateWorld* world() const noexcept
+    {
+        return hasFacilities() && api_->world != nullptr ? api_->world(api_->user_data) : nullptr;
+    }
+
   private:
     const ResonateHostApi* api_ = nullptr;
 };

@@ -102,6 +102,53 @@ Query World::createQuery(const QueryDesc& desc)
     return Query(*this, desc);
 }
 
+bool World::addObserver(ComponentIndex component, void* user_data, ChangeObserver observer)
+{
+    if (!impl_->requireType(component, "addObserver"))
+    {
+        return false;
+    }
+    if (observer == nullptr)
+    {
+        impl_->say(Report::Error, "addObserver: observer for component %u is null", component);
+        return false;
+    }
+
+    impl_->observers[component].push_back(detail::WorldImpl::ObserverEntry{user_data, observer});
+    return true;
+}
+
+void World::removeObserver(ComponentIndex component, void* user_data, ChangeObserver observer)
+{
+    if (!impl_->hasType(component))
+    {
+        return;
+    }
+
+    std::vector<detail::WorldImpl::ObserverEntry>& entries = impl_->observers[component];
+    entries.erase(
+        std::remove_if(entries.begin(), entries.end(),
+                       [user_data, observer](const detail::WorldImpl::ObserverEntry& entry)
+                       { return entry.observer == observer && entry.user_data == user_data; }),
+        entries.end());
+}
+
+void World::notifyChange(Entity entity, ComponentIndex component)
+{
+    const std::vector<detail::WorldImpl::ObserverEntry>& entries = impl_->observers[component];
+    if (entries.empty())
+    {
+        return;
+    }
+
+    ++impl_->dispatching;
+    for (const detail::WorldImpl::ObserverEntry& entry : entries)
+    {
+        entry.observer(entry.user_data, *this, entity, component);
+    }
+    --impl_->dispatching;
+}
+
 std::uint32_t World::componentTypeCount() const noexcept
 {
     return impl_->registeredCount;
@@ -237,6 +284,7 @@ void* World::add(Entity entity, ComponentIndex component, const void* value)
 
     /* The component arrived with a value: that is a change to announce. */
     impl_->stamp(*record, component);
+    notifyChange(entity, component);
     return pointer;
 }
 
@@ -267,6 +315,10 @@ bool World::remove(Entity entity, ComponentIndex component)
     {
         return false;
     }
+
+    /* Gone is a change like arrived is: with no stamp left on the entity, the
+       observers are what announces it. */
+    notifyChange(entity, component);
     return true;
 }
 
@@ -288,6 +340,7 @@ void World::markChanged(Entity entity, ComponentIndex component)
         return;
     }
     impl_->stamp(*record, component);
+    notifyChange(entity, component);
 }
 
 ChangeTick World::componentTick(ComponentIndex component) const noexcept

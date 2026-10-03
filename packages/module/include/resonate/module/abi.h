@@ -46,6 +46,22 @@ typedef struct ResonateId
     uint64_t hi;
 } ResonateId;
 
+/*
+ * Handles to the run's ECS world and to a system's command buffer. Both are
+ * opaque: `instance` is the host's pointer, filled in at registration, and a
+ * plugin never dereferences it. They let a world-aware system name what it is
+ * handed.
+ */
+typedef struct ResonateWorld
+{
+    void* instance;
+} ResonateWorld;
+
+typedef struct ResonateCommands
+{
+    void* instance;
+} ResonateCommands;
+
 /* Stable across processes and builds. XXH3-128 of the name, and the same
    function resonate::Id calls, so an id from a manifest and one a capability
    header declares agree by construction rather than by two hashes matching. */
@@ -241,6 +257,11 @@ typedef struct ResonateHostApi
     /* Removes every system this module registered under name. A name the module
        never registered is reported, not silently ignored. */
     void (*system_remove)(void* user_data, const char* name);
+
+    /* The run's ECS world, or NULL when this run has none: what a module asks
+       before registering a world-aware system, which cannot be registered
+       without one. The handle lives as long as the host. */
+    ResonateWorld* (*world)(void* user_data);
 } ResonateHostApi;
 
 typedef struct ResonateModuleInfo

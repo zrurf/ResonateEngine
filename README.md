@@ -15,7 +15,7 @@ packages/window       window and input (SDL3), statically linked
 packages/physics      the physics domain's interface
 packages/audio        the audio domain's interface
 packages/ui           the UI domain's interface
-packages/runtime      frame loop, module host, asset registry, application entry
+packages/runtime      frame loop, module host, the run's world, asset registry, application entry
 packages/startup      the run the launcher and the editor share
 packages/modules/*    the plugins themselves: physics, audio, render, ui
 packages/editor       editor binary

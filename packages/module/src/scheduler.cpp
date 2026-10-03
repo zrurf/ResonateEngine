@@ -30,7 +30,10 @@ struct System
 struct ScheduledRun
 {
     ResonateSystemFn run;
+    ResonateSystemWorldFn run_world;
     void* context;
+    ResonateWorld* world;
+    ResonateCommands* commands;
     float delta_seconds;
     resonate::JobIndex handle;
 };
@@ -38,6 +41,12 @@ struct ScheduledRun
 void runScheduled(void* context)
 {
     auto* scheduled = static_cast<ScheduledRun*>(context);
+    if (scheduled->run_world != nullptr)
+    {
+        scheduled->run_world(scheduled->context, scheduled->world, scheduled->commands,
+                             scheduled->delta_seconds);
+        return;
+    }
     scheduled->run(scheduled->context, scheduled->delta_seconds);
 }
 
@@ -160,8 +169,7 @@ uint32_t indexOf(const ResonateScheduler* scheduler, const char* name, ResonateS
 void removeAt(ResonateScheduler* scheduler, uint32_t index)
 {
     System& system = scheduler->systems[index];
-    resonate::detail::hostDeallocate(scheduler->host, system.name,
-                                     std::strlen(system.name) + 1U);
+    resonate::detail::hostDeallocate(scheduler->host, system.name, std::strlen(system.name) + 1U);
     for (uint32_t move = index; move + 1U < scheduler->count; ++move)
     {
         scheduler->systems[move] = scheduler->systems[move + 1U];
@@ -246,13 +254,22 @@ ResonateStatus resonate_scheduler_add_system(ResonateScheduler* scheduler,
     {
         return RESONATE_E_INVALID;
     }
-    if (desc->run == nullptr || desc->stage >= RESONATE_STAGE_COUNT)
+    if (desc->stage >= RESONATE_STAGE_COUNT)
     {
         return RESONATE_E_INVALID;
     }
-    if (desc->struct_size != 0U && desc->struct_size < sizeof(ResonateSystemDesc))
+    if (desc->struct_size != 0U && desc->struct_size < RESONATE_SYSTEM_DESC_BASE_SIZE)
     {
         return RESONATE_E_VERSION;
+    }
+
+    /* The tail is the writer's to claim: a descriptor built against an older
+       header, or one that wrote only the base, has no world-aware form, and its
+       uninitialised tail must not be read. */
+    const bool has_world = resonate_system_desc_has_world(desc) != 0;
+    if (desc->run == nullptr && !(has_world && desc->run_world != nullptr))
+    {
+        return RESONATE_E_INVALID;
     }
 
     if (scheduler->count == scheduler->capacity && !grow(scheduler))
@@ -268,6 +285,12 @@ ResonateStatus resonate_scheduler_add_system(ResonateScheduler* scheduler,
 
     System& added = scheduler->systems[scheduler->count];
     added.desc = *desc;
+    if (!has_world)
+    {
+        added.desc.run_world = nullptr;
+        added.desc.world = nullptr;
+        added.desc.commands = nullptr;
+    }
     added.name = name;
     added.desc.name = name;
 
@@ -328,7 +351,10 @@ void resonate_scheduler_run_stage(ResonateScheduler* scheduler, ResonateStage st
 
         ScheduledRun& run = scheduler->runs[scheduled];
         run.run = system.desc.run;
+        run.run_world = system.desc.run_world;
         run.context = system.desc.context;
+        run.world = system.desc.world;
+        run.commands = system.desc.commands;
         run.delta_seconds = delta_seconds;
 
         if (scheduler->jobs == nullptr)
@@ -337,11 +363,13 @@ void resonate_scheduler_run_stage(ResonateScheduler* scheduler, ResonateStage st
             continue;
         }
 
-        /* A system that declares no group claims nothing to share, and an
-           exclusive one must not share the stage with anything: both are ordered
-           against every other system rather than assumed independent. */
-        const bool ordered =
-            (system.desc.reads | system.desc.writes) == 0U || system.desc.exclusive_stage != 0;
+        /* A system that declares no group claims nothing to share, an exclusive
+           one must not share the stage with anything, and a world-aware one
+           records into the world's slot table, which takes one thread: all three
+           are ordered against every other system rather than assumed
+           independent. */
+        const bool ordered = (system.desc.reads | system.desc.writes) == 0U ||
+                             system.desc.exclusive_stage != 0 || system.desc.run_world != nullptr;
         const ResonateResourceGroup writes = ordered ? ALL_GROUPS : system.desc.writes;
 
         run.handle =

@@ -13,7 +13,7 @@ target("ResonateEngine.Module")
     add_files("src/**.cpp")
 
     add_deps("ResonateEngine.Module.Abi", "ResonateEngine.PAL", "ResonateEngine.Core.Memory",
-             "ResonateEngine.Core.Container", "ResonateEngine.Core.Job")
+             "ResonateEngine.Core.Container", "ResonateEngine.Core.Job", "ResonateEngine.ECS")
 
     -- Manifest parsing, host side only: a plugin never sees this.
     add_packages("yyjson")

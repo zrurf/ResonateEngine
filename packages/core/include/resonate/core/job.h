@@ -47,8 +47,7 @@ enum JobPriority : std::uint8_t
 };
 
 /* Scheduling hint for heterogeneous cores, recorded per job. Consumed once
-   topology probing lands (02-pal-platform-config.md §3.1); until then every
-   worker is interchangeable. */
+   topology probing lands; until then every worker is interchangeable. */
 enum JobAffinity : std::uint8_t
 {
     JobAffinityLatency = 0,    /* frame-critical path */

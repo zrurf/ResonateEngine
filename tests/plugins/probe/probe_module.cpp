@@ -163,7 +163,32 @@ class ProbeModule final : public resonate::Module
 
         desc.context = &reclaimed_tick_;
         desc.name = "probe.reclaimed";
-        return host.addSystem(desc) == RESONATE_OK ? RESONATE_OK : RESONATE_E_INTERNAL;
+        if (host.addSystem(desc) != RESONATE_OK)
+        {
+            return RESONATE_E_INTERNAL;
+        }
+
+        /* The world-aware form, registered only when this run has a world to
+           record into: most runs have none, and the host refuses one then. The
+           run body reports what the host handed it, which is the only thing a
+           plugin can read the handles for. */
+        if (host.world() != nullptr)
+        {
+            world_tick_.api = host.raw();
+
+            ResonateSystemDesc world_desc = {};
+            world_desc.struct_size = sizeof(ResonateSystemDesc);
+            world_desc.stage = RESONATE_STAGE_UPDATE;
+            world_desc.run_world = &worldTick;
+            world_desc.context = &world_tick_;
+            world_desc.name = "probe.world";
+            if (host.addSystem(world_desc) != RESONATE_OK)
+            {
+                return RESONATE_E_INTERNAL;
+            }
+        }
+
+        return RESONATE_OK;
     }
 
     /* The system body logs, because "the registered system ran" is observable
@@ -180,9 +205,20 @@ class ProbeModule final : public resonate::Module
         self->api->log(self->api->user_data, RESONATE_LOG_INFO, __FILE__, __LINE__, self->label);
     }
 
+    static void worldTick(void* context, ResonateWorld* world, ResonateCommands* commands, float)
+    {
+        const auto* self = static_cast<const Tick*>(context);
+        const bool filled = world != nullptr && world->instance != nullptr && commands != nullptr &&
+                            commands->instance != nullptr;
+        self->api->log(self->api->user_data, RESONATE_LOG_INFO, __FILE__, __LINE__,
+                       filled ? "probe.world ticked with the world and its commands"
+                              : "probe.world ticked without handles");
+    }
+
     resonate::Host host_{nullptr};
     Tick removed_tick_ = {nullptr, "probe.removed ticked"};
     Tick reclaimed_tick_ = {nullptr, "probe.reclaimed ticked"};
+    Tick world_tick_ = {nullptr, nullptr};
 
     int calls_ = 0;
     std::function<void(int)> handler_ = [this](int value) { calls_ += value; };

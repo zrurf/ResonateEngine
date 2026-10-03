@@ -7,9 +7,9 @@ namespace resonate::ecs
 {
 
 /* Generation-tagged handle: the generation distinguishes a recycled slot from
-   the entity that used to occupy it. The handle is the only reference form that
-   may be held across a frame or a structural change (law 6); a pointer into a
-   chunk lives only as long as nothing moves. */
+   the entity that used to occupy it. A handle is the only reference that may be
+   held across a frame or a structural change; a pointer into a chunk lives only
+   as long as nothing moves. */
 struct Entity
 {
     std::uint32_t index = 0;

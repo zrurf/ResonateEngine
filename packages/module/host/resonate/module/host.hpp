@@ -23,6 +23,11 @@
 namespace resonate
 {
 
+namespace ecs
+{
+class World;
+}
+
 struct ModuleRecord
 {
     ModuleManifest manifest;
@@ -80,8 +85,40 @@ class ModuleHost
     ResonateStatus attachAll();
     void detachAll();
 
-    /* One frame: every stage in order, from EARLY_UPDATE through PRESENT. */
+    /* --- the frame's ECS and its sync points --- */
+
+    /* The world the run's systems record into, borrowed for as long as it is
+       set. Called before modules attach, so a world-aware registration finds
+       it; null means this run has no ECS and such a registration is refused.
+       The world must outlive the host: the command buffers the host holds for
+       its systems release their reservations through it on the way out. */
+    void setWorld(ecs::World* world) noexcept;
+    [[nodiscard]] ecs::World* world() const noexcept;
+
+    /* Registers one system on the schedule, filling the world/commands handles
+       a world-aware descriptor asks for: the run's world and a command buffer
+       of that system's own. The module-facing system_add funnels through here,
+       so a plugin's systems and the engine's own take the same path. Refused
+       with RESONATE_E_STATE when the descriptor is world-aware and setWorld has
+       not been called. */
+    ResonateStatus addSystem(const ResonateSystemDesc& desc);
+
+    /* Runs one stage's graph. The host's frame composes these around the sync
+       points; a caller driving stages itself has to play them itself too. */
+    void runStage(ResonateStage stage, float delta_seconds);
+
+    /* One frame: every stage in order, from EARLY_UPDATE through PRESENT, with
+       the two sync points — between UPDATE and PHYSICS, and between PHYSICS and
+       LATE — playing the recorded command buffers. What is recorded after the
+       second one is reported and dropped: nothing plays again this frame. */
     void runFrame(float delta_seconds);
+
+    /* The sync point: plays every non-empty command buffer in registration
+       order, so what one stage recorded exists before the next runs. A played
+       buffer is empty, which is what keeps playback to once per frame. Every
+       play goes through World::play, so a parallel scope open at the sync point
+       refuses it and the buffer keeps its commands for the next one. */
+    void playRecordedCommands();
 
     [[nodiscard]] ResonateCapabilityRegistry* capabilities() const noexcept;
     [[nodiscard]] ResonateScheduler* scheduler() const noexcept;

@@ -13,7 +13,7 @@ namespace resonate::ecs
 class World;
 
 /*
- * Recorded structural changes, played by the world at a frame point (law 2).
+ * Recorded structural changes, played by the world at a frame point.
  *
  * A create reserves its slot immediately, so the handle it returns is final and
  * later commands may name it, but the entity does not exist for lookups or

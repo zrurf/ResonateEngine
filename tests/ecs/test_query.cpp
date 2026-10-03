@@ -544,8 +544,8 @@ TEST_CASE("iterating one hundred thousand entities", "[ecs][query][benchmark]")
                 COUNT, static_cast<double>(COUNT) / sequential_seconds / 1e6,
                 static_cast<double>(COUNT) / parallel_seconds / 1e6, parallel_seconds * 1e3);
 
-    /* Floors, not the design's bandwidth reference line: they catch an
-       iteration that stopped iterating, on a loaded sanitizer build too. */
+    /* Wide floors: they catch an iteration that stopped iterating, on a loaded
+       sanitizer build too. */
     REQUIRE(static_cast<double>(COUNT) / sequential_seconds > 10.0e6);
     REQUIRE(static_cast<double>(COUNT) / parallel_seconds > 10.0e6);
 
