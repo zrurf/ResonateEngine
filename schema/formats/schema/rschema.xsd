@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The shape contract for .rschema declaration files.
+
+  Editors read it (VS Code's XML extension validates, completes and hovers from
+  an XSD), and the build has the compiler check every declaration against it as
+  well, so the contract an editor shows and the checks the compiler makes cannot
+  drift apart in the direction that matters: this contract may be looser than
+  the compiler, never stricter.
+
+  What it cannot express stays the compiler's business: whether a named type
+  exists in the module, whether a constraint or default fits its field's type,
+  whether an enum value fits its declared width, whether a migration chain
+  connects, whether a component declares at least one field. A file this
+  contract accepts can still be refused by the compiler, with the compiler's own
+  message.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           elementFormDefault="unqualified" attributeFormDefault="unqualified">
+
+  <!-- A type, field, value or flag name. What the pattern cannot say - that a
+       name is not a C++ keyword, that a declared type does not reuse a built-in
+       name - the compiler checks. -->
+  <xs:simpleType name="Identifier">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[A-Za-z_][A-Za-z0-9_]*"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- Lowercase reverse-DNS, at least two segments: the module that owns the
+       declarations, which becomes the generated C++ namespace. -->
+  <xs:simpleType name="ModuleId">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="NonEmptyText">
+    <xs:restriction base="xs:string">
+      <xs:minLength value="1"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- An enum's explicit underlying width. -->
+  <xs:simpleType name="IntegerWidth">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="i8"/>
+      <xs:enumeration value="i16"/>
+      <xs:enumeration value="i32"/>
+      <xs:enumeration value="i64"/>
+      <xs:enumeration value="u8"/>
+      <xs:enumeration value="u16"/>
+      <xs:enumeration value="u32"/>
+      <xs:enumeration value="u64"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- A bitmask's width: unsigned, since a flag is a bit. -->
+  <xs:simpleType name="UnsignedWidth">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="u8"/>
+      <xs:enumeration value="u16"/>
+      <xs:enumeration value="u32"/>
+      <xs:enumeration value="u64"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:complexType name="EnumValue">
+    <xs:attribute name="name" type="Identifier" use="required"/>
+    <!-- Absent means "one past the previous value", starting at zero. -->
+    <xs:attribute name="value" type="xs:integer"/>
+  </xs:complexType>
+
+  <xs:complexType name="Enum">
+    <xs:sequence>
+      <xs:element name="value" type="EnumValue" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="name" type="Identifier" use="required"/>
+    <xs:attribute name="width" type="IntegerWidth" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="BitmaskFlag">
+    <xs:attribute name="name" type="Identifier" use="required"/>
+    <!-- Absent means "one past the previous bit", starting at zero. -->
+    <xs:attribute name="bit" type="xs:nonNegativeInteger"/>
+  </xs:complexType>
+
+  <xs:complexType name="Bitmask">
+    <xs:sequence>
+      <xs:element name="flag" type="BitmaskFlag" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="name" type="Identifier" use="required"/>
+    <xs:attribute name="width" type="UnsignedWidth" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="Field">
+    <xs:attribute name="name" type="Identifier" use="required"/>
+    <xs:attribute name="type" type="NonEmptyText" use="required"/>
+    <xs:attribute name="min" type="xs:string"/>
+    <xs:attribute name="max" type="xs:string"/>
+    <xs:attribute name="default" type="xs:string"/>
+  </xs:complexType>
+
+  <xs:complexType name="Migration">
+    <xs:attribute name="from" type="xs:positiveInteger" use="required"/>
+    <xs:attribute name="to" type="xs:positiveInteger" use="required"/>
+  </xs:complexType>
+
+  <!-- A fixed-size struct inlined into the components that use it. -->
+  <xs:complexType name="Struct">
+    <xs:sequence>
+      <xs:element name="field" type="Field" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="name" type="Identifier" use="required"/>
+  </xs:complexType>
+
+  <!-- A storage type: fields and migrations in any order (fields in order are
+       the layout). -->
+  <xs:complexType name="Component">
+    <xs:choice minOccurs="1" maxOccurs="unbounded">
+      <xs:element name="field" type="Field"/>
+      <xs:element name="migrate" type="Migration"/>
+    </xs:choice>
+    <xs:attribute name="name" type="Identifier" use="required"/>
+    <xs:attribute name="version" type="xs:positiveInteger" use="required"/>
+  </xs:complexType>
+
+  <!-- A document node type. Its migrations arrive with the document pipeline,
+       so only fields are declared here. -->
+  <xs:complexType name="Node">
+    <xs:sequence>
+      <xs:element name="field" type="Field" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="name" type="Identifier" use="required"/>
+    <xs:attribute name="version" type="xs:positiveInteger" use="required"/>
+  </xs:complexType>
+
+  <xs:element name="schema">
+    <xs:complexType>
+      <xs:choice minOccurs="0" maxOccurs="unbounded">
+        <xs:element name="enum" type="Enum"/>
+        <xs:element name="bitmask" type="Bitmask"/>
+        <xs:element name="struct" type="Struct"/>
+        <xs:element name="component" type="Component"/>
+        <xs:element name="node" type="Node"/>
+      </xs:choice>
+      <xs:attribute name="module" type="ModuleId" use="required"/>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>

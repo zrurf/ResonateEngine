@@ -1,0 +1,50 @@
+{
+  "format": 1,
+  "tool": "0.1.0",
+  "module": "resonate.gameplay",
+  "types": [
+    {
+      "name": "Health",
+      "kind": "component",
+      "version": 2,
+      "shape": [
+        "component Health version 2",
+        "  size 28 align 4",
+        "  field current i32 @0 size 4 min=0 default=100",
+        "  field max i32 @4 size 4 min=1 default=100",
+        "  field flags resonate.gameplay.HealthFlags @8 size 1",
+        "  field regen f32 @12 size 4 min=0 default=0.5",
+        "  field source entity @16 size 8",
+        "  field shield i32 @24 size 4 min=0 default=0",
+        "  enum HealthFlags u8 values Poisoned=0, Regenerating=1, Invulnerable=2"
+      ]
+    },
+    {
+      "name": "LastDamage",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component LastDamage version 1",
+        "  size 16 align 4",
+        "  field hit resonate.gameplay.Damage @0 size 8",
+        "  field attacker entity @8 size 8",
+        "  struct Damage size 8 align 4",
+        "    field amount i32 @0 size 4 min=0",
+        "    field stagger f32 @4 size 4 min=0 max=1"
+      ]
+    },
+    {
+      "name": "Transform",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Transform version 1",
+        "  size 16 align 4",
+        "  field x f32 @0 size 4",
+        "  field y f32 @4 size 4",
+        "  field z f32 @8 size 4",
+        "  field scale f32 @12 size 4 default=1"
+      ]
+    }
+  ]
+}

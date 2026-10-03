@@ -70,6 +70,25 @@ struct ChunkView
     [[nodiscard]] std::uint32_t* componentTicks(ComponentIndex component) const noexcept;
 };
 
+/* A chunk's column of one component, as `column` below hands it out: the dense
+   array, the per-entity change ticks beside it, and the row count. */
+template <typename T> struct Column
+{
+    T* data = nullptr;
+    std::uint32_t* ticks = nullptr;
+    std::uint32_t count = 0;
+};
+
+/* The typed column of a chunk view. Null `data` means the chunk does not have
+   the component, which a query whose `all` names it rules out. The pointers are
+   the view's: valid for the body that received it and no longer, which is the
+   same lifetime rule every chunk view has. */
+template <typename T> [[nodiscard]] Column<T> column(ChunkView view) noexcept
+{
+    return Column<T>{static_cast<T*>(view.componentData(ComponentTraits<T>::index)),
+                     view.componentTicks(ComponentTraits<T>::index), view.count};
+}
+
 /* Called once per chunk, on the iterating thread. */
 using ChunkFunction = void (*)(void* context, ChunkView view);
 

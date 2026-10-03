@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <!-- The binary keeps the tool's name: scripts/schema.lua and the tests
+         invoke it as `schemac`, whatever the assemblies are called. -->
+    <AssemblyName>schemac</AssemblyName>
+    <RootNamespace>Resonate.Tools.Schemac.Cli</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Resonate.Tools.Schemac.csproj" />
+  </ItemGroup>
+
+</Project>

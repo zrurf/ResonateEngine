@@ -20,8 +20,10 @@ packages/startup      the run the launcher and the editor share
 packages/modules/*    the plugins themselves: physics, audio, render, ui
 packages/editor       editor binary
 packages/launcher     game binary
-schema/               JSON Schema for the manifests
-scripts/              xmake task scripts (module-check, format)
+packages/tools/*      host tools: the schema compiler (C#) and, later, its siblings
+content/*             content modules: schema declarations (.rschema), assets later
+schema/               file-shape contracts: JSON Schema for the manifests, XSD for the schema language
+scripts/              xmake task scripts (module-check, schema, format)
 tests/                Catch2 v3
 ```
 
@@ -39,11 +41,56 @@ xmake f -m debug      # or -m release
 xmake                 # libraries, plugins and binaries
 xmake test            # also builds the test target, which xmake skips by default
 xmake module-check    # also runs automatically before each build
+xmake schema          # also runs automatically before a target that consumes generated types
+xmake schema-lock     # records the accepted shape of every versioned type (the version locks)
 xmake format          # clang-format over the tree
 ```
 
 Requires xmake 3.1.1 or newer and, on Windows, Visual Studio 2026 for the
-`clang-cl` toolchain.
+`clang-cl` toolchain. Building the schema compiler needs the .NET 11 SDK; only
+targets that include generated schema types pull it in (`packages/tools/schemac`).
+
+## Schema types
+
+Component types are declared, not written by hand: a content module holds XML
+declarations under `content/<module>/schemas/*.rschema`, and the build compiles
+them into `build/gen/<module>/components.gen.h` — plain structs in the module's
+namespace, their ECS traits, and the frozen layout as `static_assert`s — plus
+`build/gen/<module>.schema.json`, the canonical metadata the editor and the
+other language forms will be generated from. A schema error fails the build.
+
+A declaration is `enum`, `bitmask`, `struct`, `component` or `node`; a field
+names a built-in scalar, `entity`, or a type the same module declares. What a
+type is addressed by outside C++ is its module-qualified name
+(`resonate.gameplay.Health`): two modules may own a type of the same name and
+they stay distinct. A component above version 1 declares the migrations to it,
+and the owner implements each one — the generated entry point takes its address,
+so a missing implementation fails to link wherever the entry is used.
+
+A version is a promise to whatever was saved under it, and the version lock
+(`schemas.lock.json`, beside each module's declarations) is what keeps the
+promise honest: the build fails when a version goes backwards, when a version's
+shape changes without a bump, or when a versioned type appears or disappears —
+anything the lock does not already record. `xmake schema-lock` records the
+current shape on purpose; commit it with the change that needed it.
+
+The compiler is a library (`Resonate.Tools.Schemac`) with a thin command-line
+host (`packages/tools/schemac/cli`), so the editor will be able to compile and
+check schemas in process rather than shelling out to the binary.
+
+The shape of a declaration file itself is declared in
+`schema/formats/schema/rschema.xsd`. The build hands it to the compiler, which
+checks every declaration against it as well, so the contract an editor shows and
+the checks the compiler makes cannot drift apart. Editors that validate from an
+XSD (VS Code's XML extension) need the association configured once — there is no
+in-document way to point at it, since the XML subset allows neither processing
+instructions nor namespaces:
+
+```json
+"xml.fileAssociations": [
+    { "pattern": "**/*.rschema", "systemId": "schema/formats/schema/rschema.xsd" }
+]
+```
 
 The launcher and the editor both come up through `resonate::startup::run`. Plugins
 are scanned in `plugins` beside the executable, or in the first ancestor that has

@@ -48,11 +48,26 @@ target("ResonateEngine.Tests")
     set_group("tests")
 
     add_files("main.cpp", "render/**.cpp", "core/**.cpp", "module/**.cpp", "pal/**.cpp",
-              "runtime/**.cpp", "window/**.cpp", "ecs/**.cpp")
+              "runtime/**.cpp", "window/**.cpp", "ecs/**.cpp", "schema/**.cpp")
     add_tests("default")
+
+    -- The schema rule builds and runs the compiler before this target compiles,
+    -- so a schema error fails the build instead of a generated header going
+    -- stale; the include path is where build/gen lands. xmake's API check warns
+    -- about an include path that does not exist yet, and the rule's output only
+    -- appears during the build, so the directory is created as the target loads.
+    add_rules("resonate.schema")
+    add_includedirs("$(builddir)/gen")
+    on_load(function (target)
+        os.mkdir(path.join(os.projectdir(), "build", "gen"))
+    end)
 
     -- For paths.h, which every test that needs a build artifact includes.
     add_includedirs(".")
+
+    -- A few tests read files that live in the source tree rather than in the
+    -- build tree: the .rschema shape contract the build passes to the compiler.
+    add_defines(string.format('RESONATE_SOURCE_DIR="%s"', os.projectdir():gsub("\\", "/")))
 
     -- The libraries the tests link and call into, plus the two interfaces whose
     -- headers a test includes directly: a capability's declaration belongs to the
@@ -73,6 +88,9 @@ target("ResonateEngine.Tests")
     end
 
     -- SDL is private to the window target, so the test that drives the window
-    -- capability through SDL's dummy video driver asks for it itself.
+    -- capability through SDL's dummy video driver asks for it itself. The
+    -- schema tests read the generated metadata with the same JSON reader the
+    -- engine's own tooling uses.
     add_packages("libsdl3")
+    add_packages("yyjson")
     add_packages("catch2")

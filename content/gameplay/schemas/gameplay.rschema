@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<schema module="resonate.gameplay">
+
+  <enum name="HealthFlags" width="u8">
+    <value name="Poisoned"/>
+    <value name="Regenerating"/>
+    <value name="Invulnerable"/>
+  </enum>
+
+  <struct name="Damage">
+    <field name="amount" type="i32" min="0"/>
+    <field name="stagger" type="f32" min="0.0" max="1.0"/>
+  </struct>
+
+  <component name="Health" version="2">
+    <field name="current" type="i32" min="0" default="100"/>
+    <field name="max" type="i32" min="1" default="100"/>
+    <field name="flags" type="HealthFlags"/>
+    <field name="regen" type="f32" min="0.0" default="0.5"/>
+    <field name="source" type="entity"/>
+
+    <!-- Added in version 2; the migration below is the path from version 1. -->
+    <field name="shield" type="i32" min="0" default="0"/>
+
+    <migrate from="1" to="2"/>
+  </component>
+
+  <component name="Transform" version="1">
+    <field name="x" type="f32"/>
+    <field name="y" type="f32"/>
+    <field name="z" type="f32"/>
+    <field name="scale" type="f32" default="1.0"/>
+  </component>
+
+  <component name="LastDamage" version="1">
+    <field name="hit" type="Damage"/>
+    <field name="attacker" type="entity"/>
+  </component>
+
+</schema>

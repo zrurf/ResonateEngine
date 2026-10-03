@@ -111,6 +111,58 @@ task("module-check")
         description = "Validate module manifests against descriptors, headers and link dependencies.",
     }
 
+-- Declared by the targets that include generated schema types. It builds (when
+-- its sources moved) and runs the schema compiler under packages/tools before
+-- the target compiles, so a schema error fails the build instead of a generated
+-- header going stale.
+local schema_done = false
+
+rule("resonate.schema")
+    before_build(function (target)
+        if schema_done then
+            return
+        end
+        schema_done = true
+
+        local script = path.join(os.projectdir(), "scripts", "schema.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script})
+        if output ~= nil then
+            print(tidy_check_output(output))
+        end
+    end)
+
+task("schema")
+    set_category("plugin")
+    on_run(function ()
+        local script = path.join(os.projectdir(), "scripts", "schema.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script})
+        if output ~= nil then
+            print(tidy_check_output(output))
+        end
+    end)
+    set_menu {
+        usage = "xmake schema",
+        description = "Compile content modules' .rschema declarations into generated C++ and metadata.",
+    }
+
+-- The deliberate act that accepts a change to a versioned type: rewrites each
+-- module's schemas.lock.json from what the schemas say now. A build only checks
+-- the lock, so a version bump or a removed type fails until it is recorded here.
+task("schema-lock")
+    set_category("plugin")
+    on_run(function ()
+        local script = path.join(os.projectdir(), "scripts", "schema.lua")
+        local code = os.execv(os.programfile(), {"lua", script},
+                              {try = true, envs = {RESONATE_SCHEMA_MODE = "update"}})
+        if code ~= 0 then
+            raise("schema lock update failed (exit %s)", tostring(code))
+        end
+    end)
+    set_menu {
+        usage = "xmake schema-lock",
+        description = "Record the accepted shape of every versioned schema type (rewrites the locks).",
+    }
+
 task("format")
     set_category("plugin")
     on_run(function ()
