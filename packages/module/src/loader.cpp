@@ -7,7 +7,11 @@
 #include <string>
 #include <vector>
 
-#include <yyjson.h>
+/* Manifest parsing must not throw: a bad manifest is a status code, like every
+   other error crossing this boundary. The macro has to precede the include, and
+   every TU that includes toml++ must agree on it. */
+#define TOML_EXCEPTIONS 0
+#include <toml++/toml.hpp>
 
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
@@ -74,78 +78,96 @@ bool readFile(const std::string& path, std::string& out)
     return status == RESONATE_PAL_OK && read == size;
 }
 
-yyjson_val* field(yyjson_val* object, const char* name)
+bool readString(const toml::table& root, const char* name, std::string& out)
 {
-    return yyjson_is_obj(object) ? yyjson_obj_get(object, name) : nullptr;
-}
-
-bool readString(yyjson_val* object, const char* name, std::string& out)
-{
-    yyjson_val* value = field(object, name);
-    if (value == nullptr || !yyjson_is_str(value))
+    const toml::node* value = root.get(name);
+    const auto* text = value != nullptr ? value->as_string() : nullptr;
+    if (text == nullptr)
     {
         return false;
     }
-    out = yyjson_get_str(value);
+    out = text->get();
     return true;
 }
 
-bool readUint(yyjson_val* object, const char* name, std::uint32_t& out)
+bool readUint(const toml::table& root, const char* name, std::uint32_t& out)
 {
-    yyjson_val* value = field(object, name);
-    if (value == nullptr || !yyjson_is_uint(value) || yyjson_get_uint(value) > 0xFFFFFFFFULL)
+    const toml::node* value = root.get(name);
+    const auto* number = value != nullptr ? value->as_integer() : nullptr;
+    if (number == nullptr)
     {
         return false;
     }
-    out = static_cast<std::uint32_t>(yyjson_get_uint(value));
+    const std::int64_t raw = number->get();
+    if (raw < 0 || raw > 0xFFFFFFFFll)
+    {
+        return false;
+    }
+    out = static_cast<std::uint32_t>(raw);
     return true;
 }
 
 /* Capability names arrive as strings and are hashed here, so a manifest and a
    descriptor agree on an id without sharing a table. The name is kept beside the
    hash for the diagnostics that would otherwise report only the hash. */
-bool readCapabilities(yyjson_val* object, const char* name, std::vector<ModuleCapability>& out)
+bool readCapabilities(const toml::table& root, const char* name, std::vector<ModuleCapability>& out)
 {
-    yyjson_val* array = field(object, name);
-    if (array == nullptr || !yyjson_is_arr(array))
+    const toml::node* value = root.get(name);
+    const auto* array = value != nullptr ? value->as_array() : nullptr;
+    if (array == nullptr)
     {
         return false;
     }
 
-    yyjson_arr_iter iterator;
-    yyjson_arr_iter_init(array, &iterator);
-    while (yyjson_val* entry = yyjson_arr_iter_next(&iterator))
+    for (const toml::node& entry : *array)
     {
-        if (!yyjson_is_str(entry))
+        const auto* text = entry.as_string();
+        if (text == nullptr)
         {
             return false;
         }
 
-        const char* const text = yyjson_get_str(entry);
-        out.push_back(ModuleCapability{text, Id(resonate_id_make(text))});
+        const std::string& capability = text->get();
+        out.push_back(ModuleCapability{capability, Id(resonate_id_make(capability.c_str()))});
     }
     return true;
 }
 
-bool readNames(yyjson_val* object, const char* name, std::vector<std::string>& out)
+bool readNames(const toml::table& root, const char* name, std::vector<std::string>& out)
 {
-    yyjson_val* array = field(object, name);
-    if (array == nullptr || !yyjson_is_arr(array))
+    const toml::node* value = root.get(name);
+    const auto* array = value != nullptr ? value->as_array() : nullptr;
+    if (array == nullptr)
     {
         return false;
     }
 
-    yyjson_arr_iter iterator;
-    yyjson_arr_iter_init(array, &iterator);
-    while (yyjson_val* entry = yyjson_arr_iter_next(&iterator))
+    for (const toml::node& entry : *array)
     {
-        if (!yyjson_is_str(entry))
+        const auto* text = entry.as_string();
+        if (text == nullptr)
         {
             return false;
         }
-        out.emplace_back(yyjson_get_str(entry));
+        out.push_back(text->get());
     }
     return true;
+}
+
+/* The manifest lives under [resonate.<kind>], which doubles as the file's kind
+   marker; a file without that table is not a manifest of the kind asked for. */
+const toml::table* manifestSection(const toml::table& root, const char* kind)
+{
+    const toml::node* const namespace_node = root.get("resonate");
+    const toml::table* const namespace_table =
+        namespace_node != nullptr ? namespace_node->as_table() : nullptr;
+    if (namespace_table == nullptr)
+    {
+        return nullptr;
+    }
+
+    const toml::node* const section = namespace_table->get(kind);
+    return section != nullptr ? section->as_table() : nullptr;
 }
 
 } // namespace
@@ -790,28 +812,32 @@ void ModuleHost::Impl::systemRemoveForModule(void* user_data, const char* name)
     }
 }
 
-ResonateStatus parseManifest(std::string_view json_text, ModuleManifest& out_manifest)
+ResonateStatus parseManifest(std::string_view toml_text, ModuleManifest& out_manifest)
 {
     out_manifest = ModuleManifest{};
 
-    yyjson_doc* document = yyjson_read(json_text.data(), json_text.size(), 0);
-    if (document == nullptr)
+    const toml::parse_result result = toml::parse(toml_text);
+    if (!result)
     {
         return RESONATE_E_INVALID;
     }
 
-    yyjson_val* root = yyjson_doc_get_root(document);
-    const bool complete = yyjson_is_obj(root) && readString(root, "id", out_manifest.id) &&
-                          readString(root, "name", out_manifest.name) &&
-                          readString(root, "version", out_manifest.version) &&
-                          readUint(root, "abi", out_manifest.abi) &&
-                          readUint(root, "min_host_abi", out_manifest.min_host_abi) &&
-                          readCapabilities(root, "provides", out_manifest.provides) &&
-                          readCapabilities(root, "requires", out_manifest.requirements) &&
-                          readCapabilities(root, "optional", out_manifest.optional) &&
-                          readNames(root, "depends_on", out_manifest.depends_on);
+    const toml::table* const section = manifestSection(result.table(), "module");
+    if (section == nullptr)
+    {
+        return RESONATE_E_INVALID;
+    }
 
-    yyjson_doc_free(document);
+    const bool complete = readString(*section, "id", out_manifest.id) &&
+                          readString(*section, "name", out_manifest.name) &&
+                          readString(*section, "version", out_manifest.version) &&
+                          readUint(*section, "abi", out_manifest.abi) &&
+                          readUint(*section, "min_host_abi", out_manifest.min_host_abi) &&
+                          readCapabilities(*section, "provides", out_manifest.provides) &&
+                          readCapabilities(*section, "requires", out_manifest.requirements) &&
+                          readCapabilities(*section, "optional", out_manifest.optional) &&
+                          readNames(*section, "depends_on", out_manifest.depends_on);
+
     return complete ? RESONATE_OK : RESONATE_E_INVALID;
 }
 
@@ -940,7 +966,7 @@ ResonateStatus ModuleHost::discover(const std::string& plugin_directory)
         }
 
         std::string text;
-        if (!readFile(plugin_directory + "/" + identity->id + ".json", text))
+        if (!readFile(plugin_directory + "/" + identity->id + ".toml", text))
         {
             impl->write(RESONATE_LOG_ERROR,
                         std::string(identity->id) + " has no manifest beside its library");
@@ -951,8 +977,9 @@ ResonateStatus ModuleHost::discover(const std::string& plugin_directory)
         ModuleManifest manifest;
         if (parseManifest(text, manifest) != RESONATE_OK)
         {
-            impl->write(RESONATE_LOG_ERROR,
-                        std::string(identity->id) + "'s manifest is missing a required field");
+            impl->write(RESONATE_LOG_ERROR, std::string(identity->id) +
+                                                "'s manifest does not parse or is missing a "
+                                                "required field");
             resonate_pal_library_unload(&library);
             continue;
         }

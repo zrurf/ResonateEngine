@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resonateengine.dev/schema/formats/module/host.schema.json",
+  "title": "ResonateEngine host manifest",
+  "description": "Written as resonate.host.toml at the repository root. States what the host provides before any module is loaded; a module may require these, and nothing may provide them again. Every field lives inside the single [resonate.host] table. Picked up by taplo through the #:schema first-line comment; cross-file checks stay in scripts/module_check.lua.",
+  "type": "object",
+  "required": ["resonate"],
+  "additionalProperties": false,
+  "properties": {
+    "resonate": {
+      "description": "The engine namespace. A manifest has exactly one table in it.",
+      "type": "object",
+      "required": ["host"],
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "description": "What the host publishes before any module runs.",
+          "type": "object",
+          "required": ["id", "name", "abi", "summary", "provides"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "description": "There is exactly one host.",
+              "const": "resonate.host"
+            },
+            "name": {
+              "description": "Display name for logs.",
+              "type": "string",
+              "minLength": 1
+            },
+            "abi": {
+              "description": "Major ABI version the host publishes.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "summary": {
+              "description": "One line describing what the host provides, including headless differences.",
+              "type": "string",
+              "minLength": 1
+            },
+            "provides": {
+              "description": "Capabilities published by the host itself, before any module runs.",
+              "type": "array",
+              "items": {
+                "description": "A capability id: 'Resonate' plus dotted PascalCase segments, as declared by CapabilityTraits in a capability header.",
+                "type": "string",
+                "pattern": "^Resonate(\\.[A-Za-z][A-Za-z0-9_]*)+$"
+              },
+              "uniqueItems": true
+            }
+          }
+        }
+      }
+    }
+  }
+}

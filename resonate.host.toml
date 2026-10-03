@@ -1,0 +1,8 @@
+#:schema schema/formats/module/host.schema.json
+
+[resonate.host]
+id = "resonate.host"
+name = "Host"
+abi = 1
+summary = "Capabilities the host publishes before any module is loaded. A module may require these; nothing may provide them again. A headless run publishes the offscreen canvas and neither of the display ones."
+provides = ["Resonate.Render.Canvas", "Resonate.Window", "Resonate.Input"]

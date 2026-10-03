@@ -22,7 +22,7 @@ struct ModuleCapability
 };
 
 /*
- * What one module declares about itself. resonate.module.json states the same
+ * What one module declares about itself. resonate.module.toml states the same
  * thing for the build and for tooling, and scripts/module_check.lua fails the
  * build when the two disagree.
  *

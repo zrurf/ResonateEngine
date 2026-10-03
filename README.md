@@ -97,12 +97,14 @@ rather than the load:
 
 | Location | Read by |
 | --- | --- |
-| `resonate.module.json` | the loader at startup, and editor tooling |
+| `resonate.module.toml` | the loader at startup, and editor tooling |
 | `src/module_descriptor.cpp` | the module, in C++ |
 | the capability header | whoever defines the capability |
 | `packages/modules/xmake.lua` | the build, when it links the module |
 
-`schema/` holds the JSON Schema for the manifests, for editors and tooling.
+Manifests are TOML. Their shape is declared in `schema/formats/module/` (JSON
+Schema, picked up by taplo in editors) and enforced at build time by the
+checker, which also asserts what a schema cannot see.
 
 ## Visibility
 

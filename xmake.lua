@@ -71,6 +71,7 @@ add_requires("emhash 1.2.0")
 add_requires("libhv 1.3.4")
 add_requires("libsdl3 3.4.16", {verify = false})
 add_requires("mimalloc v3.5.3", {verify = false})
+add_requires("toml++ v3.4.0")
 add_requires("xxhash v0.8.4", {verify = false, configs = {cmake = false}})
 add_requires("yyjson 0.13.0", {verify = false})
 

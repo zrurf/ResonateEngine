@@ -131,18 +131,19 @@ resonate::ModuleRecord makeRecord(const char* id, std::vector<std::string> depen
 
 TEST_CASE("a manifest is read into the fields the loader needs", "[module][loader]")
 {
-    const char* text = R"({
-      "id": "resonate.test",
-      "name": "Test",
-      "version": "1.2.3",
-      "abi": 1,
-      "min_host_abi": 1,
-      "summary": "A manifest used by a test.",
-      "provides": ["Resonate.Test.One"],
-      "requires": ["Resonate.Test.Two"],
-      "optional": ["Resonate.Test.Three", "Resonate.Test.Four"],
-      "depends_on": ["resonate.other"]
-    })";
+    const char* text = R"(
+        [resonate.module]
+        id = "resonate.test"
+        name = "Test"
+        version = "1.2.3"
+        abi = 1
+        min_host_abi = 1
+        summary = "A manifest used by a test."
+        provides = ["Resonate.Test.One"]
+        requires = ["Resonate.Test.Two"]
+        optional = ["Resonate.Test.Three", "Resonate.Test.Four"]
+        depends_on = ["resonate.other"]
+    )";
 
     resonate::ModuleManifest manifest;
     REQUIRE(resonate::parseManifest(text, manifest) == RESONATE_OK);
@@ -165,15 +166,21 @@ TEST_CASE("a manifest with a missing or malformed field is refused", "[module][l
 {
     resonate::ModuleManifest manifest;
 
-    REQUIRE(resonate::parseManifest("{ \"id\": \"resonate.test\" }", manifest) ==
+    /* Valid TOML, but a manifest with one field is missing the rest. */
+    REQUIRE(resonate::parseManifest("[resonate.module]\nid = \"resonate.test\"\n", manifest) ==
             RESONATE_E_INVALID);
-    REQUIRE(resonate::parseManifest("not json at all", manifest) == RESONATE_E_INVALID);
-    REQUIRE(resonate::parseManifest("[]", manifest) == RESONATE_E_INVALID);
+    REQUIRE(resonate::parseManifest("not toml at all", manifest) == RESONATE_E_INVALID);
+
+    /* Fields outside [resonate.module], or a file under another table, are not
+       a manifest of the kind the loader asked for. */
+    REQUIRE(resonate::parseManifest("id = \"resonate.test\"\n", manifest) == RESONATE_E_INVALID);
+    REQUIRE(resonate::parseManifest("[resonate.other]\n", manifest) == RESONATE_E_INVALID);
 
     /* abi as a string is the mistake a hand-written manifest makes. */
     REQUIRE(resonate::parseManifest(
-                R"({"id":"a","name":"b","version":"1","abi":"1","min_host_abi":1,
-                    "provides":[],"requires":[],"optional":[],"depends_on":[]})",
+                "[resonate.module]\nid = \"a\"\nname = \"b\"\nversion = \"1\"\nabi = \"1\"\n"
+                "min_host_abi = 1\nprovides = []\nrequires = []\noptional = []\n"
+                "depends_on = []\n",
                 manifest) == RESONATE_E_INVALID);
 }
 

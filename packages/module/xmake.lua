@@ -16,4 +16,4 @@ target("ResonateEngine.Module")
              "ResonateEngine.Core.Container", "ResonateEngine.Core.Job", "ResonateEngine.ECS")
 
     -- Manifest parsing, host side only: a plugin never sees this.
-    add_packages("yyjson")
+    add_packages("toml++")

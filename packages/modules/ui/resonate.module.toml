@@ -1,0 +1,13 @@
+#:schema ../../../schema/formats/module/manifest.schema.json
+
+[resonate.module]
+id = "resonate.ui"
+name = "UI"
+version = "0.1.0"
+abi = 1
+min_host_abi = 1
+summary = "Resonate UI."
+provides = ["Resonate.UI.Context"]
+requires = ["Resonate.Render.Canvas"]
+optional = ["Resonate.Input", "Resonate.Render.Device"]
+depends_on = ["resonate.render"]

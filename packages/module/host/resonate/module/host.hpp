@@ -155,7 +155,7 @@ class ModuleHost
 };
 
 /* Returns RESONATE_E_INVALID, naming the offending field in the host log. */
-ResonateStatus parseManifest(std::string_view json_text, ModuleManifest& out_manifest);
+ResonateStatus parseManifest(std::string_view toml_text, ModuleManifest& out_manifest);
 
 /* The pool a schedule runs on, or null for one that could not create it. Host
    side only: the C surface the scheduler is called through has no type for it,

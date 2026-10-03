@@ -1,0 +1,13 @@
+#:schema ../../../schema/formats/module/manifest.schema.json
+
+[resonate.module]
+id = "resonate.audio"
+name = "Audio"
+version = "0.1.0"
+abi = 1
+min_host_abi = 1
+summary = "Audio output device and voice submission."
+provides = ["Resonate.Audio.Device"]
+requires = []
+optional = []
+depends_on = []

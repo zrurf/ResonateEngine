@@ -1,17 +1,15 @@
 -- Cross-checks the four places a module's contract is written down:
--- resonate.module.json, src/module_descriptor.cpp, the capability headers, and
+-- resonate.module.toml, src/module_descriptor.cpp, the capability headers, and
 -- packages/modules/xmake.lua. Any disagreement fails the build. Declaring one
 -- dependency set and linking another compiles cleanly and only shows up at
 -- startup, which is expensive to diagnose.
 --
 -- Run with `xmake module-check`, or `xmake lua scripts/module_check.lua`.
 
-import("core.base.json")
-
 local PROJECT_DIR = os.projectdir()
 local MODULES_DIR = path.join(PROJECT_DIR, "packages", "modules")
 local MODULES_BUILD = path.join(MODULES_DIR, "xmake.lua")
-local HOST_MANIFEST = path.join(PROJECT_DIR, "resonate.host.json")
+local HOST_MANIFEST = path.join(PROJECT_DIR, "resonate.host.toml")
 
 -- Every field a module manifest may carry, which is also the set the schema
 -- requires.
@@ -24,19 +22,266 @@ local function problem(message)
     errors[#errors + 1] = message
 end
 
-local function readJson(path)
-    local text = io.readfile(path)
+-- Manifests are TOML, but the checker takes a deliberately narrow subset: one
+-- table header, [resonate.<kind>], with flat `key = value` lines inside whose
+-- value is a string, integer, boolean, or a possibly multiline array of those.
+-- Anything else TOML can express — other or nested tables, quoted headers,
+-- dotted keys, fields outside the table — is reported as an error rather than
+-- parsed, because the checker is what keeps manifests inside the subset every
+-- reader (loader, editor, tooling) implements. A new construct arriving here is
+-- a design change to the manifest format and has to land in this parser on
+-- purpose.
+local function readToml(file_path)
+    local where = path.relative(file_path, PROJECT_DIR)
+    local text = io.readfile(file_path)
     if text == nil then
-        problem(string.format("cannot read %s", path.relative(path, PROJECT_DIR)))
+        problem(string.format("cannot read %s", where))
         return nil
     end
-    -- No pcall in this sandbox: a malformed manifest throws out of the script,
-    -- which already fails the build, so there is nothing to trap it into.
-    return json.decode(text)
+
+    local sections = {}
+    local current = nil
+    local key = nil
+    local key_chars = {}
+    local value_chars = {}
+    local header_chars = {}
+    local mode = "key"
+    local bracket = 0
+    local in_string = false
+    local in_header = false
+    local header_closed = false
+    local literal = false
+    local escaped = false
+    local line = 1
+
+    local function scalar(raw)
+        local quote = raw:sub(1, 1)
+        if quote == '"' or quote == "'" then
+            if #raw < 2 or raw:sub(-1) ~= quote then
+                problem(string.format("%s:%d: '%s' has an unterminated string", where, line, key))
+                return nil
+            end
+            local inner = raw:sub(2, -2)
+            if quote == "'" then
+                return inner
+            end
+            local escapes = {t = "\t", n = "\n", r = "\r", ['"'] = '"', ["\\"] = "\\"}
+            return (inner:gsub("\\(.)", function(char)
+                if escapes[char] == nil then
+                    problem(string.format("%s:%d: unsupported escape \\%s in '%s'", where, line,
+                                          char, key))
+                    return ""
+                end
+                return escapes[char]
+            end))
+        end
+        if raw == "true" then
+            return true
+        end
+        if raw == "false" then
+            return false
+        end
+        if raw:match("^%-?%d+$") then
+            return tonumber(raw)
+        end
+        problem(string.format("%s:%d: unsupported value '%s' for '%s'", where, line, raw, key))
+        return nil
+    end
+
+    local function flush()
+        if key == nil then
+            return
+        end
+        local raw = table.concat(value_chars):match("^%s*(.-)%s*$")
+        if current == nil then
+            problem(string.format("%s:%d: '%s' is outside any table; manifest fields live inside "
+                                      .. "[resonate.<kind>]", where, line, key))
+        elseif raw == "" then
+            problem(string.format("%s:%d: '%s' has no value", where, line, key))
+        elseif sections[current][key] ~= nil then
+            problem(string.format("%s:%d: '%s' is defined twice", where, line, key))
+        elseif raw:sub(1, 1) == "[" then
+            if raw:sub(-1) ~= "]" then
+                problem(string.format("%s:%d: '%s' has an unterminated array", where, line, key))
+            else
+                -- Split on commas outside string literals; nested arrays are left
+                -- to scalar() to reject as unsupported values.
+                local items = {}
+                local item_chars = {}
+                local quote = nil
+                for index = 2, #raw - 1 do
+                    local char = raw:sub(index, index)
+                    if quote ~= nil then
+                        item_chars[#item_chars + 1] = char
+                        if char == quote then
+                            quote = nil
+                        end
+                    elseif char == '"' or char == "'" then
+                        quote = char
+                        item_chars[#item_chars + 1] = char
+                    elseif char == "," then
+                        items[#items + 1] = table.concat(item_chars)
+                        item_chars = {}
+                    else
+                        item_chars[#item_chars + 1] = char
+                    end
+                end
+                items[#items + 1] = table.concat(item_chars)
+
+                local array = {}
+                for _, item in ipairs(items) do
+                    local entry = item:match("^%s*(.-)%s*$")
+                    if entry ~= "" then
+                        array[#array + 1] = scalar(entry)
+                    end
+                end
+                sections[current][key] = array
+            end
+        else
+            sections[current][key] = scalar(raw)
+        end
+        key = nil
+        value_chars = {}
+    end
+
+    local index = 1
+    while index <= #text do
+        local char = text:sub(index, index)
+        if char == "\n" then
+            if in_string then
+                problem(string.format("%s:%d: unterminated string", where, line))
+                in_string = false
+            elseif in_header then
+                problem(string.format("%s:%d: unterminated table header", where, line))
+                in_header = false
+                header_chars = {}
+            elseif mode == "value" then
+                if bracket > 0 then
+                    -- A multiline array continues on the next line.
+                    value_chars[#value_chars + 1] = " "
+                else
+                    flush()
+                    mode = "key"
+                end
+            else
+                local candidate = table.concat(key_chars):match("^%s*(.-)%s*$")
+                if candidate ~= "" then
+                    problem(string.format("%s:%d: '%s' has no '='", where, line, candidate))
+                end
+                key_chars = {}
+            end
+            header_closed = false
+            line = line + 1
+            index = index + 1
+        elseif char == "\r" then
+            index = index + 1
+        elseif in_string then
+            if escaped then
+                value_chars[#value_chars + 1] = "\\"
+                value_chars[#value_chars + 1] = char
+                escaped = false
+            elseif char == "\\" and not literal then
+                escaped = true
+            elseif char == (literal and "'" or '"') then
+                in_string = false
+                value_chars[#value_chars + 1] = char
+            else
+                value_chars[#value_chars + 1] = char
+            end
+            index = index + 1
+        elseif in_header then
+            if char == "]" then
+                local name = table.concat(header_chars):match("^%s*(.-)%s*$")
+                local namespace, kind = name:match("^([%w%-_]+)%.([%w%-_]+)$")
+                if namespace ~= "resonate" or kind == nil then
+                    problem(string.format("%s:%d: table '%s' is not engine TOML; manifest headers "
+                                              .. "are [resonate.<kind>]", where, line, name))
+                elseif sections[name] ~= nil then
+                    problem(string.format("%s:%d: table [%s] is defined twice", where, line, name))
+                else
+                    sections[name] = {}
+                    current = name
+                end
+                in_header = false
+                header_closed = true
+                header_chars = {}
+            else
+                header_chars[#header_chars + 1] = char
+            end
+            index = index + 1
+        elseif char == "#" then
+            while index <= #text and text:sub(index, index) ~= "\n" do
+                index = index + 1
+            end
+        elseif mode == "value" and (char == '"' or char == "'") then
+            in_string = true
+            literal = char == "'"
+            value_chars[#value_chars + 1] = char
+            index = index + 1
+        elseif mode == "key" then
+            if char == "[" and not header_closed and
+                table.concat(key_chars):match("^%s*$") ~= nil then
+                in_header = true
+                header_chars = {}
+            elseif char == "=" then
+                key = table.concat(key_chars):match("^%s*(.-)%s*$")
+                if key:match("^[%w%-_]+$") == nil then
+                    problem(string.format("%s:%d: invalid key '%s'", where, line, key))
+                    key = nil
+                end
+                key_chars = {}
+                value_chars = {}
+                mode = "value"
+            elseif header_closed and char ~= " " and char ~= "\t" then
+                problem(string.format("%s:%d: unexpected text after a table header", where, line))
+                header_closed = false
+                key_chars[#key_chars + 1] = char
+            else
+                key_chars[#key_chars + 1] = char
+            end
+            index = index + 1
+        else
+            if char == "[" then
+                bracket = bracket + 1
+            elseif char == "]" then
+                bracket = bracket - 1
+            end
+            value_chars[#value_chars + 1] = char
+            index = index + 1
+        end
+    end
+
+    flush()
+    local leftover = table.concat(key_chars):match("^%s*(.-)%s*$")
+    if leftover ~= "" then
+        problem(string.format("%s:%d: '%s' has no '='", where, line, leftover))
+    end
+    if bracket ~= 0 then
+        problem(string.format("%s: unbalanced '[' in '%s'", where, tostring(key)))
+    end
+    return sections
 end
 
--- The schema under schema/ is read by tooling, not by this script, so presence
--- of the fields everything below indexes is asserted here instead.
+-- Manifests carry exactly one table, [resonate.<kind>], and every field lives
+-- inside it; the table name is the document's kind marker, so a file whose
+-- single table is a different kind is refused rather than half-read.
+local function singleSection(sections, expected, label)
+    local found = nil
+    local count = 0
+    for name in pairs(sections) do
+        count = count + 1
+        found = name
+    end
+    if count ~= 1 or found ~= expected then
+        problem(string.format("%s: expected exactly one [%s] table", label, expected))
+        return nil
+    end
+    return sections[found]
+end
+
+-- Shape is declared in schema/formats/module/*.schema.json for editors and CI
+-- (taplo); this checker re-asserts required/unknown fields cheaply at build
+-- time and enforces what a schema cannot see: the cross-file invariants below.
 local function requireFields(manifest, label, fields)
     for _, field in ipairs(fields) do
         if manifest[field] == nil then
@@ -288,31 +533,36 @@ end
 -- ---------------------------------------------------------------- validation
 
 local declared = scanDeclaredCapabilities()
-local host = readJson(HOST_MANIFEST)
+local host_sections = readToml(HOST_MANIFEST)
+local host = host_sections ~= nil
+                 and singleSection(host_sections, "resonate.host", "resonate.host.toml") or nil
 
 if host ~= nil then
-    requireFields(host, "resonate.host.json", {"id", "name", "abi", "summary", "provides"})
-    requireNoExtraFields(host, "resonate.host.json", {"id", "name", "abi", "summary", "provides"})
+    requireFields(host, "resonate.host.toml", {"id", "name", "abi", "summary", "provides"})
+    requireNoExtraFields(host, "resonate.host.toml", {"id", "name", "abi", "summary", "provides"})
 
     local manifests = {}
     local by_id = {}
 
-    for _, manifest_path in ipairs(os.files(path.join(MODULES_DIR, "*", "resonate.module.json"))) do
-        local manifest = readJson(manifest_path)
-        if manifest ~= nil then
+    for _, manifest_path in ipairs(os.files(path.join(MODULES_DIR, "*", "resonate.module.toml"))) do
+        local sections = readToml(manifest_path)
+        if sections ~= nil then
             local dir = path.filename(path.directory(manifest_path))
-            requireFields(manifest, dir, MODULE_FIELDS)
-            requireNoExtraFields(manifest, dir, MODULE_FIELDS)
+            local manifest = singleSection(sections, "resonate.module", dir)
+            if manifest ~= nil then
+                requireFields(manifest, dir, MODULE_FIELDS)
+                requireNoExtraFields(manifest, dir, MODULE_FIELDS)
 
-            manifest.source = manifest_path
-            manifest.dir = dir
-            manifests[#manifests + 1] = manifest
+                manifest.source = manifest_path
+                manifest.dir = dir
+                manifests[#manifests + 1] = manifest
 
-            if manifest.id ~= nil then
-                if by_id[manifest.id] ~= nil then
-                    problem(string.format("duplicate module id '%s'", manifest.id))
+                if manifest.id ~= nil then
+                    if by_id[manifest.id] ~= nil then
+                        problem(string.format("duplicate module id '%s'", manifest.id))
+                    end
+                    by_id[manifest.id] = manifest
                 end
-                by_id[manifest.id] = manifest
             end
         end
     end

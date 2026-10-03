@@ -1,0 +1,24 @@
+# Schema association for taplo: the Even Better TOML editor plugin.
+#
+# The CLI's `taplo lint` does not consult these rules (verified on 0.10.0:
+# even an absolute glob matched no schema), so every TOML file carries a
+# `#:schema` first-line comment instead — that works in both the editor and
+# the CLI. The rules here remain as the LSP's central mapping and the globs
+# are disjoint: every TOML file matches exactly one rule. `rule.schema.path`
+# resolves against this file's directory.
+
+# Manifests are copied into build/ beside the plugin binaries; the copies keep
+# the source's relative #:schema path, which no longer resolves from there.
+exclude = ["build/**"]
+
+[[rule]]
+include = ["resonate.host.toml"]
+
+[rule.schema]
+path = "schema/formats/module/host.schema.json"
+
+[[rule]]
+include = ["**/resonate.module.toml", "tests/plugins/**/resonate.*.toml"]
+
+[rule.schema]
+path = "schema/formats/module/manifest.schema.json"

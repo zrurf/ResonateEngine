@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resonateengine.dev/schema/formats/module/manifest.schema.json",
+  "title": "ResonateEngine module manifest",
+  "description": "One per module, written as resonate.module.toml beside its sources. Every field lives inside the single [resonate.module] table; the root table is the document's kind marker, mirroring [resonate.host] and future [resonate.<kind>] sections. Picked up by taplo through the #:schema first-line comment. The cross-file invariants (ids unique, every requirement provided, descriptor and build table agreeing) are enforced by scripts/module_check.lua on every build.",
+  "type": "object",
+  "required": ["resonate"],
+  "additionalProperties": false,
+  "properties": {
+    "resonate": {
+      "description": "The engine namespace. A manifest has exactly one table in it.",
+      "type": "object",
+      "required": ["module"],
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "description": "What this module declares about itself.",
+          "type": "object",
+          "required": ["id", "name", "version", "abi", "min_host_abi", "summary", "provides",
+                       "requires", "optional", "depends_on"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "description": "Reverse-DNS identity. Unique across modules and used by the dependency graph; never shown to a user.",
+              "type": "string",
+              "pattern": "^resonate(\\.[a-z][a-z0-9_]*)+$"
+            },
+            "name": {
+              "description": "Display name for logs and editor lists. Carries no identity, and two modules may share one.",
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "description": "Semantic version of the module itself, not of the ABI.",
+              "type": "string",
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+            },
+            "abi": {
+              "description": "Major ABI version the module was built against.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "min_host_abi": {
+              "description": "Lowest host major ABI this module accepts. The descriptor derives one from the other, so the two fields must be equal.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "summary": {
+              "description": "One line describing what the module is for.",
+              "type": "string",
+              "minLength": 1
+            },
+            "provides": {
+              "description": "Capabilities this module publishes. Each one belongs to exactly one module.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/capabilityId"
+              },
+              "uniqueItems": true
+            },
+            "requires": {
+              "description": "Capabilities the host must resolve before on_attach runs.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/capabilityId"
+              },
+              "uniqueItems": true
+            },
+            "optional": {
+              "description": "Capabilities that may be absent. The consumer checks the handle it gets back.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/capabilityId"
+              },
+              "uniqueItems": true
+            },
+            "depends_on": {
+              "description": "Modules that must attach first, independent of capabilities.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^resonate(\\.[a-z][a-z0-9_]*)+$"
+              },
+              "uniqueItems": true
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "capabilityId": {
+      "description": "A capability id: 'Resonate' plus dotted PascalCase segments, as declared by CapabilityTraits in a capability header.",
+      "type": "string",
+      "pattern": "^Resonate(\\.[A-Za-z][A-Za-z0-9_]*)+$"
+    }
+  }
+}

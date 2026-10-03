@@ -1,6 +1,6 @@
 -- Module targets are declared from this table rather than read from the
 -- manifests: a script pulled in by includes() runs in a sandbox with no file
--- reading, so it cannot open resonate.module.json. scripts/module_check.lua
+-- reading, so it cannot open resonate.module.toml. scripts/module_check.lua
 -- reconciles the table against the manifests, the C descriptors and the
 -- capability headers, and fails the build on any disagreement.
 --
@@ -59,7 +59,7 @@ for _, module in ipairs(modules) do
         -- The callback resolves its own paths: a relative one would be read from
         -- wherever the build happens to run.
         after_build(function (target)
-            local source = path.join(os.projectdir(), "packages", "modules", module_dir, "resonate.module.json")
-            os.cp(source, path.join(target:targetdir(), module_id .. ".json"))
+            local source = path.join(os.projectdir(), "packages", "modules", module_dir, "resonate.module.toml")
+            os.cp(source, path.join(target:targetdir(), module_id .. ".toml"))
         end)
 end

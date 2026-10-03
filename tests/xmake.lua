@@ -22,8 +22,8 @@ target("ResonateEngine.Tests.ProbeModule")
 
     after_build(function (target)
         local manifest =
-            path.join(os.projectdir(), "tests", "plugins", "probe", "resonate.probe.json")
-        os.cp(manifest, path.join(target:targetdir(), "resonate.probe.json"))
+            path.join(os.projectdir(), "tests", "plugins", "probe", "resonate.probe.toml")
+        os.cp(manifest, path.join(target:targetdir(), "resonate.probe.toml"))
     end)
 
 -- A module that fails its attach with host resources held, so the withdrawal the
@@ -38,8 +38,8 @@ target("ResonateEngine.Tests.FailingModule")
 
     after_build(function (target)
         local manifest =
-            path.join(os.projectdir(), "tests", "plugins", "failing", "resonate.failing.json")
-        os.cp(manifest, path.join(target:targetdir(), "resonate.failing.json"))
+            path.join(os.projectdir(), "tests", "plugins", "failing", "resonate.failing.toml")
+        os.cp(manifest, path.join(target:targetdir(), "resonate.failing.toml"))
     end)
 
 target("ResonateEngine.Tests")
