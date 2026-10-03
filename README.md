@@ -8,7 +8,8 @@ Licensed under Apache-2.0 with the LLVM exception (see [LICENSE](LICENSE)).
 ```
 packages/pal          platform abstraction: chrono, event, io, memory, sync, thread
 packages/core         containers, memory, math, jobs
-packages/ecs          the authoritative state: archetype storage, queries, commands
+packages/ecs          the authoritative state: archetype storage, blobs, queries, commands
+packages/hierarchy    the scene tree: parent/children components, tree commands, transform propagation
 packages/module       plugin ABI: the C contract and the C++ authoring layer
 packages/render       the render domain's interfaces: the target and the device
 packages/window       window and input (SDL3), statically linked
@@ -60,12 +61,14 @@ namespace, their ECS traits, and the frozen layout as `static_assert`s — plus
 other language forms will be generated from. A schema error fails the build.
 
 A declaration is `enum`, `bitmask`, `struct`, `component` or `node`; a field
-names a built-in scalar, `entity`, or a type the same module declares. What a
-type is addressed by outside C++ is its module-qualified name
-(`resonate.gameplay.Health`): two modules may own a type of the same name and
-they stay distinct. A component above version 1 declares the migrations to it,
-and the owner implements each one — the generated entry point takes its address,
-so a missing implementation fails to link wherever the entry is used.
+names a built-in scalar, `entity`, `blob` (a handle to a variable-length buffer
+in the ECS blob store), a core math type (`vec2`, `vec3`, `vec4`, `quat`,
+`mat4`), or a type the same module declares. What a type is addressed by outside
+C++ is its module-qualified name (`resonate.gameplay.Health`): two modules may
+own a type of the same name and they stay distinct. A component above version 1
+declares the migrations to it, and the owner implements each one — the generated
+entry point takes its address, so a missing implementation fails to link
+wherever the entry is used.
 
 A version is a promise to whatever was saved under it, and the version lock
 (`schemas.lock.json`, beside each module's declarations) is what keeps the
@@ -91,6 +94,23 @@ instructions nor namespaces:
     { "pattern": "**/*.rschema", "systemId": "schema/formats/schema/rschema.xsd" }
 ]
 ```
+
+## Scene tree
+
+`packages/hierarchy` owns the engine's own content module: entities linked by
+the `Parent`/`Children` components form the scene tree, edited through recorded
+commands (`hierarchy::setParent`, `clearParent`, `destroyEntity`) that play at
+the frame's sync points and are validated there — a cycle or a node past
+`kMaxDepth` is refused with a report, and never applied. The propagation system
+composes every node's `LocalTransform` into its `WorldTransform`, one depth
+level at a time; `startup` registers it for the launcher and the editor.
+
+Variable-length state lives outside the chunks in the ECS blob store
+(`World::createBlob` and its siblings): a component keeps only the handle, and
+the entity's blobs die with it. A `Children` list is the first user; inventories
+and skeleton poses are what it is shaped for. A domain records its own
+structural commands — the tree edits are the first — through
+`CommandBuffer::record`, so law 2 holds without the ECS knowing what they mean.
 
 The launcher and the editor both come up through `resonate::startup::run`. Plugins
 are scanned in `plugins` beside the executable, or in the first ancestor that has

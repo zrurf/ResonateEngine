@@ -83,6 +83,11 @@ bool conflicts(const Job& a, const Job& b)
     return ((a.writes & (b.reads | b.writes)) | (b.writes & a.reads)) != 0U;
 }
 
+/* Non-zero while the calling thread is inside a job's body — possibly several
+   deep, since a wait runs the work it picked up. A submission from in there is
+   that body's own work and is published at once (see trySubmit). */
+thread_local std::uint32_t nestedWork = 0;
+
 class JobSystemImpl final : public JobSystem
 {
   public:
@@ -397,6 +402,7 @@ class JobSystemImpl final : public JobSystem
 
     void run(Job* job)
     {
+        ++nestedWork;
         if (job->task != nullptr)
         {
             job->task(job->context);
@@ -416,6 +422,7 @@ class JobSystemImpl final : public JobSystem
                 job->work.fetch_sub(1, std::memory_order_acq_rel);
             }
         }
+        --nestedWork;
 
         /* The entry is consumed whether or not its runner claimed a chunk, and
            the decrement that reaches zero is this job's only closer: comparing
@@ -495,21 +502,31 @@ class JobSystemImpl final : public JobSystem
            so a job counted as a dependency cannot complete before this
            submission has registered against it, and a job left ready here
            cannot be turned into somebody's dependency before its entry is in a
-           queue. */
+           queue.
+
+           Nested work takes no dependency at all: it is the submitting task's
+           own work, published at once. Everything the task conflicts with is
+           either excluded already — the task holds its groups until it retires —
+           or ordered behind the task, which retires only after its nested work
+           returned. Ordering a nested job against a pending job that waits for
+           its own parent is the deadlock this exemption exists to prevent. */
         std::vector<Job*> deps;
         const JobGroup touched = reads | writes;
-        for (std::uint32_t bit = 0; bit < kGroupBits; ++bit)
+        if (nestedWork == 0)
         {
-            if ((touched & (1U << bit)) == 0U)
+            for (std::uint32_t bit = 0; bit < kGroupBits; ++bit)
             {
-                continue;
-            }
-            for (Job* pending : groups_[bit])
-            {
-                if (conflicts(*pending, *job) &&
-                    std::find(deps.begin(), deps.end(), pending) == deps.end())
+                if ((touched & (1U << bit)) == 0U)
                 {
-                    deps.push_back(pending);
+                    continue;
+                }
+                for (Job* pending : groups_[bit])
+                {
+                    if (conflicts(*pending, *job) &&
+                        std::find(deps.begin(), deps.end(), pending) == deps.end())
+                    {
+                        deps.push_back(pending);
+                    }
                 }
             }
         }

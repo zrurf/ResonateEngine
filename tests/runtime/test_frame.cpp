@@ -9,6 +9,8 @@
 #include <resonate/core/allocator.h>
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
+#include <resonate/hierarchy/system.h>
+#include <resonate/hierarchy/tree.h>
 #include <resonate/module/host.hpp>
 #include <resonate/render/offscreen.hpp>
 
@@ -411,4 +413,85 @@ TEST_CASE("a headless run shows UPDATE's spawn to PHYSICS in the same frame", "[
        announced a second arrival. */
     REQUIRE(run.announced == 1);
     REQUIRE(run.reports.empty());
+}
+
+TEST_CASE("a tree planted in UPDATE is transformed by the same frame's LATE", "[runtime][frame]")
+{
+    World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+
+    Logs logs;
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    host->setWorld(&world);
+    host->setLogSink(&logs, &Logs::sink);
+
+    /* UPDATE records the tree through the hierarchy's commands; the sync point
+       plays them, so the entities exist and are linked before LATE runs. */
+    struct Planter
+    {
+        Entity root{};
+        std::vector<Entity> children;
+
+        static void run(void* context, World&, CommandBuffer& commands, float)
+        {
+            auto* self = static_cast<Planter*>(context);
+            if (self->children.size() >= 64U)
+            {
+                return;
+            }
+
+            resonate::hierarchy::LocalTransform local{};
+            local.position = resonate::Vec3{1.0F, 2.0F, 3.0F};
+            self->root = commands.spawn(local);
+            commands.add<resonate::hierarchy::WorldTransform>(
+                self->root, resonate::hierarchy::WorldTransform{});
+            for (int index = 0; index < 64; ++index)
+            {
+                local.position = resonate::Vec3{0.0F, 1.0F, 0.0F};
+                const Entity child = commands.spawn(local);
+                commands.add<resonate::hierarchy::WorldTransform>(
+                    child, resonate::hierarchy::WorldTransform{});
+                resonate::hierarchy::setParent(commands, child, self->root);
+                self->children.push_back(child);
+            }
+        }
+    };
+
+    Planter planter;
+    const resonate::EngineSystemDesc plan{"test.planter", RESONATE_STAGE_UPDATE, &Planter::run,
+                                          &planter};
+    REQUIRE(resonate::addEngineSystem(*host, plan) == RESONATE_OK);
+
+    /* The propagation runs in LATE with the run's pool: its level work is
+       submitted from inside the stage's own job. */
+    resonate::hierarchy::PropagationSystem propagation;
+    propagation.jobs = host->jobs();
+    const resonate::EngineSystemDesc propagate{
+        "resonate.hierarchy.propagation", RESONATE_STAGE_LATE_UPDATE,
+        &resonate::hierarchy::PropagationSystem::invoke, &propagation};
+    REQUIRE(resonate::addEngineSystem(*host, propagate) == RESONATE_OK);
+
+    host->runFrame(1.0F / 60.0F);
+
+    REQUIRE(world.alive(planter.root));
+    REQUIRE(planter.children.size() == 64U);
+    REQUIRE(resonate::hierarchy::childCount(world, planter.root) == 64U);
+    REQUIRE(world.blobCount() == 1U);
+
+    const auto* root_world = world.get<resonate::hierarchy::WorldTransform>(planter.root);
+    REQUIRE(root_world != nullptr);
+    REQUIRE(root_world->matrix.m[0][3] == 1.0F);
+    REQUIRE(root_world->matrix.m[1][3] == 2.0F);
+    REQUIRE(root_world->matrix.m[2][3] == 3.0F);
+
+    for (const Entity child : planter.children)
+    {
+        const auto* child_world = world.get<resonate::hierarchy::WorldTransform>(child);
+        REQUIRE(child_world != nullptr);
+        REQUIRE(child_world->matrix.m[0][3] == 1.0F);
+        REQUIRE(child_world->matrix.m[1][3] == 3.0F);
+        REQUIRE(child_world->matrix.m[2][3] == 3.0F);
+    }
 }

@@ -19,6 +19,7 @@ struct CommandBuffer::Impl
         Destroy,
         Add,
         Remove,
+        Recorded,
     };
 
     struct Command
@@ -28,6 +29,8 @@ struct CommandBuffer::Impl
         ComponentIndex component = kInvalidComponent;
         std::uint32_t payload = 0; /* offset into `bytes` */
         std::uint32_t size = 0;
+        CommandBuffer::PlayFn play = nullptr; /* Recorded only */
+        void* context = nullptr;              /* Recorded only */
     };
 
     World* world = nullptr;
@@ -140,6 +143,36 @@ void CommandBuffer::remove(Entity entity, ComponentIndex component)
     impl_->commands.push_back(Impl::Command{Impl::Kind::Remove, entity, component});
 }
 
+void CommandBuffer::record(PlayFn play, void* context, const void* payload, std::size_t size)
+{
+    if (play == nullptr || (size != 0 && payload == nullptr))
+    {
+        impl_->impl->say(World::Report::Error,
+                         "record: a command needs a play function and payload");
+        return;
+    }
+
+    /* Aligned for any scalar the play function may read out of it, which the
+       component payloads below do not need — they are memcpy'd, not read. */
+    const std::size_t aligned =
+        detail::alignUp(static_cast<std::uint32_t>(impl_->bytes.size()),
+                        static_cast<std::uint32_t>(alignof(std::max_align_t)));
+    impl_->bytes.resize(aligned + size);
+    if (size != 0)
+    {
+        std::memcpy(impl_->bytes.data() + aligned, payload, size);
+    }
+
+    impl_->commands.push_back(Impl::Command{Impl::Kind::Recorded, Entity{}, kInvalidComponent,
+                                            static_cast<std::uint32_t>(aligned),
+                                            static_cast<std::uint32_t>(size), play, context});
+}
+
+World& CommandBuffer::world() noexcept
+{
+    return *impl_->world;
+}
+
 std::uint32_t CommandBuffer::commandCount() const noexcept
 {
     return static_cast<std::uint32_t>(impl_->commands.size());
@@ -189,6 +222,9 @@ void World::play(CommandBuffer& buffer)
                 break;
             case CommandBuffer::Impl::Kind::Remove:
                 remove(command.entity, command.component);
+                break;
+            case CommandBuffer::Impl::Kind::Recorded:
+                command.play(command.context, *this, source.bytes.data() + command.payload);
                 break;
         }
     }

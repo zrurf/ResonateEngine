@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<schema module="resonate.hierarchy">
+
+  <!-- The entity's parent. An entity without the component is a root; the handle
+       is maintained together with the parent's child list by the tree edits. -->
+  <component name="Parent" version="1">
+    <field name="parent" type="entity"/>
+  </component>
+
+  <!-- The parent's side of the same relation: a blob of child handles in
+       insertion order. Present exactly while the entity has children. -->
+  <component name="Children" version="1">
+    <field name="children" type="blob"/>
+  </component>
+
+  <!-- Local transform: the translation/rotation/scale the propagation composes
+       into the world matrix. -->
+  <component name="LocalTransform" version="1">
+    <field name="position" type="vec3"/>
+    <field name="rotation" type="quat" default="0 0 0 1"/>
+    <field name="scale" type="vec3" default="1 1 1"/>
+  </component>
+
+  <!-- Derived: the propagation system writes the composed matrix every frame.
+       The component is storage for consumers, not an authored value. -->
+  <component name="WorldTransform" version="1">
+    <field name="matrix" type="mat4"/>
+  </component>
+
+</schema>

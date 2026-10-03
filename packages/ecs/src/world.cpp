@@ -29,6 +29,19 @@ void World::setReportSink(void* user_data, ReportFn sink)
     impl_->report = sink;
 }
 
+void World::report(Report level, const char* format, ...)
+{
+    char message[256] = {};
+    std::va_list arguments;
+    va_start(arguments, format);
+    std::vsnprintf(message, sizeof(message), format, arguments);
+    va_end(arguments);
+
+    /* Through the %s, so a message a caller formatted cannot be read as a
+       format string again. */
+    impl_->say(level, "%s", message);
+}
+
 ComponentIndex World::registerComponent(const char* name, std::uint32_t size,
                                         std::uint32_t alignment)
 {
@@ -193,6 +206,10 @@ void World::destroy(Entity entity)
         return;
     }
 
+    /* The blobs are the entity's, so they die with it — while the record still
+       names them. */
+    impl_->reclaimBlobs(*record);
+
     Chunk* chunk = record->chunk;
     impl_->removeRow(chunk, record->row);
     impl_->releaseIfEmpty(chunk);
@@ -322,6 +339,142 @@ bool World::remove(Entity entity, ComponentIndex component)
     return true;
 }
 
+BlobHandle World::createBlob(Entity owner, std::size_t size, const void* data)
+{
+    if (!impl_->structural())
+    {
+        return BlobHandle{};
+    }
+    EntityRecord* record = impl_->recordOf(owner, "createBlob");
+    if (record == nullptr)
+    {
+        return BlobHandle{};
+    }
+
+    std::uint32_t index = 0;
+    if (!impl_->freeBlobs.empty())
+    {
+        index = impl_->freeBlobs.back();
+        impl_->freeBlobs.pop_back();
+    }
+    else
+    {
+        index = static_cast<std::uint32_t>(impl_->blobs.size());
+        impl_->blobs.emplace_back();
+    }
+
+    detail::BlobRecord& blob = impl_->blobs[index];
+    blob.generation += 1U;
+    if (blob.generation == 0U)
+    {
+        blob.generation = 1U;
+    }
+
+    if (size != 0)
+    {
+        blob.bytes = impl_->allocator->allocate(size, detail::kBlobAlignment);
+        if (blob.bytes == nullptr)
+        {
+            impl_->say(Report::Error, "createBlob: allocation of %zu bytes failed", size);
+            impl_->freeBlobs.push_back(index);
+            return BlobHandle{};
+        }
+        if (data != nullptr)
+        {
+            std::memcpy(blob.bytes, data, size);
+        }
+        else
+        {
+            std::memset(blob.bytes, 0, size);
+        }
+    }
+
+    blob.size = size;
+    blob.live = true;
+    blob.owner = owner;
+    blob.next = record->firstBlob;
+    record->firstBlob = index;
+    ++impl_->liveBlobs;
+    return BlobHandle{index, blob.generation};
+}
+
+bool World::resizeBlob(BlobHandle handle, std::size_t size)
+{
+    if (!impl_->structural())
+    {
+        return false;
+    }
+    detail::BlobRecord* blob = impl_->blobOf(handle, "resizeBlob");
+    if (blob == nullptr || size == blob->size)
+    {
+        return blob != nullptr;
+    }
+
+    void* bytes = nullptr;
+    if (size != 0)
+    {
+        bytes = impl_->allocator->allocate(size, detail::kBlobAlignment);
+        if (bytes == nullptr)
+        {
+            impl_->say(Report::Error, "resizeBlob: allocation of %zu bytes failed", size);
+            return false;
+        }
+        const std::size_t kept = size < blob->size ? size : blob->size;
+        if (kept != 0)
+        {
+            std::memcpy(bytes, blob->bytes, kept);
+        }
+        if (size > blob->size)
+        {
+            std::memset(static_cast<std::byte*>(bytes) + blob->size, 0, size - blob->size);
+        }
+    }
+
+    if (blob->bytes != nullptr)
+    {
+        impl_->allocator->deallocate(blob->bytes, blob->size);
+    }
+    blob->bytes = bytes;
+    blob->size = size;
+    return true;
+}
+
+bool World::destroyBlob(BlobHandle handle)
+{
+    if (!impl_->structural())
+    {
+        return false;
+    }
+    if (impl_->blobOf(handle, "destroyBlob") == nullptr)
+    {
+        return false;
+    }
+    impl_->releaseBlob(handle.index);
+    return true;
+}
+
+void* World::blobData(BlobHandle handle) noexcept
+{
+    detail::BlobRecord* blob = impl_->blobOf(handle, "blobData");
+    return blob != nullptr ? blob->bytes : nullptr;
+}
+
+const void* World::blobData(BlobHandle handle) const noexcept
+{
+    return const_cast<World*>(this)->blobData(handle);
+}
+
+std::size_t World::blobSize(BlobHandle handle) const noexcept
+{
+    const detail::BlobRecord* blob = impl_->findBlob(handle);
+    return blob != nullptr ? blob->size : 0;
+}
+
+bool World::alive(BlobHandle handle) const noexcept
+{
+    return impl_->findBlob(handle) != nullptr;
+}
+
 void World::markChanged(Entity entity, ComponentIndex component)
 {
     if (!impl_->requireType(component, "markChanged"))
@@ -409,6 +562,11 @@ std::uint32_t World::liveChunkCount() const noexcept
 std::uint32_t World::pooledChunkCount() const noexcept
 {
     return static_cast<std::uint32_t>(impl_->pooled.size());
+}
+
+std::uint32_t World::blobCount() const noexcept
+{
+    return impl_->liveBlobs;
 }
 
 } // namespace resonate::ecs

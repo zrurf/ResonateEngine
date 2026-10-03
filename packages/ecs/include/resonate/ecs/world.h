@@ -1,10 +1,12 @@
 #ifndef RESONATE_ECS_WORLD_H
 #define RESONATE_ECS_WORLD_H
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
 #include "resonate/core/allocator.h"
+#include "resonate/ecs/blob.h"
 #include "resonate/ecs/component.h"
 #include "resonate/ecs/entity.h"
 #include "resonate/ecs/query.h"
@@ -73,6 +75,10 @@ class World
 
     /* Empty restores the default, which writes to stderr like the host's. */
     void setReportSink(void* user_data, ReportFn sink);
+
+    /* Where a domain layered on the world reports through the same sink the
+       world's own failures use; printf-style like them. */
+    void report(Report level, const char* format, ...);
 
     /* --- component types --- */
 
@@ -151,6 +157,31 @@ class World
     {
         return remove(entity, ComponentTraits<T>::index);
     }
+
+    /* --- blobs (structural: the store's slots move, refused while parallel) --- */
+
+    /* An entity-owned buffer outside the chunks, for the data a fixed component
+       cannot hold: inventories, poses, child lists. The owner must be alive;
+       destroying it reclaims its blobs. A null `data` leaves the bytes zeroed.
+       The handle is generation-tagged, so once the blob is destroyed or its
+       owner dies the handle fails instead of reading another blob's bytes. */
+    [[nodiscard]] BlobHandle createBlob(Entity owner, std::size_t size, const void* data = nullptr);
+
+    /* Keeps the contents up to the smaller of the two sizes and zeroes growth.
+       The address may move — a blob change is a structural change. */
+    [[nodiscard]] bool resizeBlob(BlobHandle blob, std::size_t size);
+
+    [[nodiscard]] bool destroyBlob(BlobHandle blob);
+
+    /* The bytes; null for a handle that is not alive (which is reported). The
+       address is stable until the next structural change, and across sync
+       points it is invalid like every chunk pointer (law 6). */
+    [[nodiscard]] void* blobData(BlobHandle blob) noexcept;
+    [[nodiscard]] const void* blobData(BlobHandle blob) const noexcept;
+
+    /* Zero for a handle that is not alive; `alive` is the discriminating check. */
+    [[nodiscard]] std::size_t blobSize(BlobHandle blob) const noexcept;
+    [[nodiscard]] bool alive(BlobHandle blob) const noexcept;
 
     /* --- queries --- */
 
@@ -255,6 +286,9 @@ class World
     /* Chunks attached to an archetype, and empty chunks held for reuse. */
     [[nodiscard]] std::uint32_t liveChunkCount() const noexcept;
     [[nodiscard]] std::uint32_t pooledChunkCount() const noexcept;
+
+    /* Blobs that are alive. */
+    [[nodiscard]] std::uint32_t blobCount() const noexcept;
 
   private:
     friend class CommandBuffer;

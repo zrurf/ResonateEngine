@@ -83,6 +83,12 @@ TEST_CASE("a module declaring every kind of type is accepted", "[schema]")
     <field name="source" type="entity"/>
     <field name="last" type="Damage"/>
     <field name="ready" type="bool" default="true"/>
+    <field name="bag" type="blob"/>
+    <field name="offset" type="vec2" default="1 2"/>
+    <field name="position" type="vec3" default="1 2 3"/>
+    <field name="color" type="vec4" default="0 0 0 1"/>
+    <field name="facing" type="quat" default="0 0 0 1"/>
+    <field name="basis" type="mat4"/>
   </component>
 
   <node name="SceneEntity" version="1">
@@ -238,12 +244,6 @@ TEST_CASE("a field names a type the module declares", "[schema]")
 
 TEST_CASE("types the design names but v0 does not have are refused as such", "[schema]")
 {
-    expectError("field-blob", R"xml(<schema module="resonate.test">
-  <component name="C" version="1"><field name="f" type="blob"/></component>
-</schema>
-)xml",
-                "'blob' is not supported yet");
-
     expectError("field-asset", R"xml(<schema module="resonate.test">
   <component name="C" version="1"><field name="f" type="asset:texture"/></component>
 </schema>
@@ -255,6 +255,48 @@ TEST_CASE("types the design names but v0 does not have are refused as such", "[s
 </schema>
 )xml",
                 "fixed arrays are not implemented yet");
+}
+
+TEST_CASE("a blob field takes no scalar constraint", "[schema]")
+{
+    expectError("blob-min", R"xml(<schema module="resonate.test">
+  <component name="C" version="1"><field name="f" type="blob" min="0"/></component>
+</schema>
+)xml",
+                "a blob field takes no min, max or default");
+
+    expectError("blob-default", R"xml(<schema module="resonate.test">
+  <component name="C" version="1"><field name="f" type="blob" default="0"/></component>
+</schema>
+)xml",
+                "the blob is the variable part");
+}
+
+TEST_CASE("a math field's default is one number per component", "[schema]")
+{
+    expectError("vec-min", R"xml(<schema module="resonate.test">
+  <component name="C" version="1"><field name="f" type="vec3" min="0"/></component>
+</schema>
+)xml",
+                "a vec3 field takes no min or max");
+
+    expectError("vec-count", R"xml(<schema module="resonate.test">
+  <component name="C" version="1"><field name="f" type="vec3" default="1 2"/></component>
+</schema>
+)xml",
+                "a vec3 default is one number per component (3), got 2");
+
+    expectError("quat-value", R"xml(<schema module="resonate.test">
+  <component name="C" version="1"><field name="f" type="quat" default="0 0 0 x"/></component>
+</schema>
+)xml",
+                "'x' is not a number for the quat default");
+
+    expectError("mat4-default", R"xml(<schema module="resonate.test">
+  <component name="C" version="1"><field name="f" type="mat4" default="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1"/></component>
+</schema>
+)xml",
+                "a mat4 field takes no default");
 }
 
 TEST_CASE("a struct cannot be inlined into itself", "[schema]")

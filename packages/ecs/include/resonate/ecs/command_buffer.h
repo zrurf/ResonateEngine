@@ -1,6 +1,7 @@
 #ifndef RESONATE_ECS_COMMAND_BUFFER_H
 #define RESONATE_ECS_COMMAND_BUFFER_H
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -24,6 +25,11 @@ class World;
  * One thread records a buffer and the world plays it once. A buffer discarded
  * with unplayed creates releases them and reports. Per-thread segments for
  * recording from parallel work arrive with the frame arena.
+ *
+ * A domain records its own structural commands through `record`: the play
+ * function runs at playback with the world, in record order with everything
+ * else the buffer carries. That is how a tree edit or another domain-specific
+ * operation stays inside law 2 without the ECS knowing what it means.
  */
 class CommandBuffer
 {
@@ -64,6 +70,18 @@ class CommandBuffer
     {
         remove(entity, ComponentTraits<T>::index);
     }
+
+    /* A structural command the recorder defines. `play` runs at playback, in
+       record order; the payload is copied into the buffer (aligned for any
+       scalar), so the recorder's memory is free on return, while `context` is
+       borrowed and must outlive playback. The play function reports what it
+       refuses through the world. */
+    using PlayFn = void (*)(void* context, World& world, const void* payload);
+    void record(PlayFn play, void* context, const void* payload, std::size_t size);
+
+    /* The world the buffer records into. Read here it is the committed state:
+       the records made earlier in this buffer are not in it yet. */
+    [[nodiscard]] World& world() noexcept;
 
     [[nodiscard]] std::uint32_t commandCount() const noexcept;
     [[nodiscard]] bool empty() const noexcept;

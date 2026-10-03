@@ -114,11 +114,8 @@ internal static class SchemaCompiler
         {
             "string" => "variable-length text belongs to the document family; a storage field is "
                         + "fixed-size",
-            "blob" => "the blob store is not implemented yet",
             _ when name.StartsWith("asset:", StringComparison.Ordinal) => "asset references arrive "
                                                                           + "with the asset registry's GUID",
-            "vec2" or "vec3" or "vec4" or "quat" or "mat3" or "mat4" => "the core math types are not "
-                                                                        + "in packages/utils yet",
             _ when name.Contains('[') => "fixed arrays are not implemented yet",
             _ => null,
         };
@@ -161,6 +158,19 @@ internal static class SchemaCompiler
                             field.DefaultText = value;
                         }
                     }
+                    break;
+
+                case PrimitiveKind.Blob:
+                    if (field.Min is not null || field.Max is not null || field.Default is not null)
+                    {
+                        diagnostics.Error(owner.File, field.Line, field.Column,
+                                          "a blob field takes no min, max or default; the blob is "
+                                              + "the variable part");
+                    }
+                    break;
+
+                case PrimitiveKind.Math:
+                    CheckMath(owner, field, primitive, diagnostics);
                     break;
 
                 default:
@@ -231,6 +241,60 @@ internal static class SchemaCompiler
                                       + "field has no scalar default");
                 break;
         }
+    }
+
+    /* A math field carries one number per component as its default ("0 0 0 1"),
+       all canonicalised the way a float default is. min/max do not order
+       vectors, and a mat4 literal would stop being readable. */
+    private static void CheckMath(TypeDecl owner, FieldDecl field, Primitive primitive,
+                                  Diagnostics diagnostics)
+    {
+        if (field.Min is not null || field.Max is not null)
+        {
+            diagnostics.Error(owner.File, field.Min?.Line ?? field.Line,
+                              field.Min?.Column ?? field.Column,
+                              $"a {primitive.Name} field takes no min or max");
+        }
+        if (field.Default is null)
+        {
+            return;
+        }
+
+        int components = primitive.Components;
+        if (components == 0)
+        {
+            diagnostics.Error(owner.File, field.Default.Line, field.Default.Column,
+                              $"a {primitive.Name} field takes no default");
+            return;
+        }
+
+        string[] parts = field.Default.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != components)
+        {
+            diagnostics.Error(owner.File, field.Default.Line, field.Default.Column,
+                              $"a {primitive.Name} default is one number per component "
+                                  + $"({components}), got {parts.Length}");
+            return;
+        }
+
+        List<string> canonical = [];
+        foreach (string part in parts)
+        {
+            if (!Literals.TryFloat(part, out double parsed))
+            {
+                diagnostics.Error(owner.File, field.Default.Line, field.Default.Column,
+                                  $"'{part}' is not a number for the {primitive.Name} default");
+                return;
+            }
+            if (Math.Abs(parsed) > float.MaxValue)
+            {
+                diagnostics.Error(owner.File, field.Default.Line, field.Default.Column,
+                                  $"'{part}' is beyond the range of f32");
+                return;
+            }
+            canonical.Add(Literals.Float(parsed));
+        }
+        field.DefaultText = string.Join(' ', canonical);
     }
 
     private static void CheckNumeric(TypeDecl owner, FieldDecl field, Primitive primitive,

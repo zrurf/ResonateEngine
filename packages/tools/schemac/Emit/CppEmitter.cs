@@ -29,6 +29,8 @@ internal static class CppEmitter
         List<TypeDecl> storage = [];
         List<TypeDecl> components = [];
         bool needsEntity = false;
+        bool needsBlob = false;
+        bool needsMath = false;
         foreach (TypeDecl type in module.Types)
         {
             if (!type.IsStorage)
@@ -43,9 +45,19 @@ internal static class CppEmitter
             foreach (FieldDecl field in type.Fields)
             {
                 needsEntity |= field.Primitive?.Kind == PrimitiveKind.Entity;
+                needsBlob |= field.Primitive?.Kind == PrimitiveKind.Blob;
+                needsMath |= field.Primitive?.Kind == PrimitiveKind.Math;
             }
         }
 
+        if (needsMath)
+        {
+            text.Append("#include <resonate/core/math.h>\n");
+        }
+        if (needsBlob)
+        {
+            text.Append("#include <resonate/ecs/blob.h>\n");
+        }
         if (components.Count > 0)
         {
             text.Append("#include <resonate/ecs/component.h>\n");
@@ -104,6 +116,11 @@ internal static class CppEmitter
         {
             text.Append("\nstatic_assert(sizeof(resonate::ecs::Entity) == 8,\n"
                         + "              \"the schema's entity fields assume the ECS handle is 8 bytes\");\n");
+        }
+        if (needsBlob)
+        {
+            text.Append("\nstatic_assert(sizeof(resonate::ecs::BlobHandle) == 8,\n"
+                        + "              \"the schema's blob fields assume the ECS handle is 8 bytes\");\n");
         }
 
         text.Append("\n#endif /* ").Append(guard).Append(" */\n");
@@ -237,6 +254,7 @@ internal static class CppEmitter
                 PrimitiveKind.Boolean => $" = {value}",
                 PrimitiveKind.Float => $" = {(primitive.Bits == 32 ? FloatLiteral(value, true) : FloatLiteral(value, false))}",
                 PrimitiveKind.Integer => $" = {IntegerLiteral(primitive, value)}",
+                PrimitiveKind.Math => $" = {MathDefault(primitive, value)}",
                 _ => "{}",
             };
         }
@@ -273,6 +291,23 @@ internal static class CppEmitter
                              ? text
                              : text + ".0";
         return single ? literal + "F" : literal;
+    }
+
+    /* One f32 literal per component, as aggregate initialisation: the canonical
+       default text is already one number per component. */
+    private static string MathDefault(Primitive primitive, string value)
+    {
+        string[] parts = value.Split(' ');
+        StringBuilder literals = new();
+        foreach (string part in parts)
+        {
+            if (literals.Length > 0)
+            {
+                literals.Append(", ");
+            }
+            literals.Append(FloatLiteral(part, true));
+        }
+        return $"{primitive.Cpp}{{{literals}}}";
     }
 
     private static string IntegerLiteral(TypeDecl type, string text)

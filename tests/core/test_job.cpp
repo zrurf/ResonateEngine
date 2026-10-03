@@ -462,3 +462,235 @@ TEST_CASE("a full slot pool slows submission instead of dropping the job", "[cor
 
     delete jobs;
 }
+
+namespace
+{
+
+/* Waits for a flag the way a check can afford to: bounded, so a submission that
+   wrongly depends on its own ancestor fails the check instead of hanging the
+   suite. */
+bool spinUntil(const std::atomic<bool>& flag, int spins)
+{
+    for (int spin = 0; spin < spins; ++spin)
+    {
+        if (flag.load(std::memory_order_acquire))
+        {
+            return true;
+        }
+        resonate_pal_thread_yield();
+    }
+    return flag.load(std::memory_order_acquire);
+}
+
+void setFlag(void* context)
+{
+    static_cast<std::atomic<bool>*>(context)->store(true, std::memory_order_release);
+}
+
+} // namespace
+
+TEST_CASE("nested work does not wait for the job that submitted it", "[core][job]")
+{
+    JobSystem* jobs = resonate::createJobSystem();
+
+    struct State
+    {
+        JobSystem* jobs = nullptr;
+        std::atomic<bool> innerRan{false};
+        std::atomic<bool> innerRanWhileParentRuns{false};
+        std::atomic<bool> innerWaited{false};
+    } state;
+    state.jobs = jobs;
+
+    /* The nested job writes the same group as the task that submits it: without
+       the exemption it would depend on that task, which is waiting for it. A
+       submission the pool refused (handle 0) leaves the flags clear, so the
+       checks below still fail rather than pass silently. */
+    const JobIndex outer = jobs->submitSingle(
+        [](void* context)
+        {
+            auto* state = static_cast<State*>(context);
+            const JobIndex inner =
+                state->jobs->submitSingle(setFlag, &state->innerRan, GROUP_A, GROUP_A,
+                                          JobPriorityNormal, resonate::JobAffinityThroughput);
+            const bool ran = spinUntil(state->innerRan, 20000000);
+            state->innerRanWhileParentRuns.store(ran, std::memory_order_release);
+            if (ran)
+            {
+                state->jobs->wait(inner);
+                state->innerWaited.store(true, std::memory_order_release);
+            }
+        },
+        &state, 0, GROUP_A, JobPriorityNormal, resonate::JobAffinityThroughput);
+    REQUIRE(outer != 0);
+
+    jobs->wait(outer);
+    REQUIRE(state.innerRan.load());
+    REQUIRE(state.innerRanWhileParentRuns.load());
+    REQUIRE(state.innerWaited.load());
+
+    delete jobs;
+}
+
+TEST_CASE("nested work of nested work runs", "[core][job]")
+{
+    JobSystem* jobs = resonate::createJobSystem();
+
+    struct State
+    {
+        JobSystem* jobs = nullptr;
+        std::atomic<std::uint32_t> completed{0};
+        std::atomic<std::uint32_t> reached{0};
+    } state;
+    state.jobs = jobs;
+
+    /* Three levels deep on one group, each waiting for the level below it: every
+       level is an ancestor of the submission two levels down. */
+    const JobIndex outer = jobs->submitSingle(
+        [](void* context)
+        {
+            auto* state = static_cast<State*>(context);
+            JobSystem* system = state->jobs;
+
+            const JobIndex middle = system->submitSingle(
+                [](void* context2)
+                {
+                    auto* state = static_cast<State*>(context2);
+                    JobSystem* system2 = state->jobs;
+
+                    const JobIndex inner = system2->submitSingle(
+                        [](void* context3)
+                        {
+                            static_cast<State*>(context3)->reached.store(3,
+                                                                         std::memory_order_relaxed);
+                        },
+                        state, GROUP_A, GROUP_A, JobPriorityNormal,
+                        resonate::JobAffinityThroughput);
+                    system2->wait(inner);
+                    state->completed.store(2, std::memory_order_relaxed);
+                },
+                state, GROUP_A, GROUP_A, JobPriorityNormal, resonate::JobAffinityThroughput);
+            system->wait(middle);
+            state->completed.store(1, std::memory_order_relaxed);
+        },
+        &state, GROUP_A, GROUP_A, JobPriorityNormal, resonate::JobAffinityThroughput);
+    REQUIRE(outer != 0);
+
+    jobs->wait(outer);
+    REQUIRE(state.reached.load() == 3);
+    REQUIRE(state.completed.load() == 1);
+
+    delete jobs;
+}
+
+TEST_CASE("work ordered behind a task runs after the task's nested work", "[core][job]")
+{
+    JobSystem* jobs = resonate::createJobSystem();
+
+    struct State
+    {
+        JobSystem* jobs = nullptr;
+        std::atomic<bool> nestedRan{false};
+        std::atomic<std::uint32_t> rank{0};
+        std::atomic<std::uint32_t> nestedRank{0};
+        std::atomic<std::uint32_t> parentRank{0};
+        std::atomic<std::uint32_t> followerRank{0};
+    } state;
+    state.jobs = jobs;
+
+    /* Two jobs on GROUP_A: the second waits for the first, which nests (and
+       waits for) its own work. That nested work belongs to the first job, so the
+       rank it stamps must land before the rank the second job stamps — which is
+       also what keeps the submission finite. */
+    const JobIndex parent = jobs->submitSingle(
+        [](void* context)
+        {
+            auto* state = static_cast<State*>(context);
+            const JobIndex inner = state->jobs->submitSingle(
+                [](void* context2)
+                {
+                    auto* state2 = static_cast<State*>(context2);
+                    state2->nestedRank.store(state2->rank.fetch_add(1, std::memory_order_relaxed),
+                                             std::memory_order_relaxed);
+                    state2->nestedRan.store(true, std::memory_order_release);
+                },
+                state, 0, 0, JobPriorityNormal, resonate::JobAffinityThroughput);
+            state->jobs->wait(inner);
+            state->parentRank.store(state->rank.fetch_add(1, std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+        },
+        &state, 0, GROUP_A, JobPriorityNormal, resonate::JobAffinityThroughput);
+    REQUIRE(parent != 0);
+
+    const JobIndex follower = jobs->submitSingle(
+        [](void* context)
+        {
+            auto* state = static_cast<State*>(context);
+            state->followerRank.store(state->rank.fetch_add(1, std::memory_order_relaxed),
+                                      std::memory_order_relaxed);
+        },
+        &state, 0, GROUP_A, JobPriorityNormal, resonate::JobAffinityThroughput);
+    REQUIRE(follower != 0);
+
+    jobs->waitAll();
+    REQUIRE(state.nestedRan.load());
+    REQUIRE(state.nestedRank.load() < state.parentRank.load());
+    REQUIRE(state.parentRank.load() < state.followerRank.load());
+
+    delete jobs;
+}
+
+TEST_CASE("nested submissions drain from many threads", "[core][job]")
+{
+    JobSystem* jobs = resonate::createJobSystem();
+
+    struct State
+    {
+        JobSystem* jobs = nullptr;
+        std::atomic<std::uint32_t> slices{0};
+        std::atomic<std::uint32_t> parents{0};
+    } state;
+    state.jobs = jobs;
+
+    /* Eight threads each submit a task that nests a parallel for on the same
+       group as itself: every task is its own nested work's ancestor, and the
+       tasks serialise against each other, so the ancestry, not the masks, is
+       what has to keep every wait finite. */
+    const auto parentTask = [](void* context)
+    {
+        auto* state = static_cast<State*>(context);
+        const JobIndex forked = state->jobs->submitParallel(
+            [](void* context2, std::uint32_t begin, std::uint32_t end)
+            {
+                auto* state2 = static_cast<State*>(context2);
+                state2->slices.fetch_add(end - begin, std::memory_order_relaxed);
+            },
+            state, 64, GROUP_C, GROUP_C, JobPriorityNormal);
+        state->jobs->wait(forked);
+        state->parents.fetch_add(1, std::memory_order_relaxed);
+    };
+
+    std::vector<std::thread> threads;
+    threads.reserve(8);
+    for (int index = 0; index < 8; ++index)
+    {
+        threads.emplace_back(
+            [&state, parentTask]
+            {
+                const JobIndex outer =
+                    state.jobs->submitSingle(parentTask, &state, 0, GROUP_C, JobPriorityNormal,
+                                             resonate::JobAffinityThroughput);
+                state.jobs->wait(outer);
+            });
+    }
+    for (std::thread& thread : threads)
+    {
+        thread.join();
+    }
+
+    jobs->waitAll();
+    REQUIRE(state.slices.load() == 8 * 64);
+    REQUIRE(state.parents.load() == 8);
+
+    delete jobs;
+}

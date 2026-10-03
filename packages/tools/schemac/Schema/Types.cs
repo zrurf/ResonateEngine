@@ -42,17 +42,24 @@ internal enum PrimitiveKind
     Float,
     Boolean,
     Entity,
+    Blob,
+    Math,
 }
 
 /* A leaf type a field can be written in: the fixed integers, the two floats,
-   bool, and the entity handle. Entity is here because its size and alignment
-   are part of every layout a component has. */
+   bool, the entity and blob handles, and the core math types. Entity and blob
+   are here because their sizes and alignments are part of every layout a
+   component has. */
 internal sealed record Primitive(string Name, PrimitiveKind Kind, int Bits, int Size, int Align,
                                  bool Signed, string Cpp)
 {
     internal bool IsInteger => Kind == PrimitiveKind.Integer;
     internal bool IsFloat => Kind == PrimitiveKind.Float;
     internal bool IsNumeric => IsInteger || IsFloat;
+
+    /* How many numbers a math value's default takes, one per component. A mat4
+       is too large for a one-line literal to stay readable, so it takes none. */
+    internal int Components => Kind == PrimitiveKind.Math && Size <= 16 ? Size / 4 : 0;
 }
 
 internal static class Primitives
@@ -70,10 +77,19 @@ internal static class Primitives
         ["f32"] = new("f32", PrimitiveKind.Float, 32, 4, 4, true, "float"),
         ["f64"] = new("f64", PrimitiveKind.Float, 64, 8, 8, true, "double"),
         ["bool"] = new("bool", PrimitiveKind.Boolean, 8, 1, 1, false, "bool"),
-        /* The handle the ECS stores; the generated header asserts the two
-           uint32 members this size and alignment stand for. */
+        /* Handles to state outside the chunk; the generated header asserts the
+           two uint32 members these sizes stand for. */
         ["entity"] = new("entity", PrimitiveKind.Entity, 64, 8, 4, false,
                          "resonate::ecs::Entity"),
+        ["blob"] = new("blob", PrimitiveKind.Blob, 64, 8, 4, false,
+                       "resonate::ecs::BlobHandle"),
+        /* The core math types, natural alignment; the generated header's layout
+           assertions check the sizes against the C++ structs they name. */
+        ["vec2"] = new("vec2", PrimitiveKind.Math, 0, 8, 4, true, "resonate::Vec2"),
+        ["vec3"] = new("vec3", PrimitiveKind.Math, 0, 12, 4, true, "resonate::Vec3"),
+        ["vec4"] = new("vec4", PrimitiveKind.Math, 0, 16, 4, true, "resonate::Vec4"),
+        ["quat"] = new("quat", PrimitiveKind.Math, 0, 16, 4, true, "resonate::Quat"),
+        ["mat4"] = new("mat4", PrimitiveKind.Math, 0, 64, 4, true, "resonate::Mat4"),
     };
 
     internal static Primitive? Find(string name)

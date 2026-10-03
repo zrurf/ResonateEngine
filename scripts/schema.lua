@@ -38,9 +38,16 @@ local function tool_is_stale()
 end
 
 if tool_is_stale() then
-    local code = os.execv("dotnet", {"publish", TOOL_PROJECT, "-c", "Release", "-o", TOOL_OUT,
-                                     "--nologo", "-v", "quiet"}, {try = true})
+    local publish = {"publish", TOOL_PROJECT, "-c", "Release", "-o", TOOL_OUT, "--nologo", "-v",
+                     "quiet"}
+    local code = os.execv("dotnet", publish, {try = true})
     if code ~= 0 then
+        -- A build can reach several consumers at once and two of them may
+        -- publish the same output; a retry finds the winner's binary in place.
+        os.sleep(1000)
+        code = os.execv("dotnet", publish, {try = true})
+    end
+    if code ~= 0 and not os.isfile(TOOL_BIN) then
         raise("schemac: building the compiler failed (dotnet publish exited %s); the .NET SDK "
                   .. "is required wherever generated schema types are consumed", tostring(code))
     end

@@ -111,10 +111,10 @@ task("module-check")
         description = "Validate module manifests against descriptors, headers and link dependencies.",
     }
 
--- Declared by the targets that include generated schema types. It builds (when
--- its sources moved) and runs the schema compiler under packages/tools before
--- the target compiles, so a schema error fails the build instead of a generated
--- header going stale.
+-- Consumed by the targets that include generated schema types. A rule's hook
+-- fires only for the target that was requested, not for a dependency built on
+-- its way, so a library that is usually reached as a dependency (hierarchy,
+-- startup) carries the same call in a target-level before_build of its own.
 local schema_done = false
 
 rule("resonate.schema")
@@ -186,6 +186,7 @@ includes("packages/window")
 includes("packages/physics")
 includes("packages/audio")
 includes("packages/ui")
+includes("packages/hierarchy")
 includes("packages/runtime")
 includes("packages/startup")
 includes("packages/editor")

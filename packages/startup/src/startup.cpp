@@ -11,6 +11,11 @@
 #endif
 
 #include <resonate/application/application.h>
+#include <resonate/application/systems.h>
+#include <resonate/ecs/world.h>
+#include <resonate/hierarchy/system.h>
+#include <resonate/hierarchy/tree.h>
+#include <resonate/module/host.hpp>
 #include <resonate/render/offscreen.hpp>
 #include <resonate/window/session.hpp>
 
@@ -94,6 +99,23 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     /* The session outlives the run, and the capabilities it publishes outlive the
        modules that resolved them. */
     window::Session session;
+
+    /* The engine's own systems, in every composition: the hierarchy's transform
+       propagation resolves WorldTransform in LATE. The descriptor and the system
+       outlive the run, which is what the borrowed-context rule needs. */
+    hierarchy::PropagationSystem propagation;
+    const EngineSystemDesc propagation_desc{"resonate.hierarchy.propagation",
+                                            RESONATE_STAGE_LATE_UPDATE,
+                                            &hierarchy::PropagationSystem::invoke, &propagation};
+    config.systems = [&propagation, &propagation_desc](ModuleHost& host, ecs::World& world)
+    {
+        if (!hierarchy::registerComponents(world))
+        {
+            return RESONATE_E_INVALID;
+        }
+        propagation.jobs = host.jobs();
+        return addEngineSystem(host, propagation_desc);
+    };
 
     if (display.headless)
     {

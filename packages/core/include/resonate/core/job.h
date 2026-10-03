@@ -24,6 +24,14 @@ namespace resonate
  * retired, the submitter runs queued work until one frees, so a burst of
  * submissions slows down rather than dropping a job. Bodies run on worker
  * threads or on a waiting or submitting thread and must not throw.
+ *
+ * Nested submission: a job submitted from within a job's body is that task's
+ * own work and is published at once, without joining the dependency graph. The
+ * task holds the groups it declared until it retires, so everything that
+ * conflicts with it is either excluded already or ordered behind it — and a
+ * nested job that waited for work ordered behind its own parent would deadlock.
+ * Nested bodies run under the parent's exclusivity; the masks passed with one
+ * do not order it against anything.
  */
 
 using JobIndex = std::uint32_t;

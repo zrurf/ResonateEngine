@@ -50,6 +50,12 @@ inline bool isPowerOfTwo(std::uint32_t value) noexcept
 struct Chunk;
 struct Archetype;
 
+inline constexpr std::uint32_t kNoBlob = 0xFFFFFFFFU;
+
+/* Blob bytes hold whatever POD a domain puts there (child lists, poses, mat4
+   arrays), so they are aligned for the platform's widest scalar. */
+inline constexpr std::size_t kBlobAlignment = alignof(std::max_align_t);
+
 /* One slot per entity index; `chunk` is null while the index is free. A create
    recorded in a command buffer reserves the slot: the handle is final, the
    entity is not alive until playback materializes it. */
@@ -59,6 +65,22 @@ struct EntityRecord
     std::uint32_t row = 0;
     Chunk* chunk = nullptr;
     bool reserved = false;
+
+    /* Head of this entity's blob list; entity destruction reclaims the chain. */
+    std::uint32_t firstBlob = kNoBlob;
+};
+
+/* An entity-owned buffer outside the chunks. The generation is what makes a
+   handle from before the blob's death fail instead of reading somebody else's
+   bytes; `live` keeps that true even while the slot sits on the free list. */
+struct BlobRecord
+{
+    std::uint32_t generation = 0;
+    std::uint32_t next = kNoBlob; /* next blob of the same owner */
+    bool live = false;
+    std::size_t size = 0;
+    void* bytes = nullptr;
+    Entity owner{};
 };
 
 /* What a chunk carries after its header, matched to an archetype: entity
@@ -236,6 +258,10 @@ struct WorldImpl
     std::vector<EntityRecord> slots;
     std::vector<std::uint32_t> freeSlots;
     std::uint32_t alive = 0;
+
+    std::vector<BlobRecord> blobs;
+    std::vector<std::uint32_t> freeBlobs;
+    std::uint32_t liveBlobs = 0;
 
     std::vector<std::unique_ptr<Archetype>> archetypes;
     std::vector<Chunk*> pooled;
@@ -607,6 +633,92 @@ struct WorldImpl
         freeSlots.push_back(entity.index);
     }
 
+    /* --- blobs --- */
+
+    void reportStaleBlob(BlobHandle handle, const char* what)
+    {
+        if (what != nullptr)
+        {
+            say(World::Report::Error, "%s: blob %u:%u is not alive", what, handle.index,
+                handle.generation);
+        }
+    }
+
+    /* Silent lookup for the checks whose answer is the report: blobSize and
+       alive read it and tell by the null. */
+    const BlobRecord* findBlob(BlobHandle handle) const noexcept
+    {
+        if (handle.index >= blobs.size())
+        {
+            return nullptr;
+        }
+        const BlobRecord& blob = blobs[handle.index];
+        return blob.live && blob.generation == handle.generation ? &blob : nullptr;
+    }
+
+    /* Null for a freed or never-issued handle. `what` names the caller in the
+       report; null asks silently. */
+    BlobRecord* blobOf(BlobHandle handle, const char* what)
+    {
+        const BlobRecord* found = findBlob(handle);
+        if (found != nullptr)
+        {
+            return const_cast<BlobRecord*>(found);
+        }
+        reportStaleBlob(handle, what);
+        return nullptr;
+    }
+
+    /* Unlinks one blob from its owner's list, frees its bytes, and puts the slot
+       back. During reclaimBlobs the list is already detached, so the unlink
+       finds nothing to do. */
+    void releaseBlob(std::uint32_t index)
+    {
+        BlobRecord& blob = blobs[index];
+        if (blob.owner.index < slots.size())
+        {
+            std::uint32_t* link = &slots[blob.owner.index].firstBlob;
+            while (*link != kNoBlob)
+            {
+                if (*link == index)
+                {
+                    *link = blob.next;
+                    break;
+                }
+                link = &blobs[*link].next;
+            }
+        }
+
+        if (blob.bytes != nullptr)
+        {
+            allocator->deallocate(blob.bytes, blob.size);
+        }
+        blob.generation += 1U;
+        if (blob.generation == 0U)
+        {
+            blob.generation = 1U;
+        }
+        blob.live = false;
+        blob.size = 0;
+        blob.bytes = nullptr;
+        blob.next = kNoBlob;
+        blob.owner = Entity{};
+        freeBlobs.push_back(index);
+        liveBlobs -= 1U;
+    }
+
+    void reclaimBlobs(EntityRecord& record)
+    {
+        std::uint32_t index = record.firstBlob;
+        record.firstBlob = kNoBlob;
+        while (index != kNoBlob)
+        {
+            const std::uint32_t next = blobs[index].next;
+            releaseBlob(index);
+            index = next;
+        }
+    }
+
     /* --- rows --- */
 
     void* componentPointer(const EntityRecord& record, ComponentIndex component) const noexcept
@@ -719,6 +831,17 @@ struct WorldImpl
             allocator->deallocate(chunk, kChunkBytes);
         }
         pooled.clear();
+
+        for (BlobRecord& blob : blobs)
+        {
+            if (blob.bytes != nullptr)
+            {
+                allocator->deallocate(blob.bytes, blob.size);
+            }
+        }
+        blobs.clear();
+        freeBlobs.clear();
+        liveBlobs = 0;
     }
 };
 
