@@ -3,9 +3,9 @@
 -- through hooks, which is what lets a server, an offscreen renderer and a
 -- windowed game share this loop. It therefore links no window and no canvas.
 
-target("ResonateEngine.Runtime")
+target("Resonate.Runtime")
     set_kind("static")
     add_includedirs("include", {public = true})
     add_files("src/**.cpp")
 
-    add_deps("ResonateEngine.Module", "ResonateEngine.Core.Job", "ResonateEngine.ECS")
+    add_deps("Resonate.Module", "Resonate.Core.Job", "Resonate.ECS")

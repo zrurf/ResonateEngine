@@ -8,18 +8,18 @@
 -- without linking SDL, and it is not a premise of any package above it any more —
 -- a run without a window is headless, so nothing but the startup layer links this.
 
-target("ResonateEngine.Window.Abi")
+target("Resonate.Window.Abi")
     set_kind("headeronly")
     add_includedirs("include", {public = true})
 
-    add_deps("ResonateEngine.Module.Abi")
+    add_deps("Resonate.Module.Abi")
 
-target("ResonateEngine.Window")
+target("Resonate.Window")
     set_kind("static")
     add_includedirs("host", {public = true})
     add_files("src/**.cpp")
 
     -- Render.Abi and not Render: the window publishes a canvas, which is an
     -- interface, so it needs no part of the render package's host side.
-    add_deps("ResonateEngine.Window.Abi", "ResonateEngine.PAL", "ResonateEngine.Render.Abi")
+    add_deps("Resonate.Window.Abi", "Resonate.PAL", "Resonate.Render.Abi")
     add_packages("libsdl3")

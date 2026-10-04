@@ -2,7 +2,7 @@
  * A module built from the test tree rather than from packages/modules, so the
  * suite covers the one thing it cannot otherwise reach: what a plugin can
  * actually link. It depends on the ABI target alone — adding a dependency on
- * ResonateEngine.Module would hide exactly the mistake it exists to catch — and
+ * Resonate.Module would hide exactly the mistake it exists to catch — and
  * it uses a signal, a message stream and per-frame systems, whose entry points
  * live in the host.
  *

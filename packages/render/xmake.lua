@@ -7,15 +7,15 @@
 -- The implementation is a plugin under packages/modules, which is what makes the
 -- interface the engine's rather than the default implementation's.
 
-target("ResonateEngine.Render.Abi")
+target("Resonate.Render.Abi")
     set_kind("headeronly")
     add_includedirs("include", {public = true})
 
-    add_deps("ResonateEngine.Module.Abi")
+    add_deps("Resonate.Module.Abi")
 
-target("ResonateEngine.Render")
+target("Resonate.Render")
     set_kind("static")
     add_includedirs("host", {public = true})
     add_files("src/**.cpp")
 
-    add_deps("ResonateEngine.Render.Abi", "ResonateEngine.Module")
+    add_deps("Resonate.Render.Abi", "Resonate.Module")

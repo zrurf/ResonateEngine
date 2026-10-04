@@ -177,8 +177,8 @@ checker, which also asserts what a schema cannot see.
 
 - `include/` is public and propagates to dependents.
 - `src/` is private to its target.
-- `packages/module` is two targets: `ResonateEngine.Module.Abi` carries the
-  plugin-facing headers, and `ResonateEngine.Module` carries the host
+- `packages/module` is two targets: `Resonate.Module.Abi` carries the
+  plugin-facing headers, and `Resonate.Module` carries the host
   implementation plus `host/`, which is on no plugin's include path.
 - `packages/render` is two as well: `Render.Abi` carries the interfaces a plugin
   links, and `Render` carries the host-side offscreen canvas. Every domain that a

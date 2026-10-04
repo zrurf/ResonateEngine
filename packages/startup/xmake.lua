@@ -3,13 +3,13 @@
 -- keeps its frame loop free of displays, and the window package keeps the display
 -- free of the frame loop.
 
-target("ResonateEngine.Startup")
+target("Resonate.Startup")
     set_kind("static")
     add_includedirs("include", {public = true})
     add_files("src/**.cpp")
 
-    add_deps("ResonateEngine.Runtime", "ResonateEngine.Window", "ResonateEngine.Render",
-             "ResonateEngine.Hierarchy")
+    add_deps("Resonate.Runtime", "Resonate.Window", "Resonate.Render",
+             "Resonate.Hierarchy")
 
     -- tree.h includes the generated hierarchy components, so the schema output
     -- has to exist before this target compiles.

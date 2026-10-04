@@ -30,9 +30,9 @@ for _, module in ipairs(modules) do
     -- nothing, and a module that starts requiring another capability needs no
     -- build change. `deps` in the table above stays module-to-module, which is
     -- what the checker compares against each manifest's depends_on.
-    local deps = {"ResonateEngine.Module.Abi", "ResonateEngine.Render.Abi",
-                  "ResonateEngine.Window.Abi", "ResonateEngine.Physics.Abi",
-                  "ResonateEngine.Audio.Abi", "ResonateEngine.UI.Abi"}
+    local deps = {"Resonate.Module.Abi", "Resonate.Render.Abi",
+                  "Resonate.Window.Abi", "Resonate.Physics.Abi",
+                  "Resonate.Audio.Abi", "Resonate.UI.Abi"}
     for _, dependency in ipairs(module.deps) do
         local dependency_target = target_of[dependency]
         if dependency_target == nil then

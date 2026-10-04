@@ -3,12 +3,12 @@
 -- schema-declared components) and depends on the ECS and core math only — the
 -- frame loop reaches it through an engine-system registration, not a link.
 
-target("ResonateEngine.Hierarchy")
+target("Resonate.Hierarchy")
     set_kind("static")
     add_includedirs("include", {public = true})
     add_files("src/**.cpp")
 
-    add_deps("ResonateEngine.ECS", "ResonateEngine.Core.Math")
+    add_deps("Resonate.ECS", "Resonate.Core.Math")
 
     -- The components are schema-declared: build/gen has to hold their generated
     -- header before this target compiles. The resonate.schema rule's hook fires

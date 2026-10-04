@@ -2,7 +2,7 @@
 -- Win32 threads, overlapped file handles); everything else shares the POSIX
 -- implementation, whose only platform-specific part is the event-loop wakeup
 -- (eventfd where the kernel has it, a pipe otherwise).
-target("ResonateEngine.PAL")
+target("Resonate.PAL")
     set_kind("static")
     add_includedirs("include", {public = true})
 
