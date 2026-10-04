@@ -123,6 +123,28 @@ void resonate_pal_thread_yield(void)
     SwitchToThread();
 }
 
+void resonate_pal_thread_set_priority(ResonateThreadPriority priority)
+{
+    int value = THREAD_PRIORITY_NORMAL;
+    switch (priority)
+    {
+        case RESONATE_PAL_THREAD_PRIORITY_LOW:
+            value = THREAD_PRIORITY_BELOW_NORMAL;
+            break;
+        case RESONATE_PAL_THREAD_PRIORITY_HIGH:
+            value = THREAD_PRIORITY_ABOVE_NORMAL;
+            break;
+        default:
+            break;
+    }
+    SetThreadPriority(GetCurrentThread(), value);
+}
+
+uint32_t resonate_pal_thread_current_cpu(void)
+{
+    return static_cast<uint32_t>(GetCurrentProcessorNumber());
+}
+
 uint32_t resonate_pal_thread_id(void)
 {
     return GetCurrentThreadId();

@@ -8,6 +8,7 @@
 
 #include <resonate/pal/sync.h>
 #include <resonate/pal/thread.h>
+#include <resonate/pal/topology.h>
 
 namespace resonate
 {
@@ -91,7 +92,7 @@ thread_local std::uint32_t nestedWork = 0;
 class JobSystemImpl final : public JobSystem
 {
   public:
-    JobSystemImpl()
+    explicit JobSystemImpl(std::uint32_t worker_limit)
     {
         if (resonate_pal_sync_create_semaphore(&semaphore_, 0) != RESONATE_PAL_OK ||
             resonate_pal_sync_create_semaphore(&excessSemaphore_, 0) != RESONATE_PAL_OK ||
@@ -102,21 +103,34 @@ class JobSystemImpl final : public JobSystem
         }
         sync_ = true;
 
-        const std::uint32_t hardware = resonate_pal_sync_hardware_concurrency();
-        target_.store(hardware, std::memory_order_relaxed);
-        workers_.resize(hardware);
-        for (std::uint32_t index = 0; index < hardware; ++index)
+        /* The process's own processors, not the machine's hardware thread
+           count: a restricted process must not create workers it cannot run.
+           The pool is created once and only ever parks workers, so this is the
+           widest set the run can ask for. */
+        const ResonatePalTopology* topology = resonate_pal_topology_query();
+        std::uint32_t count = topology->core_count;
+        if (worker_limit != 0U)
+        {
+            count = std::min(count, worker_limit);
+        }
+
+        workers_.resize(count);
+        for (std::uint32_t index = 0; index < count; ++index)
         {
             workers_[index].system = this;
             workers_[index].index = index;
+            workers_[index].core_class = topology->cores[index].core_class;
             if (resonate_pal_sync_create_mutex(&workers_[index].mutex, 0) != RESONATE_PAL_OK)
             {
                 break;
             }
+
             ResonateThreadHandle thread = {};
-            /* Stack size 0 is the platform default; affinity stays with the
-               scheduler until topology probing places workers by role. */
-            if (resonate_pal_thread_create(&thread, &entry, &workers_[index], 0, -1) !=
+            /* The topology's placement order is fastest-first, so worker i
+               takes processor i and a tuned-down count keeps the fastest set.
+               Stack size 0 is the platform default. */
+            if (resonate_pal_thread_create(&thread, &entry, &workers_[index], 0,
+                                           static_cast<int32_t>(topology->cores[index].id)) !=
                 RESONATE_PAL_OK)
             {
                 resonate_pal_sync_destroy_mutex(&workers_[index].mutex);
@@ -125,6 +139,10 @@ class JobSystemImpl final : public JobSystem
             workers_[index].thread = thread;
             ++workerCount_;
         }
+
+        /* The target is the count actually created: a thread the platform
+           refused does not have a worker to wake. */
+        target_.store(workerCount_, std::memory_order_relaxed);
 
         /* Threads start running the moment they are created; the pool they land
            in is only fully built here. */
@@ -215,6 +233,11 @@ class JobSystemImpl final : public JobSystem
         return awake_.load(std::memory_order_relaxed);
     }
 
+    std::uint32_t workerCapacity() const override
+    {
+        return workerCount_;
+    }
+
     void requestWorkerCount(std::uint32_t count) override
     {
         count = std::min(count, workerCount_);
@@ -234,6 +257,7 @@ class JobSystemImpl final : public JobSystem
     {
         JobSystemImpl* system = nullptr;
         std::uint32_t index = 0;
+        ResonatePalCoreClass core_class = RESONATE_PAL_CORE_PERFORMANCE;
         ResonateThreadHandle thread = {};
         ResonateMutex mutex = {};
         std::deque<Job*> queues[3]; /* indexed by JobPriority */
@@ -251,6 +275,15 @@ class JobSystemImpl final : public JobSystem
         {
             resonate_pal_thread_yield();
         }
+
+        /* The worker's role, from the processor the topology placed it on:
+           efficiency-core workers run below normal priority so they yield to
+           the frame's own work when both are runnable. Placement is made at
+           creation; neither changes while the worker lives. */
+        resonate_pal_thread_set_priority(workers_[index].core_class == RESONATE_PAL_CORE_EFFICIENCY
+                                             ? RESONATE_PAL_THREAD_PRIORITY_LOW
+                                             : RESONATE_PAL_THREAD_PRIORITY_HIGH);
+
         awake_.fetch_add(1, std::memory_order_relaxed);
         for (;;)
         {
@@ -582,9 +615,8 @@ class JobSystemImpl final : public JobSystem
         /* Wake against the backlog, not this publish: a burst of submissions
            while the workers are still spinning must wake them once work is
            visible, and a parked worker must not sleep behind queued entries. */
-        const std::uint32_t want =
-            std::min(queued_.load(std::memory_order_acquire),
-                     target_.load(std::memory_order_relaxed));
+        const std::uint32_t want = std::min(queued_.load(std::memory_order_acquire),
+                                            target_.load(std::memory_order_relaxed));
 
         /* The seq_cst load pairs with the seq_cst decrement in park(): a worker
            this load reads as awake is past its decrement, so its final scan
@@ -713,9 +745,9 @@ class JobSystemImpl final : public JobSystem
 
 } // namespace
 
-JobSystem* createJobSystem()
+JobSystem* createJobSystem(std::uint32_t worker_limit)
 {
-    return new JobSystemImpl();
+    return new JobSystemImpl(worker_limit);
 }
 
 } // namespace resonate

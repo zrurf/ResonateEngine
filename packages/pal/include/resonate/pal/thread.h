@@ -41,6 +41,24 @@ void resonate_pal_thread_destroy(ResonateThreadHandle* thread);
 ResonatePalStatus resonate_pal_thread_join(ResonateThreadHandle* thread);
 void resonate_pal_thread_yield(void);
 
+/* A scheduling hint for the calling thread, applied the same way placement is:
+   by the thread itself. A level the platform declines leaves the thread as it
+   was — a hint is not a contract and has nothing to report but the refusal. */
+typedef enum ResonateThreadPriority
+{
+    RESONATE_PAL_THREAD_PRIORITY_LOW = 0, /* below normal: background work */
+    RESONATE_PAL_THREAD_PRIORITY_NORMAL = 1,
+    RESONATE_PAL_THREAD_PRIORITY_HIGH = 2 /* above normal: frame-critical work */
+} ResonateThreadPriority;
+
+void resonate_pal_thread_set_priority(ResonateThreadPriority priority);
+
+/* The logical processor the calling thread is on right now, or
+   RESONATE_PAL_THREAD_CPU_UNKNOWN. The value is one of the topology's core
+   ids; a thread the platform did not place may move between calls. */
+#define RESONATE_PAL_THREAD_CPU_UNKNOWN 0xFFFFFFFFu
+uint32_t resonate_pal_thread_current_cpu(void);
+
 /* Unique among live threads; the value may be reused once a thread ends.
    is_main returns 1 or 0. */
 uint32_t resonate_pal_thread_id(void);

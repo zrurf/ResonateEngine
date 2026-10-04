@@ -19,11 +19,6 @@ namespace resonate
 namespace
 {
 
-/* A frame that took longer than this means the process was suspended, a
-   breakpoint was hit or the machine stalled; clamping keeps one such gap out of
-   the simulation's step. */
-constexpr float MAX_FRAME_SECONDS = 0.25F;
-
 /*
  * Set by the SIGINT handler and by requestStop().
  *
@@ -168,6 +163,13 @@ int Application::run(const Config& config)
     g_stop_requested = 0;
     void (*const previous)(int) = std::signal(SIGINT, &onInterrupt);
 
+    if (JobSystem* const jobs = host->jobs(); jobs != nullptr && config.worker_count != 0U)
+    {
+        jobs->requestWorkerCount(config.worker_count);
+    }
+
+    FrameClock clock(config.frame_clock);
+
     uint64_t previous_ticks = resonate_pal_chrono_ticks();
     while (g_stop_requested == 0)
     {
@@ -179,18 +181,35 @@ int Application::run(const Config& config)
             break;
         }
 
-        const uint64_t now_ticks = resonate_pal_chrono_ticks();
-        const uint64_t elapsed_ns =
-            resonate_pal_chrono_ticks_to_nanoseconds(now_ticks - previous_ticks);
-        previous_ticks = now_ticks;
-
-        float elapsed_seconds = static_cast<float>(elapsed_ns) * 1e-9F;
-        if (elapsed_seconds > MAX_FRAME_SECONDS)
+        float elapsed_seconds = 0.0F;
+        if (config.frame_elapsed)
         {
-            elapsed_seconds = MAX_FRAME_SECONDS;
+            elapsed_seconds = config.frame_elapsed();
+        }
+        else
+        {
+            const uint64_t now_ticks = resonate_pal_chrono_ticks();
+            const uint64_t elapsed_ns =
+                resonate_pal_chrono_ticks_to_nanoseconds(now_ticks - previous_ticks);
+            previous_ticks = now_ticks;
+            elapsed_seconds = static_cast<float>(elapsed_ns) * 1e-9F;
         }
 
-        host->runFrame(elapsed_seconds);
+        /* One displayed frame: the simulation steps its wall time covers — the
+           clock's budget bounds how many — then one render frame on the wall
+           time itself. */
+        const std::uint32_t steps = clock.advance(elapsed_seconds);
+        if (clock.droppedSteps() != 0U)
+        {
+            std::fprintf(stderr,
+                         "resonate: frame time over the step budget; %llu step(s) dropped\n",
+                         static_cast<unsigned long long>(clock.droppedSteps()));
+        }
+        for (std::uint32_t step = 0; step < steps; ++step)
+        {
+            host->runSimulationStep(clock.stepSeconds());
+        }
+        host->runRenderFrame(elapsed_seconds);
     }
 
     if (previous != SIG_ERR)

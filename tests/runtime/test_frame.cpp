@@ -395,6 +395,11 @@ TEST_CASE("a headless run shows UPDATE's spawn to PHYSICS in the same frame", "[
         return true;
     };
 
+    /* The frame loop's clock is scripted to one 60Hz step per frame, so what
+       the systems count is the frame's own steps rather than the machine's
+       speed. */
+    config.frame_elapsed = [] { return 0.017F; };
+
     REQUIRE(resonate::Application::run(config) == EXIT_SUCCESS);
 
     REQUIRE(run.update_runs == FRAMES);

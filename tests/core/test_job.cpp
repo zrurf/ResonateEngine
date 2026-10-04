@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <set>
 #include <thread>
@@ -12,6 +13,7 @@
 #include <resonate/core/job.h>
 #include <resonate/pal/sync.h>
 #include <resonate/pal/thread.h>
+#include <resonate/pal/topology.h>
 
 using resonate::JobGroup;
 using resonate::JobIndex;
@@ -63,8 +65,8 @@ TEST_CASE("a parallel for covers every index exactly once", "[core][job]")
     REQUIRE(index != 0);
 
     jobs->wait(index);
-    REQUIRE(std::all_of(counts.begin(), counts.end(),
-                        [](std::uint32_t count) { return count == 1; }));
+    REQUIRE(
+        std::all_of(counts.begin(), counts.end(), [](std::uint32_t count) { return count == 1; }));
 
     delete jobs;
 }
@@ -88,10 +90,10 @@ TEST_CASE("a single task runs once and an empty parallel for runs nothing", "[co
     jobs->wait((999U << 12) | 3U);
 
     std::atomic<std::uint32_t> empty{0};
-    const JobIndex nothing = jobs->submitParallel(
-        [](void* context, std::uint32_t, std::uint32_t)
-        { static_cast<std::atomic<std::uint32_t>*>(context)->fetch_add(1); },
-        &empty, 0, 0, 0, JobPriorityNormal);
+    const JobIndex nothing =
+        jobs->submitParallel([](void* context, std::uint32_t, std::uint32_t)
+                             { static_cast<std::atomic<std::uint32_t>*>(context)->fetch_add(1); },
+                             &empty, 0, 0, 0, JobPriorityNormal);
     REQUIRE(nothing != 0);
     jobs->wait(nothing);
     REQUIRE(empty.load() == 0);
@@ -129,8 +131,7 @@ TEST_CASE("jobs writing one group never overlap", "[core][job]")
                         }
                         self->inside.fetch_sub(1);
                     },
-                    &state, 0, GROUP_A, JobPriorityNormal,
-                    resonate::JobAffinityThroughput) != 0);
+                    &state, 0, GROUP_A, JobPriorityNormal, resonate::JobAffinityThroughput) != 0);
     }
     /* The submitting thread stays out of the way for a while, so the workers —
        not this thread's wait — are what runs the writers. */
@@ -276,8 +277,7 @@ TEST_CASE("a slow conflicting job gates a fast one submitted after it", "[core][
                     stamp->rank->store(stamp->next->fetch_add(1, std::memory_order_relaxed),
                                        std::memory_order_relaxed);
                 },
-                &stamps[0], 0, GROUP_A, JobPriorityNormal,
-                resonate::JobAffinityThroughput) != 0);
+                &stamps[0], 0, GROUP_A, JobPriorityNormal, resonate::JobAffinityThroughput) != 0);
     REQUIRE(jobs->submitSingle(&stampTask, &stamps[1], 0, GROUP_A, JobPriorityNormal,
                                resonate::JobAffinityThroughput) != 0);
     REQUIRE(jobs->submitSingle(&stampTask, &stamps[2], GROUP_A, 0, JobPriorityNormal,
@@ -381,9 +381,8 @@ TEST_CASE("mixed submissions drain", "[core][job]")
         const JobGroup writes = 1U << ((i + 1) % 3);
         REQUIRE(jobs->submitSingle(
                     [](void* context)
-                    { static_cast<std::atomic<std::uint32_t>*>(context)->fetch_add(1); },
-                    &singles, reads, writes, JobPriorityNormal,
-                    resonate::JobAffinityThroughput) != 0);
+                    { static_cast<std::atomic<std::uint32_t>*>(context)->fetch_add(1); }, &singles,
+                    reads, writes, JobPriorityNormal, resonate::JobAffinityThroughput) != 0);
     }
 
     /* Twenty parallel fors writing one group: the group serialises the jobs,
@@ -406,8 +405,8 @@ TEST_CASE("mixed submissions drain", "[core][job]")
 
     jobs->waitAll();
     REQUIRE(singles.load() == 200);
-    REQUIRE(std::all_of(counts.begin(), counts.end(),
-                        [](std::uint32_t count) { return count == 20; }));
+    REQUIRE(
+        std::all_of(counts.begin(), counts.end(), [](std::uint32_t count) { return count == 20; }));
 
     delete jobs;
 }
@@ -421,8 +420,8 @@ TEST_CASE("destroying with outstanding work drains it", "[core][job]")
     {
         REQUIRE(jobs->submitSingle(
                     [](void* context)
-                    { static_cast<std::atomic<std::uint32_t>*>(context)->fetch_add(1); },
-                    &ran, 0, 0, JobPriorityNormal, resonate::JobAffinityThroughput) != 0);
+                    { static_cast<std::atomic<std::uint32_t>*>(context)->fetch_add(1); }, &ran, 0,
+                    0, JobPriorityNormal, resonate::JobAffinityThroughput) != 0);
     }
 
     delete jobs;
@@ -691,6 +690,90 @@ TEST_CASE("nested submissions drain from many threads", "[core][job]")
     jobs->waitAll();
     REQUIRE(state.slices.load() == 8 * 64);
     REQUIRE(state.parents.load() == 8);
+
+    delete jobs;
+}
+
+TEST_CASE("the pool is sized by the process's processors, not the machine's", "[core][job]")
+{
+    const ResonatePalTopology* topology = resonate_pal_topology_query();
+    REQUIRE(topology->core_count >= 1U);
+
+    /* The default is one worker per logical processor this process may use —
+       what the topology reports, which a restricted process reads narrower
+       than hardware_concurrency. */
+    JobSystem* jobs = resonate::createJobSystem();
+    REQUIRE(jobs != nullptr);
+    REQUIRE(jobs->workerCapacity() == topology->core_count);
+    delete jobs;
+
+    /* A limit is an upper bound, and the pool never grows past the processors
+       it could place workers on. */
+    JobSystem* raised = resonate::createJobSystem(topology->core_count + 64U);
+    REQUIRE(raised != nullptr);
+    REQUIRE(raised->workerCapacity() == topology->core_count);
+    delete raised;
+
+    if (topology->core_count >= 2U)
+    {
+        JobSystem* limited = resonate::createJobSystem(2U);
+        REQUIRE(limited != nullptr);
+        REQUIRE(limited->workerCapacity() == 2U);
+        delete limited;
+    }
+}
+
+TEST_CASE("workers run on the processors the topology placed them on", "[core][job]")
+{
+    const ResonatePalTopology* topology = resonate_pal_topology_query();
+
+    std::set<std::uint32_t> placed;
+    for (std::uint32_t index = 0; index < topology->core_count; ++index)
+    {
+        placed.insert(topology->cores[index].id);
+    }
+
+    JobSystem* jobs = resonate::createJobSystem();
+    REQUIRE(jobs != nullptr);
+
+    struct Observation
+    {
+        std::mutex mutex;
+        std::map<std::uint32_t, std::uint32_t> cpu_of_thread; /* thread id → processor */
+    } observation;
+
+    const auto slice = [](void* context, std::uint32_t, std::uint32_t)
+    {
+        auto* observation = static_cast<Observation*>(context);
+        /* The waiting main thread participates too, and is not placed. */
+        if (resonate_pal_thread_is_main() != 0U)
+        {
+            return;
+        }
+
+        const std::uint32_t thread = resonate_pal_thread_id();
+        const std::uint32_t cpu = resonate_pal_thread_current_cpu();
+        std::lock_guard<std::mutex> lock(observation->mutex);
+        observation->cpu_of_thread[thread] = cpu;
+    };
+
+    /* Enough slices that every waking worker gets some. */
+    REQUIRE(jobs->submitParallel(slice, &observation, 2000U, 0, 0, JobPriorityNormal) != 0);
+    jobs->waitAll();
+
+    {
+        std::lock_guard<std::mutex> lock(observation.mutex);
+        std::set<std::uint32_t> processors;
+        for (const auto& [thread, cpu] : observation.cpu_of_thread)
+        {
+            REQUIRE(placed.count(cpu) == 1U);
+            /* One worker per processor: no two workers share one. */
+            REQUIRE(processors.insert(cpu).second);
+        }
+        /* How many workers a batch reaches is service level — the waiting
+           thread may legitimately run everything itself — so only the placement
+           of the ones that did is asserted. */
+    }
 
     delete jobs;
 }

@@ -54,8 +54,10 @@ enum JobPriority : std::uint8_t
     JobPriorityHigh = 2,
 };
 
-/* Scheduling hint for heterogeneous cores, recorded per job. Consumed once
-   topology probing lands; until then every worker is interchangeable. */
+/* Scheduling hint for heterogeneous cores, recorded per job. The pool's
+   workers carry a class of their own from the topology probe, which is what
+   places and prioritises them; a job's own class does not choose its executor
+   yet, so every worker still takes every job. */
 enum JobAffinity : std::uint8_t
 {
     JobAffinityLatency = 0,    /* frame-critical path */
@@ -88,14 +90,21 @@ class JobSystem
        workers run out of work. */
     virtual std::uint32_t workerCount() const = 0;
 
+    /* Workers the pool was created with: the widest count requestWorkerCount
+       can reach. */
+    virtual std::uint32_t workerCapacity() const = 0;
+
     /* Workers keep working; idle ones park until the pool holds `count` active
        workers (clamped to the pool created at startup). */
     virtual void requestWorkerCount(std::uint32_t count) = 0;
 };
 
-/* Creates the pool with one worker per hardware thread. Destroy with delete:
-   the destructor drains every submitted job, then wakes and joins the workers. */
-JobSystem* createJobSystem();
+/* Creates the pool with one worker per logical processor this process may run
+   on, or with `worker_limit` workers when that is smaller (zero means no
+   limit). The workers are placed on the topology's processors, fastest first,
+   and all of them start active. Destroy with delete: the destructor drains
+   every submitted job, then wakes and joins the workers. */
+JobSystem* createJobSystem(std::uint32_t worker_limit = 0);
 
 } // namespace resonate
 

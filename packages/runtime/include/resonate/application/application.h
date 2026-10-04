@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include <resonate/application/frame_clock.h>
 #include <resonate/module/capability.h>
 
 namespace resonate
@@ -51,6 +52,22 @@ class Application
            false ends the run, which is how a window reports a quit request.
            Empty means the host has no per-frame work. */
         std::function<bool()> tick;
+
+        /* The frame's time model. What its steps mean for the schedule is in
+           the frame loop below: the simulation stages run per step, the render
+           stages once per frame. */
+        FrameClock::Settings frame_clock;
+
+        /* Supplies the frame's elapsed wall time in seconds, replacing the
+           platform clock. A scripted source is what lets a test or a replay
+           drive the loop at an exact cadence; empty reads the real clock. */
+        std::function<float()> frame_elapsed;
+
+        /* Workers the pool should run, clamped to the pool created at startup;
+           zero keeps the pool's default (one per logical processor this
+           process may use). The run's own policy re-tunes it at a frame
+           boundary through ModuleHost::jobs()->requestWorkerCount. */
+        std::uint32_t worker_count = 0;
     };
 
     /* Discovers, resolves and attaches modules, runs the frame loop, then

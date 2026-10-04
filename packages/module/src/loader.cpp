@@ -1205,23 +1205,35 @@ void ModuleHost::playRecordedCommands()
     impl_->playRecorded();
 }
 
-void ModuleHost::runFrame(float delta_seconds)
+void ModuleHost::runSimulationStep(float delta_seconds)
 {
-    /* The frame's spine, with a sync point after UPDATE and one after PHYSICS:
-       what a system records plays before the next stage runs, so a spawn is
-       visible to the same frame's physics and drawable by its render. */
+    /* The simulating half of the spine, with a sync point after UPDATE and one
+       after PHYSICS: what a system records plays before the next stage runs, so
+       a spawn is visible to the same step's physics and drawable by its
+       render. */
     runStage(RESONATE_STAGE_EARLY_UPDATE, delta_seconds);
     runStage(RESONATE_STAGE_UPDATE, delta_seconds);
     playRecordedCommands(); /* sync point A */
     runStage(RESONATE_STAGE_PHYSICS, delta_seconds);
     playRecordedCommands(); /* sync point B */
     runStage(RESONATE_STAGE_LATE_UPDATE, delta_seconds);
+
+    /* No sync point is left this step, so what is still recorded is reported
+       and dropped rather than silently carried into the next one. */
+    impl_->discardRecorded();
+}
+
+void ModuleHost::runRenderFrame(float delta_seconds)
+{
     runStage(RESONATE_STAGE_RENDER, delta_seconds);
     runStage(RESONATE_STAGE_PRESENT, delta_seconds);
-
-    /* No sync point is left this frame, so what is still recorded is reported
-       and dropped rather than silently carried into the next frame. */
     impl_->discardRecorded();
+}
+
+void ModuleHost::runFrame(float delta_seconds)
+{
+    runSimulationStep(delta_seconds);
+    runRenderFrame(delta_seconds);
 }
 
 const std::vector<ModuleRecord*>& ModuleHost::order() const noexcept

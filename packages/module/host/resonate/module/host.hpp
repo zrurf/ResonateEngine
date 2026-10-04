@@ -107,10 +107,21 @@ class ModuleHost
        points; a caller driving stages itself has to play them itself too. */
     void runStage(ResonateStage stage, float delta_seconds);
 
-    /* One frame: every stage in order, from EARLY_UPDATE through PRESENT, with
-       the two sync points — between UPDATE and PHYSICS, and between PHYSICS and
-       LATE — playing the recorded command buffers. What is recorded after the
-       second one is reported and dropped: nothing plays again this frame. */
+    /* One simulation step: EARLY_UPDATE through LATE_UPDATE, with the two sync
+       points — between UPDATE and PHYSICS, and between PHYSICS and LATE —
+       playing the recorded command buffers. What is recorded after the second
+       one is reported and dropped: nothing plays again this step. A displayed
+       frame runs the steps its clock asks for (see FrameClock) and then one
+       render frame. */
+    void runSimulationStep(float delta_seconds);
+
+    /* The frame's draw side: RENDER and PRESENT, once per displayed frame, with
+       the frame's own elapsed time rather than the simulation step. What is
+       recorded here is reported and dropped too: no sync point follows. */
+    void runRenderFrame(float delta_seconds);
+
+    /* One simulation step and one render frame — the whole spine for a caller
+       that drives its own clock one step at a time. */
     void runFrame(float delta_seconds);
 
     /* The sync point: plays every non-empty command buffer in registration

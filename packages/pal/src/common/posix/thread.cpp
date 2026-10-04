@@ -9,8 +9,10 @@
 #if defined(__APPLE__)
 #    include <mach/mach.h>
 #    include <mach/thread_policy.h>
+#    include <pthread/qos.h>
 #else
 #    include <sched.h>
+#    include <sys/resource.h>
 #    include <sys/syscall.h>
 #    include <unistd.h>
 #endif
@@ -159,6 +161,57 @@ ResonatePalStatus resonate_pal_thread_join(ResonateThreadHandle* thread)
 void resonate_pal_thread_yield(void)
 {
     sched_yield();
+}
+
+void resonate_pal_thread_set_priority(ResonateThreadPriority priority)
+{
+#if defined(__APPLE__)
+    /* No direct priority control; the QoS class is the platform's own way of
+       saying the same thing. */
+    qos_class_t qos = QOS_CLASS_DEFAULT;
+    switch (priority)
+    {
+        case RESONATE_PAL_THREAD_PRIORITY_LOW:
+            qos = QOS_CLASS_UTILITY;
+            break;
+        case RESONATE_PAL_THREAD_PRIORITY_HIGH:
+            qos = QOS_CLASS_USER_INTERACTIVE;
+            break;
+        default:
+            break;
+    }
+    pthread_set_qos_class_self_np(qos, 0);
+#else
+    /* Nice values are per-thread here. Lowering the priority always succeeds;
+       raising it needs a privilege the process may not have, and a refused
+       raise leaves the thread as it was. */
+    int nice_value = 0;
+    switch (priority)
+    {
+        case RESONATE_PAL_THREAD_PRIORITY_LOW:
+            nice_value = 5;
+            break;
+        case RESONATE_PAL_THREAD_PRIORITY_HIGH:
+            nice_value = -5;
+            break;
+        default:
+            break;
+    }
+    if (nice_value != 0)
+    {
+        setpriority(PRIO_PROCESS, 0, nice_value);
+    }
+#endif
+}
+
+uint32_t resonate_pal_thread_current_cpu(void)
+{
+#if defined(__APPLE__)
+    return RESONATE_PAL_THREAD_CPU_UNKNOWN;
+#else
+    const int cpu = sched_getcpu();
+    return cpu >= 0 ? static_cast<uint32_t>(cpu) : RESONATE_PAL_THREAD_CPU_UNKNOWN;
+#endif
 }
 
 uint32_t resonate_pal_thread_id(void)

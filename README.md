@@ -123,6 +123,25 @@ dedicated server or an offscreen renderer wants; `--title`, `--width` and
 `Resonate.Render.Canvas`, so the same render module attaches in both — and it
 never links the window package or SDL to do it.
 
+## Frame and time
+
+A frame is driven by a fixed-step clock: the simulation advances in whole 60Hz
+steps (configurable) and the leftovers ride in an accumulator, so a jittery frame
+rate still steps the simulation at exactly the fixed rate. A frame that covers
+more than the step budget — five steps by default — runs the budget and drops the
+rest, which keeps a hitch from being paid back later as a burst of steps; what is
+left over is the interpolation fraction a renderer draws between two simulation
+states with. Timescale and pause are clock parameters, and neither stops the
+frame loop. The simulation stages run once per step and every step plays its own
+recorded commands at the frame's sync points; RENDER and PRESENT run once per
+displayed frame, on the frame's own wall time.
+
+The job pool the schedule runs on is sized by the CPU topology: one worker per
+logical processor this process may use, placed fastest-core-first, each taking
+its priority from its core's class (performance cores above normal, efficiency
+cores below). A worker-count change retunes the pool at a frame boundary without
+creating or destroying threads.
+
 ## Writing a module
 
 ```cpp
