@@ -1,5 +1,7 @@
 #include "world_internal.h"
 
+#include <xxhash.h>
+
 namespace resonate::ecs
 {
 
@@ -200,6 +202,20 @@ void World::destroy(Entity entity)
         return;
     }
 
+    /* A handle that names a recorded-but-unplayed create cancels the record
+       instead of failing: the entity was never alive, so there is no row to
+       remove and the reservation is what dies. */
+    {
+        std::lock_guard<std::mutex> lock(impl_->slotMutex);
+        if (entity.index < impl_->slots.size() && impl_->slots[entity.index].reserved &&
+            impl_->slots[entity.index].generation == entity.generation)
+        {
+            impl_->slots[entity.index].reserved = false;
+            impl_->freeSlots.push_back(entity.index);
+            return;
+        }
+    }
+
     EntityRecord* record = impl_->recordOf(entity, "destroy");
     if (record == nullptr)
     {
@@ -222,6 +238,7 @@ void World::destroy(Entity entity)
 
 bool World::alive(Entity entity) const noexcept
 {
+    std::lock_guard<std::mutex> lock(impl_->slotMutex);
     if (entity.index >= impl_->slots.size())
     {
         return false;
@@ -232,6 +249,7 @@ bool World::alive(Entity entity) const noexcept
 
 std::uint32_t World::entityCount() const noexcept
 {
+    std::lock_guard<std::mutex> lock(impl_->slotMutex);
     return impl_->alive;
 }
 
@@ -241,12 +259,16 @@ void* World::get(Entity entity, ComponentIndex component) noexcept
     {
         return nullptr;
     }
-    EntityRecord* record = impl_->recordOf(entity, "get");
-    if (record == nullptr || (record->chunk->archetype->mask & bitOf(component)) == 0U)
+    detail::WorldImpl::SlotLocation location;
+    if (!impl_->locate(entity, location, "get"))
     {
         return nullptr;
     }
-    return impl_->componentPointer(*record, component);
+    if ((location.chunk->archetype->mask & bitOf(component)) == 0U)
+    {
+        return nullptr;
+    }
+    return impl_->componentPointer(location.chunk, location.row, component);
 }
 
 const void* World::get(Entity entity, ComponentIndex component) const noexcept
@@ -256,13 +278,16 @@ const void* World::get(Entity entity, ComponentIndex component) const noexcept
 
 bool World::has(Entity entity, ComponentIndex component) const noexcept
 {
-    if (!impl_->hasType(component) || entity.index >= impl_->slots.size())
+    if (!impl_->hasType(component))
     {
         return false;
     }
-    const EntityRecord& record = impl_->slots[entity.index];
-    return record.chunk != nullptr && record.generation == entity.generation &&
-           (record.chunk->archetype->mask & bitOf(component)) != 0U;
+    detail::WorldImpl::SlotLocation location;
+    if (!impl_->locate(entity, location, nullptr))
+    {
+        return false;
+    }
+    return (location.chunk->archetype->mask & bitOf(component)) != 0U;
 }
 
 void* World::add(Entity entity, ComponentIndex component, const void* value)
@@ -284,7 +309,7 @@ void* World::add(Entity entity, ComponentIndex component, const void* value)
     Archetype& source = *record->chunk->archetype;
     if ((source.mask & bitOf(component)) != 0U)
     {
-        return impl_->componentPointer(*record, component);
+        return impl_->componentPointer(record->chunk, record->row, component);
     }
 
     Archetype* target = impl_->edge(source, component, true);
@@ -293,14 +318,14 @@ void* World::add(Entity entity, ComponentIndex component, const void* value)
         return nullptr;
     }
 
-    void* pointer = impl_->componentPointer(*record, component);
+    void* pointer = impl_->componentPointer(record->chunk, record->row, component);
     if (value != nullptr)
     {
         std::memcpy(pointer, value, impl_->components[component].size);
     }
 
     /* The component arrived with a value: that is a change to announce. */
-    impl_->stamp(*record, component);
+    impl_->stamp(record->chunk, record->row, component);
     notifyChange(entity, component);
     return pointer;
 }
@@ -481,18 +506,18 @@ void World::markChanged(Entity entity, ComponentIndex component)
     {
         return;
     }
-    EntityRecord* record = impl_->recordOf(entity, "markChanged");
-    if (record == nullptr)
+    detail::WorldImpl::SlotLocation location;
+    if (!impl_->locate(entity, location, "markChanged"))
     {
         return;
     }
-    if ((record->chunk->archetype->mask & bitOf(component)) == 0U)
+    if ((location.chunk->archetype->mask & bitOf(component)) == 0U)
     {
         impl_->say(Report::Error, "markChanged: entity %u:%u has no component %u", entity.index,
                    entity.generation, component);
         return;
     }
-    impl_->stamp(*record, component);
+    impl_->stamp(location.chunk, location.row, component);
     notifyChange(entity, component);
 }
 
@@ -511,20 +536,32 @@ bool World::changedSince(Entity entity, ComponentIndex component, ChangeTick tic
     {
         return false;
     }
-    const EntityRecord* record = impl_->recordOf(entity, "changedSince");
-    if (record == nullptr || (record->chunk->archetype->mask & bitOf(component)) == 0U)
+    detail::WorldImpl::SlotLocation location;
+    if (!impl_->locate(entity, location, "changedSince"))
     {
         return false;
     }
-    return tickAfter(componentTicks(record->chunk, component)[record->row], tick);
+    if ((location.chunk->archetype->mask & bitOf(component)) == 0U)
+    {
+        return false;
+    }
+    return tickAfter(componentTicks(location.chunk, component)[location.row], tick);
+}
+
+void World::setSeed(std::uint64_t seed) noexcept
+{
+    impl_->reseed(seed);
+}
+
+Rng* World::rngStream(const char* name)
+{
+    return impl_->rngStream(name);
 }
 
 World::ParallelScope::ParallelScope(World& world) noexcept : world_(&world)
 {
     world_->enterParallel();
-}
-
-World::ParallelScope::~ParallelScope()
+}World::ParallelScope::~ParallelScope()
 {
     world_->leaveParallel();
 }

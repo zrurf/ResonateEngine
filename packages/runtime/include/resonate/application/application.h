@@ -68,6 +68,12 @@ class Application
            process may use). The run's own policy re-tunes it at a frame
            boundary through ModuleHost::jobs()->requestWorkerCount. */
         std::uint32_t worker_count = 0;
+
+        /* The world's RNG seed (Q22): systems derive their named streams from
+           it, so the same seed and the same scheduling replay the same values.
+           The default is a fixed seed — determinism by default, variety by
+           configuration. */
+        std::uint64_t world_seed = 0;
     };
 
     /* Discovers, resolves and attaches modules, runs the frame loop, then

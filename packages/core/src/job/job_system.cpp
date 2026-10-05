@@ -94,7 +94,8 @@ class JobSystemImpl final : public JobSystem
   public:
     explicit JobSystemImpl(std::uint32_t worker_limit)
     {
-        if (resonate_pal_sync_create_semaphore(&semaphore_, 0) != RESONATE_PAL_OK ||
+        if (resonate_pal_sync_create_semaphore(&classSemaphore_[0], 0) != RESONATE_PAL_OK ||
+            resonate_pal_sync_create_semaphore(&classSemaphore_[1], 0) != RESONATE_PAL_OK ||
             resonate_pal_sync_create_semaphore(&excessSemaphore_, 0) != RESONATE_PAL_OK ||
             resonate_pal_sync_create_mutex(&dagMutex_, 0) != RESONATE_PAL_OK ||
             resonate_pal_sync_create_mutex(&globalMutex_, 0) != RESONATE_PAL_OK)
@@ -144,6 +145,17 @@ class JobSystemImpl final : public JobSystem
            refused does not have a worker to wake. */
         target_.store(workerCount_, std::memory_order_relaxed);
 
+        /* The class sets the router publishes into: fastest-first placement
+           puts every performance core at the front, so the split is stable
+           when a tuned-down count keeps the fastest workers. */
+        for (std::uint32_t index = 0; index < workerCount_; ++index)
+        {
+            (workers_[index].core_class == RESONATE_PAL_CORE_EFFICIENCY ? eWorkers_
+                                                                        : pWorkers_)
+                .push_back(index);
+            allWorkers_.push_back(index);
+        }
+
         /* Threads start running the moment they are created; the pool they land
            in is only fully built here. */
         ready_.store(true, std::memory_order_release);
@@ -158,7 +170,8 @@ class JobSystemImpl final : public JobSystem
 
         waitAll();
         stopping_.store(true, std::memory_order_release);
-        resonate_pal_sync_signal_semaphore(&semaphore_, workerCount_);
+        resonate_pal_sync_signal_semaphore(&classSemaphore_[0], workerCount_);
+        resonate_pal_sync_signal_semaphore(&classSemaphore_[1], workerCount_);
         resonate_pal_sync_signal_semaphore(&excessSemaphore_, workerCount_);
 
         /* Every join first: a worker that has not yet observed the stop can still
@@ -174,7 +187,8 @@ class JobSystemImpl final : public JobSystem
         }
         resonate_pal_sync_destroy_mutex(&globalMutex_);
         resonate_pal_sync_destroy_mutex(&dagMutex_);
-        resonate_pal_sync_destroy_semaphore(&semaphore_);
+        resonate_pal_sync_destroy_semaphore(&classSemaphore_[0]);
+        resonate_pal_sync_destroy_semaphore(&classSemaphore_[1]);
         resonate_pal_sync_destroy_semaphore(&excessSemaphore_);
     }
 
@@ -285,6 +299,7 @@ class JobSystemImpl final : public JobSystem
                                              : RESONATE_PAL_THREAD_PRIORITY_HIGH);
 
         awake_.fetch_add(1, std::memory_order_relaxed);
+        classAwake(workers_[index].core_class).fetch_add(1, std::memory_order_relaxed);
         for (;;)
         {
             if (stopping_.load(std::memory_order_acquire))
@@ -305,6 +320,7 @@ class JobSystemImpl final : public JobSystem
             park(index);
         }
         awake_.fetch_sub(1, std::memory_order_relaxed);
+        classAwake(workers_[index].core_class).fetch_sub(1, std::memory_order_relaxed);
     }
 
     /* Takes one job and runs it, if the count allows this worker to work at
@@ -331,25 +347,31 @@ class JobSystemImpl final : public JobSystem
 
     /* The active set parks on the pool semaphore, the excess on its own, so a
        wake meant for the active set is never consumed by a worker whose index
-       puts it beyond the requested count. */
+       puts it beyond the requested count. The class counters follow the same
+       window, which is what publish's class wake reads. */
     void excessPark(std::uint32_t index)
     {
+        std::atomic<std::uint32_t>& class_awake = classAwake(workers_[index].core_class);
         awake_.fetch_sub(1, std::memory_order_seq_cst);
+        class_awake.fetch_sub(1, std::memory_order_seq_cst);
         if (index < target_.load(std::memory_order_relaxed))
         {
             /* The count rose while this worker was on its way in. */
             awake_.fetch_add(1, std::memory_order_relaxed);
+            class_awake.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         resonate_pal_sync_wait_semaphore(&excessSemaphore_);
         awake_.fetch_add(1, std::memory_order_relaxed);
+        class_awake.fetch_add(1, std::memory_order_relaxed);
     }
 
     /* Idle workers spin briefly, then park on the semaphore. The awake count
        drops (seq_cst) before the final scan, so a submission that reads the
        worker as parked has already published its entry into a queue that scan
        visits, and one that reads it as awake signals the semaphore it is about
-       to block on. A worker beyond the target never reaches the scan: it parks
+       to block on. The class counter moves with the total, for the class wake
+       in publish. A worker beyond the target never reaches the scan: it parks
        on the excess semaphore, which only a raise signals. */
     void park(std::uint32_t index)
     {
@@ -368,14 +390,18 @@ class JobSystemImpl final : public JobSystem
             }
         }
 
+        std::atomic<std::uint32_t>& class_awake = classAwake(workers_[index].core_class);
         awake_.fetch_sub(1, std::memory_order_seq_cst);
+        class_awake.fetch_sub(1, std::memory_order_seq_cst);
         if (tryRun(index))
         {
             awake_.fetch_add(1, std::memory_order_relaxed);
+            class_awake.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        resonate_pal_sync_wait_semaphore(&semaphore_);
+        resonate_pal_sync_wait_semaphore(&classSemaphore_[workers_[index].core_class]);
         awake_.fetch_add(1, std::memory_order_relaxed);
+        class_awake.fetch_add(1, std::memory_order_relaxed);
     }
 
     /* Priority-layered: every High source before any Normal one, and so on. Own
@@ -394,6 +420,7 @@ class JobSystemImpl final : public JobSystem
                     Job* job = worker.queues[priority].back();
                     worker.queues[priority].pop_back();
                     queued_.fetch_sub(1, std::memory_order_release);
+                    classQueued(worker.core_class).fetch_sub(1, std::memory_order_release);
                     return job;
                 }
             }
@@ -414,6 +441,7 @@ class JobSystemImpl final : public JobSystem
                     Job* job = worker.queues[priority].front();
                     worker.queues[priority].pop_front();
                     queued_.fetch_sub(1, std::memory_order_release);
+                    classQueued(worker.core_class).fetch_sub(1, std::memory_order_release);
                     return job;
                 }
             }
@@ -585,24 +613,38 @@ class JobSystemImpl final : public JobSystem
         return true;
     }
 
-    /* Queues one entry per worker, round-robin from a shared cursor, so a
-       parallel for reaches as many workers as it has chunks; a pool without
-       threads falls back to its global queue, which only a waiting thread
-       drains. Called under the dependency mutex, which is what keeps a ready
-       job from gaining a dependency before its entry is reachable. */
+    /* Queues one entry per worker the job's affinity class prefers, round-robin
+       from a shared cursor, so a parallel for reaches as many workers as it has
+       chunks; a pool without threads falls back to its global queue, which only
+       a waiting thread drains. Called under the dependency mutex, which is what
+       keeps a ready job from gaining a dependency before its entry is
+       reachable.
+
+       The class decides where the entry is *published*; stealing is the
+       overflow. Background work queues on the efficiency set, Latency work on
+       the performance set, and a class with no workers of its own — Throughput,
+       or either kind on a homogeneous pool — publishes everywhere. */
     void publish(Job* job)
     {
         const std::uint32_t queue = queueOf(job->priority);
-        const std::uint32_t entries =
-            std::min((job->total + job->chunk - 1) / job->chunk, workerCount_);
+        const std::uint32_t chunks = (job->total + job->chunk - 1) / job->chunk;
+        const bool routed_efficiency = job->affinity == JobAffinityBackground && !eWorkers_.empty();
+        const bool routed_performance = job->affinity == JobAffinityLatency && !pWorkers_.empty();
+        const std::vector<std::uint32_t>& targets =
+            routed_efficiency ? eWorkers_
+                              : routed_performance ? pWorkers_ : allWorkers_;
+
+        const std::uint32_t entries = std::min(chunks, static_cast<std::uint32_t>(targets.size()));
         job->work.fetch_add(entries, std::memory_order_relaxed);
         for (std::uint32_t entry = 0; entry < entries; ++entry)
         {
             Worker& worker =
-                workers_[handout_.fetch_add(1, std::memory_order_relaxed) % workerCount_];
+                workers_[targets[handout_.fetch_add(1, std::memory_order_relaxed) %
+                                 targets.size()]];
             Lock lock(worker.mutex);
             worker.queues[queue].push_back(job);
             queued_.fetch_add(1, std::memory_order_release);
+            classQueued(worker.core_class).fetch_add(1, std::memory_order_release);
         }
         if (entries == 0)
         {
@@ -614,17 +656,39 @@ class JobSystemImpl final : public JobSystem
 
         /* Wake against the backlog, not this publish: a burst of submissions
            while the workers are still spinning must wake them once work is
-           visible, and a parked worker must not sleep behind queued entries. */
-        const std::uint32_t want = std::min(queued_.load(std::memory_order_acquire),
-                                            target_.load(std::memory_order_relaxed));
-
-        /* The seq_cst load pairs with the seq_cst decrement in park(): a worker
-           this load reads as awake is past its decrement, so its final scan
-           reaches everything pushed above. */
-        const std::uint32_t awake = awake_.load(std::memory_order_seq_cst);
-        if (want > awake)
+           visible, and a parked worker must not sleep behind queued entries.
+           The want per class is that class's whole queued backlog against its
+           in-target capacity, compared (seq_cst, pairing with park's
+           decrement) with the class's awake count; the difference signals the
+           class's semaphore. Wakes are class-directed — each class parks on
+           its own semaphore — so a wake meant for one class is never consumed
+           by the other, which is what keeps a routed entry from waiting
+           behind a sleeping target while the other class is awake and
+           counted. A routed publish wakes only the class it published into;
+           an unrouted one wakes both, the entries being spread over every
+           queue. */
+        const auto wake = [this](std::uint32_t class_index)
         {
-            resonate_pal_sync_signal_semaphore(&semaphore_, want - awake);
+            const auto core = static_cast<ResonatePalCoreClass>(class_index);
+            const std::uint32_t want =
+                std::min(classQueued(core).load(std::memory_order_acquire),
+                         classCapacity(core == RESONATE_PAL_CORE_EFFICIENCY));
+            const std::uint32_t awake = classAwake(core).load(std::memory_order_seq_cst);
+            if (want > awake)
+            {
+                resonate_pal_sync_signal_semaphore(&classSemaphore_[class_index], want - awake);
+            }
+        };
+
+        if (routed_efficiency || routed_performance)
+        {
+            wake(routed_efficiency ? RESONATE_PAL_CORE_EFFICIENCY
+                                   : RESONATE_PAL_CORE_PERFORMANCE);
+        }
+        else
+        {
+            wake(RESONATE_PAL_CORE_PERFORMANCE);
+            wake(RESONATE_PAL_CORE_EFFICIENCY);
         }
     }
 
@@ -727,14 +791,61 @@ class JobSystemImpl final : public JobSystem
     std::uint32_t workerCount_ = 0; /* threads actually created */
     std::deque<Job*> global_[3];
 
+    /* Worker indices per core class, for the affinity routing in publish. */
+    std::vector<std::uint32_t> pWorkers_;
+    std::vector<std::uint32_t> eWorkers_;
+    std::vector<std::uint32_t> allWorkers_;
+
     ResonateMutex dagMutex_ = {};
     ResonateMutex globalMutex_ = {};
-    ResonateSemaphore semaphore_ = {};       /* the active set parks here */
+    /* One parking semaphore per core class: publish wakes the class it
+       published into, and a class-directed wake cannot be consumed by the
+       other class. Indexed by ResonatePalCoreClass. */
+    ResonateSemaphore classSemaphore_[2] = {};
     ResonateSemaphore excessSemaphore_ = {}; /* workers beyond the target */
     bool sync_ = false;
 
     std::atomic<std::uint32_t> awake_{0};
     std::atomic<std::uint32_t> queued_{0}; /* entries sitting in any queue */
+
+    /* Awake and queued-backlog, per core class: publish's class wake reads
+       these, because a class-routed entry can sit on a parked worker while
+       the global counts are kept up by the other class working. The wake is
+       against the backlog, not the publish: `want` is the class's whole
+       queued backlog against its in-target capacity, so a burst of routed
+       submissions wakes the class once for all of them. */
+    std::atomic<std::uint32_t>& classAwake(ResonatePalCoreClass core_class)
+    {
+        return core_class == RESONATE_PAL_CORE_EFFICIENCY ? awakeEfficiency_ : awakePerformance_;
+    }
+    std::atomic<std::uint32_t>& classQueued(ResonatePalCoreClass core_class)
+    {
+        return core_class == RESONATE_PAL_CORE_EFFICIENCY ? queuedEfficiency_
+                                                          : queuedPerformance_;
+    }
+    std::atomic<std::uint32_t> awakePerformance_{0};
+    std::atomic<std::uint32_t> awakeEfficiency_{0};
+    std::atomic<std::uint32_t> queuedPerformance_{0};
+    std::atomic<std::uint32_t> queuedEfficiency_{0};
+
+    /* Workers of one class within the requested count: a worker beyond the
+       target parks on the excess semaphore, which only a raise signals, so
+       the wake must not count on it. */
+    std::uint32_t classCapacity(bool efficiency) const
+    {
+        const std::vector<std::uint32_t>& set = efficiency ? eWorkers_ : pWorkers_;
+        const std::uint32_t target = target_.load(std::memory_order_relaxed);
+        std::uint32_t count = 0;
+        for (const std::uint32_t index : set)
+        {
+            if (index < target)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
     std::atomic<std::uint32_t> target_{1};
     std::atomic<std::uint32_t> incomplete_{0};
     std::atomic<std::uint32_t> stealCursor_{0};

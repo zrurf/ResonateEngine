@@ -777,3 +777,120 @@ TEST_CASE("workers run on the processors the topology placed them on", "[core][j
 
     delete jobs;
 }
+
+TEST_CASE("every affinity class drains", "[core][job]")
+{
+    JobSystem* jobs = resonate::createJobSystem();
+    REQUIRE(jobs != nullptr);
+
+    /* Routing must never strand a class a pool has no dedicated workers for:
+       whatever the topology, the work completes. */
+    for (const resonate::JobAffinity affinity :
+         {resonate::JobAffinityLatency, resonate::JobAffinityThroughput,
+          resonate::JobAffinityBackground})
+    {
+        std::atomic<std::uint32_t> done{0};
+        jobs->submitSingle(
+            [](void* context)
+            {
+                static_cast<std::atomic<std::uint32_t>*>(context)->fetch_add(1);
+            },
+            &done, 0, 0, JobPriorityNormal, affinity);
+        const resonate::JobIndex batch = jobs->submitParallel(
+            [](void* context, std::uint32_t begin, std::uint32_t end)
+            {
+                auto* done = static_cast<std::atomic<std::uint32_t>*>(context);
+                for (std::uint32_t index = begin; index < end; ++index)
+                {
+                    done->fetch_add(1);
+                }
+            },
+            &done, 64U, 0, 0, JobPriorityNormal);
+        jobs->wait(batch);
+        CHECK(done.load() == 65U);
+    }
+
+    delete jobs;
+}
+
+TEST_CASE("a job's class wakes a worker of its own class", "[core][job]")
+{
+    const ResonatePalTopology* topology = resonate_pal_topology_query();
+
+    std::set<std::uint32_t> performance_processors;
+    std::set<std::uint32_t> efficiency_processors;
+    for (std::uint32_t index = 0; index < topology->core_count; ++index)
+    {
+        if (topology->cores[index].core_class == RESONATE_PAL_CORE_EFFICIENCY)
+        {
+            efficiency_processors.insert(topology->cores[index].id);
+        }
+        else
+        {
+            performance_processors.insert(topology->cores[index].id);
+        }
+    }
+
+    if (performance_processors.empty() || efficiency_processors.empty())
+    {
+        SKIP("needs a heterogeneous topology to observe the routing");
+    }
+
+    JobSystem* jobs = resonate::createJobSystem();
+    REQUIRE(jobs != nullptr);
+
+    /* Warm the pool, then let every worker park: a parked class is woken only
+       by its own semaphore, so the run below cannot be a steal — it is the
+       class-directed wake and the routing themselves. */
+    jobs->submitParallel([](void*, std::uint32_t, std::uint32_t) {}, nullptr, 256U, 0, 0,
+                         JobPriorityNormal);
+    jobs->waitAll();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    struct Where
+    {
+        std::atomic<std::uint32_t> done{0};
+        std::atomic<std::uint32_t> cpu{0xFFFFFFFFU};
+    };
+
+    /* The waiting thread participates, so the poll must not wait: it watches
+       the atomic and lets a worker of the woken class take the job. */
+    const auto run_on_pool = [jobs](resonate::JobAffinity affinity) -> std::uint32_t
+    {
+        Where where;
+        jobs->submitSingle(
+            [](void* context)
+            {
+                auto* self = static_cast<Where*>(context);
+                self->cpu.store(resonate_pal_thread_current_cpu(), std::memory_order_relaxed);
+                self->done.store(1U, std::memory_order_release);
+            },
+            &where, 0, 0, JobPriorityNormal, affinity);
+
+        for (int poll = 0; poll < 5000 && where.done.load(std::memory_order_acquire) == 0U; ++poll)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return where.cpu.load();
+    };
+
+    /* Twice over: a parked performance set answers Latency with a performance
+       core, a parked efficiency set answers Background with an efficiency
+       one. */
+    for (int round = 0; round < 2; ++round)
+    {
+        const std::uint32_t latency_cpu = run_on_pool(resonate::JobAffinityLatency);
+        REQUIRE(latency_cpu != 0xFFFFFFFFU);
+        CHECK(performance_processors.count(latency_cpu) == 1U);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        const std::uint32_t background_cpu = run_on_pool(resonate::JobAffinityBackground);
+        REQUIRE(background_cpu != 0xFFFFFFFFU);
+        CHECK(efficiency_processors.count(background_cpu) == 1U);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    delete jobs;
+}

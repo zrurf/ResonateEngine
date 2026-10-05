@@ -6,7 +6,9 @@
 #include <memory>
 
 #include "resonate/core/allocator.h"
+#include "resonate/core/rng.h"
 #include "resonate/ecs/blob.h"
+#include "resonate/ecs/command_buffer.h"
 #include "resonate/ecs/component.h"
 #include "resonate/ecs/entity.h"
 #include "resonate/ecs/query.h"
@@ -193,11 +195,15 @@ class World
 
     /* --- command buffer --- */
 
-    /* Applies a recorded buffer, in record order. Refused as a whole while
-       parallel execution is in flight (the immediate channel's check); the
-       buffer keeps its commands so the caller can play it when the frame's
-       barrier arrives. */
+    /* Applies the buffer's sync-point channel, in merged record order. Refused
+       as a whole while parallel execution is in flight (the immediate
+       channel's check); the buffer keeps its commands so the caller can play
+       it when the frame's barrier arrives. */
     void play(CommandBuffer& buffer);
+
+    /* The same for the next-frame channel: the aftermath a system declared
+       plays at the start of the next simulation step. */
+    void playNextFrame(CommandBuffer& buffer);
 
     /* --- change observers --- */
 
@@ -259,6 +265,19 @@ class World
         return changedSince(entity, ComponentTraits<T>::index, tick);
     }
 
+    /* --- deterministic randomness (Q22) --- */
+
+    /* The seed every named stream derives from. A run sets it once, before the
+       frame loop; calling it again re-derives every stream handed out so far,
+       which is how a replay resets the run's randomness. */
+    void setSeed(std::uint64_t seed) noexcept;
+
+    /* A named stream, created on first use from the seed and the name and kept
+       between frames. A stream is one state: its owner consumes it alone, and
+       parallel work derives per-slice streams with branch (core/rng.h). Null
+       for a null or empty name, with a report. */
+    [[nodiscard]] Rng* rngStream(const char* name);
+
     /* --- parallel execution --- */
 
     /* Marks a region that may run on several threads at once. Structural
@@ -304,6 +323,9 @@ class World
 
     /* Calls the observers of one component, in registration order. */
     void notifyChange(Entity entity, ComponentIndex component);
+
+    /* One channel of a buffer, in merged record order. */
+    void playChannel(CommandBuffer& buffer, CommandBuffer::Channel channel);
 
     void enterParallel() noexcept;
     void leaveParallel() noexcept;

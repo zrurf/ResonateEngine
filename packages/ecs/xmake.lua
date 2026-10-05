@@ -9,3 +9,7 @@ target("Resonate.ECS")
 
     add_deps("Resonate.Core.Memory", "Resonate.Core.Container",
              "Resonate.Core.Job")
+
+    -- XXH3 derives the RNG streams' keys from their names, the way the module
+    -- ABI hashes capability ids.
+    add_packages("xxhash")

@@ -241,6 +241,76 @@ TEST_CASE("commands recorded after the last sync point are dropped and reported"
     REQUIRE(logs.contains("after the last sync point"));
 }
 
+TEST_CASE("a next-frame recording plays at the next step's Phase 0", "[runtime][frame]")
+{
+    World world(resonate::systemAllocator());
+    REQUIRE(world.registerComponent<Marker>() != resonate::ecs::kInvalidComponent);
+
+    Logs logs;
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    host->setWorld(&world);
+    host->setLogSink(&logs, &Logs::sink);
+
+    /* An EARLY observer counting what exists when the step starts. */
+    Query marker_query = world.createQuery(QueryDesc{});
+    struct EarlyCounter
+    {
+        Query* query = nullptr;
+        std::vector<std::uint32_t> counts;
+    } counter{&marker_query, {}};
+
+    const resonate::EngineSystemDesc early{
+        "test.early",
+        RESONATE_STAGE_EARLY_UPDATE,
+        [](void* context, World&, CommandBuffer&, float)
+        {
+            auto* self = static_cast<EarlyCounter*>(context);
+            self->counts.push_back(markerCount(*self->query));
+        },
+        &counter};
+
+    /* A LATE system declaring its one spawn as next-frame aftermath. */
+    struct Aftermath
+    {
+        int runs = 0;
+        Entity spawned{};
+    } aftermath;
+
+    const resonate::EngineSystemDesc late{
+        "test.aftermath",
+        RESONATE_STAGE_LATE_UPDATE,
+        [](void* context, World&, CommandBuffer& commands, float)
+        {
+            auto* self = static_cast<Aftermath*>(context);
+            if (++self->runs == 1)
+            {
+                commands.setChannel(CommandBuffer::Channel::NextFrame);
+                self->spawned = commands.spawn(Marker{1U});
+                commands.setChannel(CommandBuffer::Channel::SyncPoint);
+            }
+        },
+        &aftermath};
+
+    REQUIRE(resonate::addEngineSystem(*host, early) == RESONATE_OK);
+    REQUIRE(resonate::addEngineSystem(*host, late) == RESONATE_OK);
+
+    /* Step one: the aftermath is recorded after both sync points, but it is a
+       declaration, not a dropped leftover. */
+    host->runSimulationStep(1.0F / 60.0F);
+    REQUIRE(aftermath.runs == 1);
+    REQUIRE_FALSE(world.alive(aftermath.spawned));
+    REQUIRE(counter.counts == std::vector<std::uint32_t>{0U});
+    CHECK_FALSE(logs.contains("after the last sync point"));
+
+    /* Step two's Phase 0 plays it; the step's own EARLY sees it. */
+    host->runSimulationStep(1.0F / 60.0F);
+    REQUIRE(world.alive(aftermath.spawned));
+    REQUIRE(counter.counts == (std::vector<std::uint32_t>{0U, 1U}));
+    CHECK_FALSE(logs.contains("after the last sync point"));
+}
+
 TEST_CASE("an unplayed buffer is reclaimed and reported when the host goes away",
           "[runtime][frame]")
 {

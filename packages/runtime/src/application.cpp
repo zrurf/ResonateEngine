@@ -123,6 +123,10 @@ int Application::run(const Config& config)
     }
     host->setWorld(&world);
 
+    /* Before the systems register, so a stream derived at registration time
+       already reads the run's seed. */
+    world.setSeed(config.world_seed);
+
     if (config.publish)
     {
         const ResonateStatus published = config.publish(host->capabilities());

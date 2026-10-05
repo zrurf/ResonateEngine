@@ -54,10 +54,11 @@ enum JobPriority : std::uint8_t
     JobPriorityHigh = 2,
 };
 
-/* Scheduling hint for heterogeneous cores, recorded per job. The pool's
-   workers carry a class of their own from the topology probe, which is what
-   places and prioritises them; a job's own class does not choose its executor
-   yet, so every worker still takes every job. */
+/* Scheduling hint for heterogeneous cores. A job's entries are published to
+   the workers of its class — Background to the efficiency set, Latency to the
+   performance set, Throughput everywhere — and stealing is the overflow: an
+   idle worker of the wrong class takes an entry when nothing of its own is
+   left. On a homogeneous pool every class publishes everywhere. */
 enum JobAffinity : std::uint8_t
 {
     JobAffinityLatency = 0,    /* frame-critical path */

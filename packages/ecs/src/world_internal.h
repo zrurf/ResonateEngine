@@ -17,6 +17,8 @@
 
 #include "resonate/ecs/world.h"
 
+#include <xxhash.h>
+
 namespace resonate::ecs::detail
 {
 
@@ -255,6 +257,12 @@ struct WorldImpl
     std::uint64_t registeredMask = 0;
     std::uint32_t registeredCount = 0;
 
+    /* Serializes the slot table: parallel recording reserves slots from many
+       threads, and a reserve grows `slots`, so every read that must not race
+       that growth takes the lock. The structural paths keep the unlocked
+       `recordOf` — they are refused while parallel work runs, which is the
+       only time a reserve can be in flight. */
+    mutable std::mutex slotMutex;
     std::vector<EntityRecord> slots;
     std::vector<std::uint32_t> freeSlots;
     std::uint32_t alive = 0;
@@ -268,6 +276,50 @@ struct WorldImpl
 
     std::atomic<ChangeTick> typeTicks[kMaxComponentTypes] = {};
     std::atomic<std::uint32_t> parallelDepth{0};
+
+    /* --- named RNG streams: the seed plus the name's hash derive the state,
+       so the same seed replays the same values (Q22). Held by pointer: a
+       stream handed out stays valid for the world's life. --- */
+    struct RngStream
+    {
+        std::uint64_t name_hash = 0;
+        Rng rng{0};
+    };
+    mutable std::mutex rngMutex;
+    std::vector<std::unique_ptr<RngStream>> rngStreams;
+    std::uint64_t rngSeed = 0;
+
+    Rng* rngStream(const char* name)
+    {
+        if (name == nullptr || *name == '\0')
+        {
+            say(World::Report::Error, "rngStream: a stream must be named");
+            return nullptr;
+        }
+
+        const std::uint64_t key = XXH3_64bits(name, std::strlen(name));
+        std::lock_guard<std::mutex> lock(rngMutex);
+        for (std::unique_ptr<RngStream>& stream : rngStreams)
+        {
+            if (stream->name_hash == key)
+            {
+                return &stream->rng;
+            }
+        }
+        rngStreams.push_back(
+            std::make_unique<RngStream>(RngStream{key, Rng(Rng(rngSeed).branch(key).state())}));
+        return &rngStreams.back()->rng;
+    }
+
+    void reseed(std::uint64_t value)
+    {
+        std::lock_guard<std::mutex> lock(rngMutex);
+        rngSeed = value;
+        for (std::unique_ptr<RngStream>& stream : rngStreams)
+        {
+            stream->rng = Rng(Rng(rngSeed).branch(stream->name_hash).state());
+        }
+    }
 
     struct ObserverEntry
     {
@@ -322,7 +374,8 @@ struct WorldImpl
         return false;
     }
 
-    /* Null for a stale, dead or out-of-range handle. */
+    /* Null for a stale, dead or out-of-range handle. The structural paths use
+       this — they cannot run while a parallel reserve is in flight. */
     EntityRecord* recordOf(Entity entity, const char* what)
     {
         if (entity.index >= slots.size())
@@ -337,6 +390,38 @@ struct WorldImpl
             return nullptr;
         }
         return &record;
+    }
+
+    /* Where an entity lives, read under the slot lock: the parallel-legal
+       readers (get, has, markChanged, changedSince) use this. `what` null
+       reads silently, which is what `has` wants. The chunk pointer outlives
+       the call — structure cannot move while parallel work runs. */
+    struct SlotLocation
+    {
+        Chunk* chunk = nullptr;
+        std::uint32_t row = 0;
+    };
+
+    bool locate(Entity entity, SlotLocation& out, const char* what)
+    {
+        {
+            std::lock_guard<std::mutex> lock(slotMutex);
+            if (entity.index < slots.size())
+            {
+                const EntityRecord& record = slots[entity.index];
+                if (record.chunk != nullptr && record.generation == entity.generation)
+                {
+                    out.chunk = record.chunk;
+                    out.row = record.row;
+                    return true;
+                }
+            }
+        }
+        if (what != nullptr)
+        {
+            reportStale(entity, what);
+        }
+        return false;
     }
 
     bool registered(ComponentIndex component) const noexcept
@@ -558,10 +643,12 @@ struct WorldImpl
     /* --- slots --- */
 
     /* Takes an index and a fresh generation; the entity is not alive until
-       materialize places it. */
+       materialize places it. Locked: parallel recording reserves from many
+       threads. */
     Entity reserveSlot()
     {
         std::uint32_t index = 0;
+        std::lock_guard<std::mutex> lock(slotMutex);
         if (!freeSlots.empty())
         {
             index = freeSlots.back();
@@ -586,6 +673,7 @@ struct WorldImpl
     /* Places a reserved slot in the empty archetype and makes it alive. */
     bool materialize(Entity entity)
     {
+        std::lock_guard<std::mutex> lock(slotMutex);
         if (entity.index >= slots.size())
         {
             reportStale(entity, "create");
@@ -620,6 +708,7 @@ struct WorldImpl
        alone. */
     void releaseReservation(Entity entity)
     {
+        std::lock_guard<std::mutex> lock(slotMutex);
         if (entity.index >= slots.size())
         {
             return;
@@ -721,10 +810,9 @@ struct WorldImpl
 
     /* --- rows --- */
 
-    void* componentPointer(const EntityRecord& record, ComponentIndex component) const noexcept
+    void* componentPointer(Chunk* chunk, std::uint32_t row, ComponentIndex component) const noexcept
     {
-        return componentData(record.chunk, component) +
-               static_cast<std::size_t>(record.row) * components[component].size;
+        return componentData(chunk, component) + static_cast<std::size_t>(row) * components[component].size;
     }
 
     /* Swap-removes one row, keeping the chunk dense: the last row takes its
@@ -807,12 +895,11 @@ struct WorldImpl
         return true;
     }
 
-    /* Stamps the entity's tick for one component and the chunk's. */
-    void stamp(EntityRecord& record, ComponentIndex component)
+    /* Stamps one entity's tick for a component and the chunk's. */
+    void stamp(Chunk* chunk, std::uint32_t row, ComponentIndex component)
     {
         const ChangeTick tick = typeTicks[component].fetch_add(1U, std::memory_order_relaxed) + 1U;
-        Chunk* chunk = record.chunk;
-        componentTicks(chunk, component)[record.row] = tick;
+        componentTicks(chunk, component)[row] = tick;
         chunkTicksOf(chunk)[chunk->archetype->layout.tickSlots[component]] = tick;
     }
 

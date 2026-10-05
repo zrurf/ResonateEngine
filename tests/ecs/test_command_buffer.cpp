@@ -1,9 +1,12 @@
 #include <catch2/catch_all.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <resonate/core/allocator.h>
@@ -345,4 +348,197 @@ TEST_CASE("playing one hundred thousand recorded adds", "[ecs][command][benchmar
     }
     REQUIRE(sum == static_cast<double>(COUNT) * static_cast<double>(COUNT - 1U) / 2.0);
     REQUIRE(seconds < 1.0);
+}
+
+TEST_CASE("parallel sections record and merge by order key", "[ecs][command]")
+{
+    World world(resonate::systemAllocator());
+    world.registerComponent<Health>();
+
+    CommandBuffer buffer(world);
+    std::vector<std::uint64_t> playback_order;
+
+    constexpr std::uint32_t THREADS = 4;
+    constexpr std::uint32_t PER_THREAD = 50;
+    std::vector<std::vector<Entity>> handles(THREADS);
+
+    std::vector<std::thread> threads;
+    for (std::uint32_t key = 0; key < THREADS; ++key)
+    {
+        threads.emplace_back(
+            [&buffer, &playback_order, &handles, key]
+            {
+                auto section = buffer.section(key);
+
+                for (std::uint32_t index = 0; index < PER_THREAD; ++index)
+                {
+                    const std::int32_t value = static_cast<std::int32_t>(key * PER_THREAD + index);
+                    const Entity entity = section.create();
+                    REQUIRE(entity.valid());
+                    section.add<Health>(entity, Health{value});
+                    handles[key].push_back(entity);
+                }
+
+                /* A custom command whose playback appends its key: the merge
+                   order becomes observable. */
+                const std::uint64_t key_value = key;
+                section.record(
+                    [](void* context, World&, const void* payload)
+                    {
+                        auto* order = static_cast<std::vector<std::uint64_t>*>(context);
+                        std::uint64_t key = 0;
+                        std::memcpy(&key, payload, sizeof(key));
+                        order->push_back(key);
+                    },
+                    &playback_order, &key_value, sizeof(key_value));
+            });
+    }
+    for (std::thread& thread : threads)
+    {
+        thread.join();
+    }
+
+    REQUIRE(buffer.commandCount() == THREADS * (PER_THREAD * 2U + 1U));
+
+    /* Nothing recorded is alive before playback: read-committed holds for
+       sections too. */
+    for (const std::vector<Entity>& batch : handles)
+    {
+        for (const Entity entity : batch)
+        {
+            CHECK_FALSE(world.alive(entity));
+        }
+    }
+
+    world.play(buffer);
+
+    REQUIRE(world.entityCount() == THREADS * PER_THREAD);
+    REQUIRE(playback_order.size() == THREADS);
+    for (std::uint32_t index = 0; index < THREADS; ++index)
+    {
+        CHECK(playback_order[index] == index);
+    }
+
+    /* Every section's entities hold exactly the values it recorded. */
+    for (std::uint32_t key = 0; key < THREADS; ++key)
+    {
+        for (std::uint32_t index = 0; index < PER_THREAD; ++index)
+        {
+            const Health* value = world.get<Health>(handles[key][index]);
+            REQUIRE(value != nullptr);
+            CHECK(value->value == static_cast<std::int32_t>(key * PER_THREAD + index));
+        }
+    }
+}
+
+TEST_CASE("a section may name what another section created", "[ecs][command]")
+{
+    World world(resonate::systemAllocator());
+    world.registerComponent<Health>();
+    world.registerComponent<Velocity>();
+
+    CommandBuffer buffer(world);
+    Entity spawned{};
+    std::atomic<bool> created{false};
+
+    std::thread creator(
+        [&buffer, &spawned, &created]
+        {
+            auto section = buffer.section(0);
+            spawned = section.create();
+            REQUIRE(spawned.valid());
+            section.add<Health>(spawned, Health{10});
+            created.store(true, std::memory_order_release);
+        });
+
+    std::thread extender(
+        [&buffer, &spawned, &created]
+        {
+            while (!created.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+            auto section = buffer.section(1);
+            /* The entity is not alive yet — but the buffer created it, so the
+               add is accepted, and by key order it plays after the create. */
+            section.add<Velocity>(spawned, Velocity{1.0F, 2.0F, 3.0F});
+        });
+
+    creator.join();
+    extender.join();
+
+    world.play(buffer);
+
+    /* Both sections' commands applied to the one entity: the create and the
+       Health from section 0, the Velocity from section 1. */
+    const Health* health = world.get<Health>(spawned);
+    REQUIRE(health != nullptr);
+    CHECK(health->value == 10);
+    const Velocity* velocity = world.get<Velocity>(spawned);
+    REQUIRE(velocity != nullptr);
+    CHECK(velocity->y == 2.0F);
+}
+
+TEST_CASE("direct recording keeps its place around sections", "[ecs][command]")
+{
+    World world(resonate::systemAllocator());
+
+    CommandBuffer buffer(world);
+    std::vector<std::uint32_t> order;
+    const auto step_command = [](void* context, World&, const void* payload)
+    {
+        std::uint32_t step = 0;
+        std::memcpy(&step, payload, sizeof(step));
+        static_cast<std::vector<std::uint32_t>*>(context)->push_back(step);
+    };
+    const auto record_step_at = [&](std::uint32_t step)
+    {
+        buffer.record(step_command, &order, &step, sizeof(step));
+    };
+
+    record_step_at(1);
+    {
+        auto section = buffer.section(0);
+        const std::uint32_t step = 2U;
+        section.record(step_command, &order, &step, sizeof(step));
+    }
+    record_step_at(3);
+
+    world.play(buffer);
+    REQUIRE(order == std::vector<std::uint32_t>{1U, 2U, 3U});
+}
+
+TEST_CASE("the next-frame channel plays at the next step and survives the step's end",
+          "[ecs][command]")
+{
+    World world(resonate::systemAllocator());
+    world.registerComponent<Health>();
+
+    CommandBuffer buffer(world);
+
+    buffer.setChannel(CommandBuffer::Channel::NextFrame);
+    const Entity aftermath = buffer.spawn(Health{5});
+    buffer.setChannel(CommandBuffer::Channel::SyncPoint);
+    const Entity immediate = buffer.spawn(Health{7});
+
+    CHECK(buffer.empty(CommandBuffer::Channel::SyncPoint) == false);
+    CHECK(buffer.empty(CommandBuffer::Channel::NextFrame) == false);
+    CHECK_FALSE(world.alive(aftermath));
+    CHECK_FALSE(world.alive(immediate));
+
+    /* Sync-point playback touches only its channel. */
+    world.play(buffer);
+    CHECK(world.alive(immediate));
+    CHECK_FALSE(world.alive(aftermath));
+    CHECK(buffer.empty(CommandBuffer::Channel::SyncPoint));
+    CHECK_FALSE(buffer.empty(CommandBuffer::Channel::NextFrame));
+
+    /* Dropping the sync channel's leftovers keeps the aftermath. */
+    buffer.clear(CommandBuffer::Channel::SyncPoint);
+    CHECK_FALSE(buffer.empty());
+
+    /* Phase 0 of the next step: the aftermath plays. */
+    world.playNextFrame(buffer);
+    CHECK(world.alive(aftermath));
+    CHECK(buffer.empty());
 }

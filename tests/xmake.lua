@@ -48,8 +48,8 @@ target("Resonate.Tests")
     set_group("tests")
 
     add_files("main.cpp", "render/**.cpp", "core/**.cpp", "module/**.cpp", "pal/**.cpp",
-              "runtime/**.cpp", "window/**.cpp", "ecs/**.cpp", "hierarchy/**.cpp",
-              "schema/**.cpp")
+              "runtime/**.cpp", "window/**.cpp", "ecs/**.cpp", "gameplay/**.cpp",
+              "hierarchy/**.cpp", "schema/**.cpp")
     add_tests("default")
 
     -- The schema rule builds and runs the compiler before this target compiles,
@@ -76,7 +76,7 @@ target("Resonate.Tests")
     add_deps("Resonate.Module", "Resonate.Window", "Resonate.Render",
              "Resonate.UI.Abi", "Resonate.PAL", "Resonate.Runtime",
              "Resonate.Core.Container", "Resonate.Core.Math", "Resonate.Core.Job",
-             "Resonate.ECS", "Resonate.Hierarchy")
+             "Resonate.ECS", "Resonate.Gameplay", "Resonate.Hierarchy")
 
     -- The plugins, order-only: their directory is what the end-to-end tests load,
     -- and a `xmake test` that did not build them once reported a green suite whose

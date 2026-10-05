@@ -485,3 +485,39 @@ TEST_CASE("one hundred thousand entities: create, component churn and destroy",
        a sanitizer build on a loaded machine. */
     REQUIRE(rate > 1.0e6);
 }
+
+TEST_CASE("named RNG streams derive from the seed and replay", "[ecs][world]")
+{
+    using resonate::Rng;
+
+    World world(resonate::systemAllocator());
+
+    CHECK(world.rngStream(nullptr) == nullptr);
+    CHECK(world.rngStream("") == nullptr);
+
+    /* A stream keeps its state between frames: two lookups are one stream. */
+    world.setSeed(1234);
+    Rng* combat = world.rngStream("test.combat");
+    REQUIRE(combat != nullptr);
+    Rng* combat_again = world.rngStream("test.combat");
+    REQUIRE(combat_again == combat);
+    Rng* ambient = world.rngStream("test.ambient");
+    REQUIRE(ambient != nullptr);
+    REQUIRE(ambient != combat);
+
+    /* The same seed derives the same streams; a different seed does not. */
+    World other(resonate::systemAllocator());
+    other.setSeed(1234);
+    const std::uint64_t expected = combat->nextU64();
+    CHECK(other.rngStream("test.combat")->nextU64() == expected);
+
+    World divergent(resonate::systemAllocator());
+    divergent.setSeed(4321);
+    CHECK(divergent.rngStream("test.combat")->nextU64() != expected);
+
+    /* Re-seeding resets the streams already handed out: a replay's reset. */
+    const std::uint64_t first = combat->nextU64();
+    world.setSeed(1234);
+    CHECK(combat->nextU64() == expected);
+    CHECK(first != expected);
+}

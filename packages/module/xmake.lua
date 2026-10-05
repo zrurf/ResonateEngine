@@ -13,7 +13,8 @@ target("Resonate.Module")
     add_files("src/**.cpp")
 
     add_deps("Resonate.Module.Abi", "Resonate.PAL", "Resonate.Core.Memory",
-             "Resonate.Core.Container", "Resonate.Core.Job", "Resonate.ECS")
+             "Resonate.Core.Container", "Resonate.Core.Job", "Resonate.ECS",
+             "Resonate.Gameplay")
 
     -- Manifest parsing, host side only: a plugin never sees this.
     add_packages("toml++")

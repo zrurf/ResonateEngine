@@ -15,6 +15,7 @@
 
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
+#include <resonate/core/arena.h>
 #include <resonate/module/message.h>
 #include <resonate/module/signal.h>
 #include <resonate/pal/io.h>
@@ -218,6 +219,15 @@ struct ModuleHost::Impl
     ecs::World* world = nullptr;
     ResonateWorld world_handle = {};
 
+    /* The run's intent bus, created with the world; the sync points adjudicate
+       what it holds. Null without a world. */
+    std::unique_ptr<gameplay::IntentBus> intents;
+
+    /* The frame's per-thread scratch arenas, installed as the active set so a
+       wave handler's submission lands on its thread's arena. Reset at the
+       frame's boundaries, when nothing arena-backed is alive. */
+    std::unique_ptr<FrameArenas> arenas;
+
     /* One per world-aware registration: a command buffer of that system's own,
        and the handle the descriptor carries. Held by pointer because a system
        keeps the handle across frames, so its address must not move. */
@@ -236,10 +246,16 @@ struct ModuleHost::Impl
        registrations come through here. */
     ResonateStatus addSystem(const ResonateSystemDesc& desc);
 
-    /* Sync point: plays every non-empty buffer in registration order. */
-    void playRecorded();
+    /* Sync point: plays one channel of every non-empty buffer in registration
+       order. */
+    void playRecorded(ecs::CommandBuffer::Channel channel);
 
-    /* Frame end: reports and drops what no sync point will reach any more. */
+    /* The frame's sync point: the ECB playback plus the intent adjudication
+       the design puts at A/B. */
+    void syncPoint();
+
+    /* Frame end: reports and drops what no sync point will reach any more. The
+       next-frame channel survives — it plays at the next step's start. */
     void discardRecorded();
 
     /* Frees the buffer of a system that is being removed. */
@@ -711,7 +727,7 @@ ResonateStatus ModuleHost::Impl::addSystem(const ResonateSystemDesc& desc)
     return status;
 }
 
-void ModuleHost::Impl::playRecorded()
+void ModuleHost::Impl::playRecorded(ecs::CommandBuffer::Channel channel)
 {
     if (world == nullptr)
     {
@@ -720,30 +736,69 @@ void ModuleHost::Impl::playRecorded()
 
     for (const std::unique_ptr<RecordedSystem>& entry : recorded)
     {
-        if (entry->buffer->empty())
+        if (entry->buffer->empty(channel))
         {
             continue;
         }
 
         /* Refused as a whole while parallel execution is in flight, reported
            there, and left holding its commands for the next sync point. */
-        world->play(*entry->buffer);
+        if (channel == ecs::CommandBuffer::Channel::NextFrame)
+        {
+            world->playNextFrame(*entry->buffer);
+        }
+        else
+        {
+            world->play(*entry->buffer);
+        }
+    }
+
+    /* The intent bus's buffer plays after the systems': its handlers recorded
+       against the state their playback produced. */
+    if (intents != nullptr && !intents->commands().empty(channel))
+    {
+        if (channel == ecs::CommandBuffer::Channel::NextFrame)
+        {
+            world->playNextFrame(intents->commands());
+        }
+        else
+        {
+            world->play(intents->commands());
+        }
+    }
+}
+
+void ModuleHost::Impl::syncPoint()
+{
+    playRecorded(ecs::CommandBuffer::Channel::SyncPoint);
+    if (intents != nullptr)
+    {
+        intents->adjudicate(jobsOf(scheduler));
     }
 }
 
 void ModuleHost::Impl::discardRecorded()
 {
+    const ecs::CommandBuffer::Channel sync = ecs::CommandBuffer::Channel::SyncPoint;
     for (const std::unique_ptr<RecordedSystem>& entry : recorded)
     {
-        if (entry->buffer->empty())
+        if (entry->buffer->empty(sync))
         {
             continue;
         }
 
         write(RESONATE_LOG_WARN, "system '" + entry->name + "' recorded " +
-                                     std::to_string(entry->buffer->commandCount()) +
+                                     std::to_string(entry->buffer->commandCount(sync)) +
                                      " command(s) after the last sync point; dropped");
-        entry->buffer->clear();
+        entry->buffer->clear(sync);
+    }
+
+    if (intents != nullptr && !intents->commands().empty(sync))
+    {
+        write(RESONATE_LOG_WARN, "the intent bus recorded " +
+                                     std::to_string(intents->commands().commandCount(sync)) +
+                                     " command(s) after the last sync point; dropped");
+        intents->commands().clear(sync);
     }
 }
 
@@ -880,6 +935,12 @@ std::unique_ptr<ModuleHost> ModuleHost::create(Allocator& allocator)
         return nullptr;
     }
 
+    /* The frame's scratch, installed as the active set: a wave handler's
+       submission reaches its thread's arena through it. One active set per
+       process; a second host takes it over. */
+    impl->arenas = std::make_unique<FrameArenas>(allocator);
+    FrameArenas::setActive(impl->arenas.get());
+
     return host;
 }
 
@@ -901,6 +962,13 @@ ModuleHost::~ModuleHost()
 
     resonate_scheduler_destroy(impl_->scheduler);
     resonate_capability_registry_destroy(impl_->registry);
+
+    /* The workers are gone by here; nothing reaches for a thread arena any
+       more, so the next host in this process may install its own. */
+    if (FrameArenas::active() == impl_->arenas.get())
+    {
+        FrameArenas::setActive(nullptr);
+    }
 }
 
 ResonateStatus ModuleHost::discover(const std::string& plugin_directory)
@@ -1183,11 +1251,23 @@ void ModuleHost::setWorld(ecs::World* world) noexcept
 {
     impl_->world = world;
     impl_->world_handle.instance = world;
+
+    /* The bus borrows the world, so it exists exactly as long as the run has
+       one. A world set twice keeps the first bus's registrations. */
+    if (world != nullptr && impl_->intents == nullptr)
+    {
+        impl_->intents = std::make_unique<gameplay::IntentBus>(*world, *impl_->allocator);
+    }
 }
 
 ecs::World* ModuleHost::world() const noexcept
 {
     return impl_->world;
+}
+
+gameplay::IntentBus* ModuleHost::intents() const noexcept
+{
+    return impl_->intents.get();
 }
 
 ResonateStatus ModuleHost::addSystem(const ResonateSystemDesc& desc)
@@ -1202,25 +1282,39 @@ void ModuleHost::runStage(ResonateStage stage, float delta_seconds)
 
 void ModuleHost::playRecordedCommands()
 {
-    impl_->playRecorded();
+    impl_->playRecorded(ecs::CommandBuffer::Channel::SyncPoint);
 }
 
 void ModuleHost::runSimulationStep(float delta_seconds)
 {
+    /* Phase 0 first: what a system declared as next-frame aftermath plays
+       here, and the previous step's spilled intents settle — both before
+       anything of the new step runs. */
+    impl_->playRecorded(ecs::CommandBuffer::Channel::NextFrame);
+    if (impl_->intents != nullptr)
+    {
+        impl_->intents->settleAftermath(jobsOf(impl_->scheduler));
+    }
+
     /* The simulating half of the spine, with a sync point after UPDATE and one
        after PHYSICS: what a system records plays before the next stage runs, so
        a spawn is visible to the same step's physics and drawable by its
        render. */
     runStage(RESONATE_STAGE_EARLY_UPDATE, delta_seconds);
     runStage(RESONATE_STAGE_UPDATE, delta_seconds);
-    playRecordedCommands(); /* sync point A */
+    impl_->syncPoint(); /* sync point A */
     runStage(RESONATE_STAGE_PHYSICS, delta_seconds);
-    playRecordedCommands(); /* sync point B */
+    impl_->syncPoint(); /* sync point B */
     runStage(RESONATE_STAGE_LATE_UPDATE, delta_seconds);
 
-    /* No sync point is left this step, so what is still recorded is reported
-       and dropped rather than silently carried into the next one. */
+    /* No sync point is left this step, so what is still recorded on the sync
+       channel is reported and dropped rather than silently carried into the
+       next one. The next-frame channel survives, by declaration. */
     impl_->discardRecorded();
+
+    /* The step's scratch is dead by here: the waves consumed their entries and
+       the sync points played their buffers. */
+    impl_->arenas->resetAll();
 }
 
 void ModuleHost::runRenderFrame(float delta_seconds)
@@ -1228,6 +1322,7 @@ void ModuleHost::runRenderFrame(float delta_seconds)
     runStage(RESONATE_STAGE_RENDER, delta_seconds);
     runStage(RESONATE_STAGE_PRESENT, delta_seconds);
     impl_->discardRecorded();
+    impl_->arenas->resetAll();
 }
 
 void ModuleHost::runFrame(float delta_seconds)

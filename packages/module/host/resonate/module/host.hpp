@@ -8,6 +8,7 @@
 
 #include "resonate/core/allocator.h"
 #include "resonate/core/job.h"
+#include "resonate/gameplay/intent.h"
 #include "resonate/module/abi.h"
 #include "resonate/module/capability.h"
 #include "resonate/module/manifest.hpp"
@@ -94,6 +95,11 @@ class ModuleHost
        its systems release their reservations through it on the way out. */
     void setWorld(ecs::World* world) noexcept;
     [[nodiscard]] ecs::World* world() const noexcept;
+
+    /* The run's intent bus, created when the world is set and borrowed for as
+       long as the host lives. Null without a world. The frame's sync points
+       adjudicate what it holds; handlers and systems submit through it. */
+    [[nodiscard]] gameplay::IntentBus* intents() const noexcept;
 
     /* Registers one system on the schedule, filling the world/commands handles
        a world-aware descriptor asks for: the run's world and a command buffer
