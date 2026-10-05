@@ -177,7 +177,7 @@ class World
 
     /* The bytes; null for a handle that is not alive (which is reported). The
        address is stable until the next structural change, and across sync
-       points it is invalid like every chunk pointer (law 6). */
+       points it is invalid like every chunk pointer. */
     [[nodiscard]] void* blobData(BlobHandle blob) noexcept;
     [[nodiscard]] const void* blobData(BlobHandle blob) const noexcept;
 

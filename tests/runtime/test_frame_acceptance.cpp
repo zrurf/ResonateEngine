@@ -21,14 +21,6 @@
 
 #include "paths.h"
 
-/*
- * Frame-level acceptance for the M1 runtime: real Application runs, driven by a
- * scripted clock, that pin what one displayed frame does — fixed simulation
- * steps under a jittery cadence, a step budget that clamps a hitch, a paused
- * simulation that still draws, per-step command playback, a worker count
- * retuned at frame boundaries, and a 100k-entity step visited by the pool.
- */
-
 namespace
 {
 

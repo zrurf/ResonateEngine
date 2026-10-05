@@ -95,3 +95,31 @@ target("Resonate.Tests")
     add_packages("libsdl3")
     add_packages("yyjson")
     add_packages("catch2")
+
+-- The ECS acceptance bench runs the three performance bars at full
+-- optimization and fails on a miss. It compiles the engine sources itself
+-- instead of linking the shipped libraries: in the debug configuration those
+-- are -O0, and a bar measured against them is meaningless. PAL's platform
+-- selection is mirrored below, so a backend change lands in both places.
+target("Resonate.Bench.ECS")
+    set_kind("binary")
+    set_default(false)
+    set_group("tests")
+    set_optimize("fastest")
+
+    add_files("bench/ecs_bench.cpp", "../packages/ecs/src/**.cpp",
+              "../packages/core/src/container/**.cpp", "../packages/core/src/memory/**.cpp",
+              "../packages/core/src/job/**.cpp")
+    add_includedirs("../packages/ecs/include", "../packages/core/include")
+
+    add_files("../packages/pal/src/common/*.cpp")
+    add_includedirs("../packages/pal/include", "../packages/pal/src")
+    if is_plat("windows") then
+        add_files("../packages/pal/src/platform/os/windows/**.cpp")
+        add_syslinks("user32", "kernel32")
+    else
+        add_files("../packages/pal/src/common/posix/**.cpp")
+        add_syslinks("pthread", "dl")
+    end
+
+    add_packages("xxhash")

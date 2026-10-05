@@ -521,3 +521,30 @@ TEST_CASE("named RNG streams derive from the seed and replay", "[ecs][world]")
     CHECK(combat->nextU64() == expected);
     CHECK(first != expected);
 }
+
+TEST_CASE("creating and destroying one hundred thousand entities", "[ecs][world][benchmark]")
+{
+    constexpr std::uint32_t COUNT = 100000;
+
+    World world(resonate::systemAllocator());
+    std::vector<Entity> entities(COUNT);
+
+    const auto start = std::chrono::steady_clock::now();
+    for (std::uint32_t index = 0; index < COUNT; ++index)
+    {
+        entities[index] = world.create();
+    }
+    REQUIRE(entities[COUNT - 1].valid());
+    for (std::uint32_t index = 0; index < COUNT; ++index)
+    {
+        world.destroy(entities[index]);
+    }
+    const double seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    std::printf("[ecs] create+destroy %u entities: %.1f M ops/s\n", COUNT,
+                2.0 * COUNT / seconds / 1e6);
+
+    /* Wide floor: it catches a storage that stopped recycling, on a loaded
+       sanitizer build too. */
+    REQUIRE(2.0 * COUNT / seconds > 0.2e6);
+}

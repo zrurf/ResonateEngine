@@ -23,10 +23,10 @@ class World;
  * parallel execution is in flight. A buffer discarded with unplayed creates
  * releases them and reports.
  *
- * Channels (design 04 §7). SyncPoint is the default: the frame's two sync
- * points play it, and what is still recorded after the last one is reported and
- * dropped. NextFrame is the aftermath declaration: it plays at the start of the
- * next simulation step and survives the step's end otherwise. Which channel a
+ * Channels. SyncPoint is the default: the frame's two sync points play it,
+ * and what is still recorded after the last one is reported and dropped.
+ * NextFrame is the aftermath declaration: it plays at the start of the next
+ * simulation step and survives the step's end otherwise. Which channel a
  * command lands on is decided when it is recorded — direct recording follows
  * setChannel, a section carries the channel it was opened with.
  *
@@ -41,8 +41,7 @@ class World;
  *
  * A domain records its own structural commands through `record`: the play
  * function runs at playback with the world, in record order with everything
- * else the buffer carries. That is how a tree edit or another domain-specific
- * operation stays inside law 2 without the ECS knowing what it means.
+ * else the buffer carries.
  */
 class CommandBuffer
 {

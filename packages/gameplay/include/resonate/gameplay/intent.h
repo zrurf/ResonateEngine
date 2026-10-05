@@ -14,8 +14,8 @@ namespace resonate::gameplay
 {
 
 /*
- * The intent half of the gameplay paradigm (design 07 §4): an entity asks the
- * owner of another entity for a change, and the owner's handler adjudicates —
+ * The intent half of the gameplay paradigm: an entity asks the owner of
+ * another entity for a change, and the owner's handler adjudicates —
  * change, refuse, or partially apply — at a sync point, never inline.
  *
  * Submission buckets intents by type, FIFO per type. One adjudication is a
@@ -108,7 +108,7 @@ class IntentBus
        the queue, then adjudicates. */
     void settleAftermath(JobSystem* jobs);
 
-    /* Waves one adjudication may run; default 4 (design 05 §3). */
+    /* Waves one adjudication may run; default 4. */
     void setDepthCap(std::uint32_t waves) noexcept;
     [[nodiscard]] std::uint32_t depthCap() const noexcept;
 

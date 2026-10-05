@@ -13,8 +13,8 @@
 /*
  * The scene tree: entities linked by the Parent/Children components.
  *
- * Edits are structural commands (law 2): they are recorded into a command
- * buffer and applied when the frame's sync points play it. Playback is also
+ * Edits are structural commands: they are recorded into a command buffer
+ * and applied when the frame's sync points play it. Playback is also
  * where the invariants are enforced — no cycles, no node deeper than
  * kMaxDepth, every parent's child list agreeing with its children — because
  * only playback sees the state the earlier records of the same buffer

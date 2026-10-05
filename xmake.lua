@@ -178,6 +178,17 @@ task("format")
         description = "Run clang-format over the source tree.",
     }
 
+task("ecs-bench")
+    set_category("plugin")
+    on_run(function ()
+        os.execv(os.programfile(), {"build", "-y", "Resonate.Bench.ECS"})
+        os.execv(os.programfile(), {"run", "Resonate.Bench.ECS"})
+    end)
+    set_menu {
+        usage = "xmake ecs-bench",
+        description = "Run the ECS acceptance bench.",
+    }
+
 includes("packages/pal")
 includes("packages/core")
 includes("packages/ecs")

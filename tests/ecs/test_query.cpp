@@ -9,6 +9,7 @@
 
 #include <resonate/core/allocator.h>
 #include <resonate/core/job.h>
+#include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
 #include <resonate/pal/sync.h>
 #include <resonate/pal/thread.h>
@@ -17,6 +18,7 @@ namespace
 {
 
 using resonate::ecs::ChunkView;
+using resonate::ecs::CommandBuffer;
 using resonate::ecs::ComponentIndex;
 using resonate::ecs::Entity;
 using resonate::ecs::Query;
@@ -494,6 +496,61 @@ TEST_CASE("two chunks can be visited at the same time", "[ecs][query]")
     REQUIRE(rendezvous.sawEachOther.load());
 
     delete jobs;
+}
+
+TEST_CASE("a chunk view dies at the next structural change", "[ecs][query]")
+{
+    World world(resonate::systemAllocator());
+    const ComponentIndex position = world.registerComponent<Position>();
+    REQUIRE(position != resonate::ecs::kInvalidComponent);
+    const ComponentIndex health = world.registerComponent<Health>();
+    REQUIRE(health != resonate::ecs::kInvalidComponent);
+
+    /* One chunk: small enough that every visit lands in the same one. */
+    for (std::uint32_t index = 0; index < 16; ++index)
+    {
+        const Entity entity = world.create();
+        REQUIRE(world.add(entity, Position{static_cast<float>(index), 0.0F, 0.0F}) != nullptr);
+    }
+
+    const ComponentIndex all[] = {position};
+    Query query = world.createQuery(describeAll(all, 1));
+    REQUIRE(query.valid());
+
+    struct Stash
+    {
+        ChunkView view;
+        static void run(void* context, ChunkView view)
+        {
+            static_cast<Stash*>(context)->view = view;
+        }
+    };
+
+    Stash stash;
+    query.forEachChunk(&Stash::run, &stash);
+    REQUIRE(stash.view.valid());
+    REQUIRE(stash.view.count > 0U);
+
+    /* The handle comes out before the change: the array it points into is what
+       the change is about to rewrite. */
+    const Entity moved = stash.view.entities[0];
+    REQUIRE(world.add(moved, Health{1}) != nullptr);
+    REQUIRE_FALSE(stash.view.valid());
+
+    /* A fresh view over what moved into is alive again. */
+    const ComponentIndex both[] = {position, health};
+    Query paired = world.createQuery(describeAll(both, 2));
+    REQUIRE(paired.valid());
+
+    Stash pairedStash;
+    paired.forEachChunk(&Stash::run, &pairedStash);
+    REQUIRE(pairedStash.view.valid());
+
+    /* And the sync point path kills it the same way. */
+    CommandBuffer buffer(world);
+    buffer.remove(moved, health);
+    world.play(buffer);
+    REQUIRE_FALSE(pairedStash.view.valid());
 }
 
 TEST_CASE("iterating one hundred thousand entities", "[ecs][query][benchmark]")

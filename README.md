@@ -25,7 +25,7 @@ packages/tools/*      host tools: the schema compiler (C#) and, later, its sibli
 content/*             content modules: schema declarations (.rschema), assets later
 schema/               file-shape contracts: JSON Schema for the manifests, XSD for the schema language
 scripts/              xmake task scripts (module-check, schema, format)
-tests/                Catch2 v3
+tests/                Catch2 v3 suite; tests/bench holds the ECS acceptance bench
 ```
 
 An interface belongs to the package that owns its domain, not to the plugin that
@@ -41,6 +41,7 @@ stays in the same package as its interface.
 xmake f -m debug      # or -m release
 xmake                 # libraries, plugins and binaries
 xmake test            # also builds the test target, which xmake skips by default
+xmake ecs-bench       # the ECS performance acceptance (tests/bench)
 xmake module-check    # also runs automatically before each build
 xmake schema          # also runs automatically before a target that consumes generated types
 xmake schema-lock     # records the accepted shape of every versioned type (the version locks)
@@ -110,7 +111,7 @@ Variable-length state lives outside the chunks in the ECS blob store
 the entity's blobs die with it. A `Children` list is the first user; inventories
 and skeleton poses are what it is shaped for. A domain records its own
 structural commands — the tree edits are the first — through
-`CommandBuffer::record`, so law 2 holds without the ECS knowing what they mean.
+`CommandBuffer::record`.
 
 The launcher and the editor both come up through `resonate::startup::run`. Plugins
 are scanned in `plugins` beside the executable, or in the first ancestor that has
