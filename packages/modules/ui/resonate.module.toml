@@ -10,4 +10,4 @@ summary = "Resonate UI."
 provides = ["Resonate.UI.Context"]
 requires = ["Resonate.Render.Canvas"]
 optional = ["Resonate.Input", "Resonate.Render.Device"]
-depends_on = ["resonate.render"]
+depends_on = ["resonate.render-vulkan"]

@@ -18,19 +18,19 @@ packages/audio        the audio domain's interface
 packages/ui           the UI domain's interface
 packages/runtime      frame loop, module host, the run's world, asset registry, application entry
 packages/startup      the run the launcher and the editor share
-packages/modules/*    the plugins themselves: physics, audio, render, ui
+packages/modules/*    the plugins themselves: physics, audio, render-vulkan, ui
 packages/editor       editor binary
 packages/launcher     game binary
 packages/tools/*      host tools: the schema compiler (C#) and, later, its siblings
 content/*             content modules: schema declarations (.rschema), assets later
 schema/               file-shape contracts: JSON Schema for the manifests, XSD for the schema language
-scripts/              xmake task scripts (module-check, schema, format)
+scripts/              xmake task scripts (module-check, schema, slang, format)
 tests/                Catch2 v3 suite; tests/bench holds the ECS acceptance bench
 ```
 
 An interface belongs to the package that owns its domain, not to the plugin that
 happens to implement it: `packages/render` declares the render target and the
-render device, `packages/modules/render` implements the device. A second
+render device, `packages/modules/render-vulkan` implements the device. A second
 implementation therefore depends on the interface package and never on the first
 implementation. Where an implementation is not substitutable — the window — it
 stays in the same package as its interface.
@@ -45,12 +45,16 @@ xmake ecs-bench       # the ECS performance acceptance (tests/bench)
 xmake module-check    # also runs automatically before each build
 xmake schema          # also runs automatically before a target that consumes generated types
 xmake schema-lock     # records the accepted shape of every versioned type (the version locks)
+xmake slang           # compiles the modules' Slang shaders to SPIR-V (build/shaders)
 xmake format          # clang-format over the tree
 ```
 
 Requires xmake 3.1.1 or newer and, on Windows, Visual Studio 2026 for the
 `clang-cl` toolchain. Building the schema compiler needs the .NET 11 SDK; only
 targets that include generated schema types pull it in (`packages/tools/schemac`).
+The Vulkan build reads the installed SDK through the `VULKAN_SDK` environment
+variable, or `--vulkan_sdk=<dir>` — headers, the loader import library and the
+`slangc` shader compiler all come from there.
 
 ## Schema types
 

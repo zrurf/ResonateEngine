@@ -68,6 +68,21 @@ class ModuleGraph
     std::string error_;
 };
 
+/* Answers a module's read_config. The configuration file is the
+   run's and lives above this package, so the run installs a source before the
+   modules attach; without one, every key is unset and a module falls back to
+   its own default. Borrowed: the source must outlive the host. */
+class ConfigSource
+{
+  public:
+    virtual ~ConfigSource() = default;
+
+    /* The scalar's text form — booleans as "true"/"false", numbers in their
+       decimal form, strings verbatim — or false when the key is unset or names
+       a table or an array. */
+    virtual bool read(const char* section, const char* key, std::string& out) const = 0;
+};
+
 class ModuleHost
 {
   public:
@@ -95,6 +110,10 @@ class ModuleHost
        its systems release their reservations through it on the way out. */
     void setWorld(ecs::World* world) noexcept;
     [[nodiscard]] ecs::World* world() const noexcept;
+
+    /* The configuration the modules' read_config sees. Called before modules
+       attach; null (the default) means every key is unset. */
+    void setConfigSource(const ConfigSource* source) noexcept;
 
     /* The run's intent bus, created when the world is set and borrowed for as
        long as the host lives. Null without a world. The frame's sync points

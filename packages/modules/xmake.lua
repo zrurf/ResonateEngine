@@ -6,11 +6,16 @@
 --
 -- Keep each entry on one line: the checker parses this block directly.
 local modules = {
-    {dir = "audio",   id = "resonate.audio",   deps = {}},
-    {dir = "physics", id = "resonate.physics", deps = {}},
-    {dir = "render",  id = "resonate.render",  deps = {}},
-    {dir = "ui",      id = "resonate.ui",      deps = {"resonate.render"}},
+    {dir = "audio",         id = "resonate.audio",         deps = {}},
+    {dir = "physics",       id = "resonate.physics",       deps = {}},
+    {dir = "render-vulkan", id = "resonate.render-vulkan", deps = {}},
+    {dir = "ui",            id = "resonate.ui",            deps = {"resonate.render-vulkan"}},
 }
+
+-- Build-only dependencies a module links beyond the shared ABI set. They live
+-- beside the table, not in it, because the checker parses that table with a
+-- fixed grammar.
+local extra_deps = {["resonate.render-vulkan"] = {"Resonate.Vulkan"}}
 
 -- Windows resolves a shared library from the executable's directory, macOS and
 -- Linux from libdir, so both are forced flat. Left alone, plugins would land in
@@ -39,6 +44,9 @@ for _, module in ipairs(modules) do
             raise("module '%s' depends on '%s', which is not a known module", module.id, dependency)
         end
         deps[#deps + 1] = dependency_target
+    end
+    for _, extra in ipairs(extra_deps[module.id] or {}) do
+        deps[#deps + 1] = extra
     end
 
     -- Paths stay relative: they resolve against this script's directory, which

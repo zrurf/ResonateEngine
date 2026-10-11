@@ -13,9 +13,9 @@
 #define TOML_EXCEPTIONS 0
 #include <toml++/toml.hpp>
 
+#include <resonate/core/arena.h>
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
-#include <resonate/core/arena.h>
 #include <resonate/module/message.h>
 #include <resonate/module/signal.h>
 #include <resonate/pal/io.h>
@@ -219,6 +219,10 @@ struct ModuleHost::Impl
     ecs::World* world = nullptr;
     ResonateWorld world_handle = {};
 
+    /* Where a module's read_config reads from, borrowed from the run. Null is
+       the default: every key is unset and a module falls back to its own. */
+    const ConfigSource* config_source = nullptr;
+
     /* The run's intent bus, created with the world; the sync points adjudicate
        what it holds. Null without a world. */
     std::unique_ptr<gameplay::IntentBus> intents;
@@ -408,11 +412,33 @@ ResonateWorld* worldOfHost(void* user_data)
     return impl->world != nullptr ? &impl->world_handle : nullptr;
 }
 
-/* The host reads no configuration file yet, so every key is unset and a module
-   falls back to its own default. */
-ResonateStatus readConfig(void*, const char*, const char*, char*, std::size_t)
+/* The run's configuration answers here when the run installed a source;
+   without one — or for a key it does not carry — the module falls back to its
+   own default, which is what the RESONATE_E_MISSING contract means. */
+ResonateStatus readConfig(void* user_data, const char* section, const char* key, char* out_buffer,
+                          std::size_t buffer_size)
 {
-    return RESONATE_E_MISSING;
+    auto* impl = static_cast<ModuleHost::Impl*>(user_data);
+    if (section == nullptr || key == nullptr || out_buffer == nullptr || buffer_size == 0U)
+    {
+        return RESONATE_E_INVALID;
+    }
+    if (impl == nullptr || impl->config_source == nullptr)
+    {
+        return RESONATE_E_MISSING;
+    }
+
+    std::string value;
+    if (!impl->config_source->read(section, key, value))
+    {
+        return RESONATE_E_MISSING;
+    }
+    if (value.size() + 1U > buffer_size)
+    {
+        return RESONATE_E_INVALID;
+    }
+    std::memcpy(out_buffer, value.c_str(), value.size() + 1U);
+    return RESONATE_OK;
 }
 
 ResonateStatus registerCapability(void* user_data, const ResonateCapabilityRecord* record)
@@ -1149,6 +1175,17 @@ ResonateStatus ModuleHost::attachAll()
     {
         Impl::Context* context = impl->contextOf(*record);
         const ResonateStatus status = record->vtable->on_attach(&context->api);
+        if (status == RESONATE_E_UNSUPPORTED)
+        {
+            /* The module knows it cannot run here — a render backend the
+               configuration did not choose, a device class this run has no use
+               for. A skip, not a failure: the run continues without it. The
+               contract for this status is that on_attach took nothing before
+               answering, so there is nothing to reclaim; a detach skips the
+               record because it never attached. */
+            impl->writeFrom(RESONATE_LOG_INFO, record->manifest.id, "skipped: not for this run");
+            continue;
+        }
         if (status != RESONATE_OK)
         {
             impl->writeFrom(RESONATE_LOG_ERROR, record->manifest.id,
@@ -1245,6 +1282,11 @@ void ModuleHost::Impl::reclaim(ModuleRecord& record)
                   "left " + std::to_string(leftover.second) + " byte(s) allocated through detach");
         allocator->deallocate(leftover.first, leftover.second);
     }
+}
+
+void ModuleHost::setConfigSource(const ConfigSource* source) noexcept
+{
+    impl_->config_source = source;
 }
 
 void ModuleHost::setWorld(ecs::World* world) noexcept

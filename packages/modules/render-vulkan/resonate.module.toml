@@ -1,8 +1,8 @@
 #:schema ../../../schema/formats/module/manifest.schema.json
 
 [resonate.module]
-id = "resonate.render"
-name = "Render"
+id = "resonate.render-vulkan"
+name = "Render Vulkan"
 version = "0.1.0"
 abi = 1
 min_host_abi = 1

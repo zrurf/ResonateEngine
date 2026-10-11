@@ -490,11 +490,12 @@ local function parseBuildTable()
 
     local entries = {}
     for line in text:gmatch("[^\r\n]+") do
+        -- Dirs and ids may carry dashes (render-vulkan); deps are ids again.
         local dir, id, deps =
-            line:match('{%s*dir%s*=%s*"(%w+)"%s*,%s*id%s*=%s*"([%w%.]+)"%s*,%s*deps%s*=%s*{(.-)}%s*}')
+            line:match('{%s*dir%s*=%s*"([%w%-]+)"%s*,%s*id%s*=%s*"([%w%.%-]+)"%s*,%s*deps%s*=%s*{(.-)}%s*}')
         if dir ~= nil then
             local names = {}
-            for dependency in deps:gmatch('"([%w%.]+)"') do
+            for dependency in deps:gmatch('"([%w%.%-]+)"') do
                 names[#names + 1] = dependency
             end
             entries[#entries + 1] = {dir = dir, id = id, deps = names}

@@ -2,10 +2,13 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include <resonate/application/config_store.h>
 #include <resonate/core/allocator.h>
 #include <resonate/core/job.h>
 #include <resonate/ecs/world.h>
@@ -297,7 +300,7 @@ TEST_CASE("the host loads the built plugins and runs one frame", "[module][loade
     /* ui depends on render, so it attaches after it. */
     const std::vector<resonate::ModuleRecord*>& order = host->order();
     REQUIRE(order.size() == 4U);
-    REQUIRE(positionOf(order, "resonate.render") < positionOf(order, "resonate.ui"));
+    REQUIRE(positionOf(order, "resonate.render-vulkan") < positionOf(order, "resonate.ui"));
     REQUIRE(provides(order, "Resonate.UI.Context"));
 
     /* A system on the host's scheduler runs as part of a frame. */
@@ -405,6 +408,10 @@ TEST_CASE("a plugin registers per-frame systems and the host reclaims what it le
     REQUIRE(host->resolve() == RESONATE_OK);
     REQUIRE(host->attachAll() == RESONATE_OK);
 
+    /* No config source was installed, so the probe's reads answered its own
+       defaults; the values line it logged at attach says exactly that. */
+    REQUIRE(log.contains("probe.config flag=0 count=7"));
+
     /* Both systems the probe registered run in a frame; its system bodies log,
        which is the only thing the test can read them through. */
     log.lines.clear();
@@ -436,6 +443,68 @@ TEST_CASE("a plugin registers per-frame systems and the host reclaims what it le
     host.reset();
     REQUIRE(log.contains("destroyed a signal it does not hold"));
     REQUIRE(log.contains("released memory it does not hold"));
+}
+
+TEST_CASE("a module reads the run's configuration through the host", "[module][loader]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("probe-plugins");
+    INFO("the probe module is a build dependency of this test target");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    const char* config_path = "resonate_loader_test_config.toml";
+    {
+        std::ofstream out(config_path, std::ios::binary | std::ios::trunc);
+        out << "[resonate.probe]\nflag = true\ncount = 42\n";
+    }
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+
+    LogCollector log;
+    host->setLogSink(&log, &LogCollector::sink);
+
+    resonate::ConfigStore settings;
+    settings.load(config_path);
+    host->setConfigSource(&settings);
+
+    REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+    REQUIRE(host->records().size() == 1U);
+    REQUIRE(host->resolve() == RESONATE_OK);
+    REQUIRE(host->attachAll() == RESONATE_OK);
+
+    /* The probe reads two keys at attach and logs what it got: one bool, one
+       uint, both present in the file. The defaults path — no source at all —
+       is pinned by the probe case above, which attaches without one. */
+    REQUIRE(log.contains("probe.config flag=1 count=42"));
+    std::remove(config_path);
+    host->detachAll();
+}
+
+TEST_CASE("a module that answers E_UNSUPPORTED is skipped, not fatal", "[module][loader]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("skipped-plugins");
+    INFO("the skipped module is a build dependency of this test target");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+
+    LogCollector log;
+    host->setLogSink(&log, &LogCollector::sink);
+
+    REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+    REQUIRE(host->records().size() == 1U);
+    REQUIRE(host->resolve() == RESONATE_OK);
+
+    /* A skip is a green attach pass: the run continues without the module, and
+       the record never counts as attached. */
+    REQUIRE(host->attachAll() == RESONATE_OK);
+    REQUIRE_FALSE(host->records()[0].attached);
+    REQUIRE(log.contains("skipped: not for this run"));
+
+    /* Detach has nothing to undo for it. */
+    host->detachAll();
+    REQUIRE_FALSE(log.contains("failed to attach"));
 }
 
 TEST_CASE("the host exposes the job pool its schedule runs on", "[module][loader]")

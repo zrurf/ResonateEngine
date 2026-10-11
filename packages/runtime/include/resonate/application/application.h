@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include <resonate/application/config_store.h>
 #include <resonate/application/frame_clock.h>
 #include <resonate/module/capability.h>
 
@@ -34,8 +35,21 @@ class Application
            the executable; RESONATE_PLUGIN_PATH overrides it. */
         std::string plugin_directory;
 
-        /* Path exposed to modules through the host API's read_config. */
+        /* Path the configuration was read from; --config on the command line.
+           Whoever composes the run loads it into `settings` before run() —
+           startup does, because the window's size is a setting too. */
         std::string config_file;
+
+        /* The configuration the modules' read_config sees. The
+           keys are reverse-DNS paths: [resonate.render] vsync,
+           [resonate.loop] max-fps, [resonate.window] width/height. */
+        ConfigStore settings;
+
+        /* Frames the loop paces itself to, on top of whatever vsync does; zero
+           (the default) means no limiter. The pacing sleeps most of what is
+           left of the frame's budget and spins the last stretch, so it is
+           coarse by design — vsync is the precise path. */
+        std::uint32_t max_fps = 0;
 
         /* Called after the host exists and before modules resolve, so a module
            that requires one of the host's capabilities finds it in the registry.
@@ -69,7 +83,7 @@ class Application
            boundary through ModuleHost::jobs()->requestWorkerCount. */
         std::uint32_t worker_count = 0;
 
-        /* The world's RNG seed (Q22): systems derive their named streams from
+        /* The world's RNG seed: systems derive their named streams from
            it, so the same seed and the same scheduling replay the same values.
            The default is a fixed seed — determinism by default, variety by
            configuration. */

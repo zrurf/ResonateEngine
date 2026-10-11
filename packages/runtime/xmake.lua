@@ -8,4 +8,6 @@ target("Resonate.Runtime")
     add_includedirs("include", {public = true})
     add_files("src/**.cpp")
 
+    add_packages("toml++")
+
     add_deps("Resonate.Module", "Resonate.Core.Job", "Resonate.ECS")

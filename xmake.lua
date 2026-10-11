@@ -76,6 +76,34 @@ add_requires("toml++ v3.4.0")
 add_requires("xxhash v0.8.4", {verify = false, configs = {cmake = false}})
 add_requires("yyjson 0.13.0", {verify = false})
 
+-- Vulkan comes from the installed SDK rather than vendored sources: the SDK
+-- carries the headers, the loader import library, the validation layers and the
+-- shader toolchain (slangc). The environment variable the installer sets is the
+-- default; --vulkan_sdk=<dir> overrides it.
+option("vulkan_sdk")
+    set_showmenu(true)
+    set_default("")
+    set_description("Vulkan SDK root directory; defaults to $VULKAN_SDK")
+
+local vulkan_sdk = get_config("vulkan_sdk")
+if vulkan_sdk == nil or vulkan_sdk == "" then
+    vulkan_sdk = os.getenv("VULKAN_SDK")
+end
+if vulkan_sdk == nil or vulkan_sdk == "" then
+    raise("no Vulkan SDK: set the VULKAN_SDK environment variable or pass --vulkan_sdk=<dir>")
+end
+
+target("Resonate.Vulkan")
+    set_kind("headeronly")
+    add_includedirs(path.join(vulkan_sdk, "Include"), {public = true})
+    if is_plat("windows") then
+        add_defines("VK_USE_PLATFORM_WIN32_KHR", {public = true})
+        add_linkdirs(path.join(vulkan_sdk, "Lib"), {public = true})
+        add_links("vulkan-1", {public = true})
+    else
+        add_syslinks("vulkan", {public = true})
+    end
+
 local function tidy_check_output(output)
     return (output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", ""))
 end
@@ -144,6 +172,21 @@ task("schema")
     set_menu {
         usage = "xmake schema",
         description = "Compile content modules' .rschema declarations into generated C++ and metadata.",
+    }
+
+task("slang")
+    set_category("plugin")
+    on_run(function ()
+        local script = path.join(os.projectdir(), "scripts", "slang.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script},
+                                 {envs = {RESONATE_VULKAN_SDK = vulkan_sdk}})
+        if output ~= nil then
+            print(tidy_check_output(output))
+        end
+    end)
+    set_menu {
+        usage = "xmake slang",
+        description = "Compile the modules' Slang shaders to SPIR-V and reflection JSON.",
     }
 
 -- The deliberate act that accepts a change to a versioned type: rewrites each

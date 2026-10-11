@@ -72,6 +72,7 @@ class ProbeModule final : public resonate::Module
     resonate::Status onAttach(resonate::Host& host) override
     {
         host_ = host;
+        configRoundTrip(host);
         if (signalRoundTrip(host) != RESONATE_OK || messageRoundTrip(host) != RESONATE_OK ||
             systemsRoundTrip(host) != RESONATE_OK)
         {
@@ -105,6 +106,19 @@ class ProbeModule final : public resonate::Module
     }
 
   private:
+    /* Reads the run's configuration through the host API and logs what it got,
+       because "the module saw its keys" is observable from the host's log and
+       nowhere else the test can reach. */
+    static void configRoundTrip(const resonate::Host& host)
+    {
+        const bool flag = host.readBool("resonate.probe", "flag", false);
+        const std::uint32_t count = host.readUInt("resonate.probe", "count", 7U);
+        const std::string line =
+            "probe.config flag=" + std::to_string(flag ? 1 : 0) + " count=" + std::to_string(count);
+        const ResonateHostApi* api = host.raw();
+        api->log(api->user_data, RESONATE_LOG_INFO, __FILE__, __LINE__, line.c_str());
+    }
+
     resonate::Status signalRoundTrip(const resonate::Host& host)
     {
         if (signal_.create(host) != RESONATE_OK || node_.connect(signal_, handler_) != RESONATE_OK)

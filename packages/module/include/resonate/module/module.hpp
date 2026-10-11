@@ -7,7 +7,9 @@
  */
 
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -189,6 +191,55 @@ class Host
     [[nodiscard]] ResonateWorld* world() const noexcept
     {
         return hasFacilities() && api_->world != nullptr ? api_->world(api_->user_data) : nullptr;
+    }
+
+    /* Reads one configuration value: section "resonate.render",
+       key "vsync". nullopt when the run carries no configuration source or the
+       key is unset — which is when the caller's own default applies. */
+    [[nodiscard]] std::optional<std::string> readConfig(const char* section, const char* key) const
+    {
+        char buffer[256];
+        if (api_ == nullptr ||
+            api_->read_config(api_->user_data, section, key, buffer, sizeof(buffer)) != RESONATE_OK)
+        {
+            return std::nullopt;
+        }
+        return std::string(buffer);
+    }
+
+    /* Typed reads over readConfig. Only the exact spellings count, so anything
+       else — a missing key included — answers the fallback. */
+    [[nodiscard]] bool readBool(const char* section, const char* key, bool fallback) const
+    {
+        const std::optional<std::string> text = readConfig(section, key);
+        if (text == "true" || text == "1")
+        {
+            return true;
+        }
+        if (text == "false" || text == "0")
+        {
+            return false;
+        }
+        return fallback;
+    }
+
+    [[nodiscard]] std::uint32_t readUInt(const char* section, const char* key,
+                                         std::uint32_t fallback) const
+    {
+        const std::optional<std::string> text = readConfig(section, key);
+        if (!text.has_value() || text->empty() || (*text)[0] == '-' || (*text)[0] == '+')
+        {
+            return fallback;
+        }
+
+        const char* begin = text->c_str();
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(begin, &end, 10);
+        if (end == begin || *end != '\0' || parsed > UINT32_MAX)
+        {
+            return fallback;
+        }
+        return static_cast<std::uint32_t>(parsed);
     }
 
   private:

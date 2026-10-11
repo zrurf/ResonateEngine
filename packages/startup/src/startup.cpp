@@ -24,19 +24,19 @@ namespace resonate::startup
 namespace
 {
 
-/* A value that is not a positive integer leaves the target alone, so a bad
+/* A value that is not a positive integer leaves the fallback alone, so a bad
    argument falls back to the default rather than to zero or a wrapped negative.
    atoi would be undefined on overflow, which a hand-typed argument reaches. */
-void readPositive(const std::string& text, int& out_value)
+std::optional<int> positiveFrom(const std::string& text)
 {
     const char* const begin = text.c_str();
     char* end = nullptr;
     const long parsed = std::strtol(begin, &end, 10);
     if (end == begin || *end != '\0' || parsed <= 0 || parsed > INT_MAX)
     {
-        return;
+        return std::nullopt;
     }
-    out_value = static_cast<int>(parsed);
+    return static_cast<int>(parsed);
 }
 
 std::string titleFor(const DisplayOptions& display, const char* default_title)
@@ -76,12 +76,12 @@ DisplayOptions displayOptionsFromCommandLine(const std::vector<std::string>& arg
         else if (argument == "--width" && has_value)
         {
             options.headless = false;
-            readPositive(arguments[++index], options.width);
+            options.width = positiveFrom(arguments[++index]);
         }
         else if (argument == "--height" && has_value)
         {
             options.headless = false;
-            readPositive(arguments[++index], options.height);
+            options.height = positiveFrom(arguments[++index]);
         }
     }
 
@@ -91,10 +91,27 @@ DisplayOptions displayOptionsFromCommandLine(const std::vector<std::string>& arg
 int run(const std::vector<std::string>& arguments, const char* default_title)
 {
     Application::Config config = Application::configFromCommandLine(arguments);
-
     const DisplayOptions display = displayOptionsFromCommandLine(arguments);
-    const auto width = static_cast<uint32_t>(display.width);
-    const auto height = static_cast<uint32_t>(display.height);
+
+    /* The configuration loads here, before anything consumes it: the window's
+       size is a setting too. No file (or an unparsable one) means defaults
+       everywhere. */
+    if (config.config_file.empty())
+    {
+        config.config_file = "resonate.toml";
+    }
+    config.settings.load(config.config_file);
+
+    /* CLI beats configuration beats the default. */
+    const uint32_t width = static_cast<uint32_t>(
+        display.width.has_value()
+            ? *display.width
+            : static_cast<int>(config.settings.readUInt("resonate.window", "width", 1600U)));
+    const uint32_t height = static_cast<uint32_t>(
+        display.height.has_value()
+            ? *display.height
+            : static_cast<int>(config.settings.readUInt("resonate.window", "height", 900U)));
+    config.max_fps = config.settings.readUInt("resonate.loop", "max-fps", 0U);
 
     /* The session outlives the run, and the capabilities it publishes outlive the
        modules that resolved them. */
@@ -129,8 +146,8 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     {
         window::Session::Config window_config;
         window_config.title = titleFor(display, default_title);
-        window_config.width = display.width;
-        window_config.height = display.height;
+        window_config.width = static_cast<int>(width);
+        window_config.height = static_cast<int>(height);
 
         /* The two config structs are deliberately separate types, converted here
            at the one place that knows about both. */

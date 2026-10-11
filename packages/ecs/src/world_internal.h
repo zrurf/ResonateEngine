@@ -278,7 +278,7 @@ struct WorldImpl
     std::atomic<std::uint32_t> parallelDepth{0};
 
     /* --- named RNG streams: the seed plus the name's hash derive the state,
-       so the same seed replays the same values (Q22). Held by pointer: a
+       so the same seed replays the same values. Held by pointer: a
        stream handed out stays valid for the world's life. --- */
     struct RngStream
     {

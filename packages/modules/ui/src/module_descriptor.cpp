@@ -9,4 +9,4 @@ RESONATE_MODULE_DESCRIPTOR("resonate.ui", "UI", "0.1.0", 1,
                            RESONATE_CAPABILITIES(ResonateUiContext),
                            RESONATE_CAPABILITIES(ResonateRenderCanvas),
                            RESONATE_CAPABILITIES(ResonateInput, ResonateRenderDevice),
-                           RESONATE_MODULE_NAMES("resonate.render"))
+                           RESONATE_MODULE_NAMES("resonate.render-vulkan"))

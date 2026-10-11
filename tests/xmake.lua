@@ -42,6 +42,22 @@ target("Resonate.Tests.FailingModule")
         os.cp(manifest, path.join(target:targetdir(), "resonate.failing.toml"))
     end)
 
+-- A module that answers RESONATE_E_UNSUPPORTED at attach: the loader skips it
+-- and the run continues, which is how coexisting render backends self-select.
+target("Resonate.Tests.SkippedModule")
+    set_kind("shared")
+    set_default(false)
+    add_files("plugins/skipped/skipped_module.cpp")
+    add_deps("Resonate.Module.Abi")
+
+    set_targetdir("$(builddir)/skipped-plugins", {bindir = ".", libdir = "."})
+
+    after_build(function (target)
+        local manifest =
+            path.join(os.projectdir(), "tests", "plugins", "skipped", "resonate.skipped.toml")
+        os.cp(manifest, path.join(target:targetdir(), "resonate.skipped.toml"))
+    end)
+
 target("Resonate.Tests")
     set_kind("binary")
     set_default(false)
@@ -84,7 +100,8 @@ target("Resonate.Tests")
     -- not carry imports of plugin libraries.
     add_deps("Resonate.Tests.ProbeModule", {links = false, inherit = false})
     add_deps("Resonate.Tests.FailingModule", {links = false, inherit = false})
-    for _, module in ipairs({"audio", "physics", "render", "ui"}) do
+    add_deps("Resonate.Tests.SkippedModule", {links = false, inherit = false})
+    for _, module in ipairs({"audio", "physics", "render-vulkan", "ui"}) do
         add_deps("Resonate.Module.resonate." .. module, {links = false, inherit = false})
     end
 

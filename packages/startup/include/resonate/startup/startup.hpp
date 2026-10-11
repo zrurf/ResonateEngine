@@ -11,6 +11,7 @@
  * frame loop.
  */
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,10 +28,11 @@ struct DisplayOptions
        own name for it applies. */
     std::string title;
 
-    /* Frame size in pixels: the window's back buffer, or the offscreen target
-       when there is no window. */
-    int width = 1600;
-    int height = 900;
+    /* Frame size in pixels when the command line named one, or nullopt — the
+       run's configuration then decides (a window's back buffer, or the
+       offscreen target), falling back to 1600x900. */
+    std::optional<int> width;
+    std::optional<int> height;
 };
 
 /* Recognised: --headless, --title, --width, --height. Anything else is left for

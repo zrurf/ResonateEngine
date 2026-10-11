@@ -1,11 +1,13 @@
 #include <resonate/application/application.h>
 
+#include <chrono>
 #include <csignal>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <resonate/core/allocator.h>
@@ -122,6 +124,7 @@ int Application::run(const Config& config)
         return EXIT_FAILURE;
     }
     host->setWorld(&world);
+    host->setConfigSource(&config.settings);
 
     /* Before the systems register, so a stream derived at registration time
        already reads the run's seed. */
@@ -201,19 +204,48 @@ int Application::run(const Config& config)
 
         /* One displayed frame: the simulation steps its wall time covers — the
            clock's budget bounds how many — then one render frame on the wall
-           time itself. */
+           time itself. The drop report is this frame's delta against the
+           clock's cumulative counter, or a one-time hitch would be reprinted
+           every frame after it. */
+        const std::uint64_t dropped_before = clock.droppedSteps();
         const std::uint32_t steps = clock.advance(elapsed_seconds);
-        if (clock.droppedSteps() != 0U)
+        if (const std::uint64_t dropped = clock.droppedSteps() - dropped_before; dropped != 0U)
         {
             std::fprintf(stderr,
                          "resonate: frame time over the step budget; %llu step(s) dropped\n",
-                         static_cast<unsigned long long>(clock.droppedSteps()));
+                         static_cast<unsigned long long>(dropped));
         }
         for (std::uint32_t step = 0; step < steps; ++step)
         {
             host->runSimulationStep(clock.stepSeconds());
         }
         host->runRenderFrame(elapsed_seconds);
+
+        /* The frame limiter (Config::max_fps) paces the whole frame: sleep most
+           of what is left of its budget, spin the last stretch, because the
+           platform's sleep granularity is coarser than a frame. A scripted
+           frame source paces itself, so it is not limited — the ticks the
+           budget reads against advance only on the real-clock path. */
+        if (config.max_fps != 0U && !config.frame_elapsed)
+        {
+            constexpr std::uint64_t kSpinWindowNs = 2000000ull;
+            const std::uint64_t budget_ns = 1000000000ull / config.max_fps;
+            const std::uint64_t spent_ns = resonate_pal_chrono_ticks_to_nanoseconds(
+                resonate_pal_chrono_ticks() - previous_ticks);
+            if (spent_ns < budget_ns)
+            {
+                const std::uint64_t remaining_ns = budget_ns - spent_ns;
+                if (remaining_ns > kSpinWindowNs)
+                {
+                    std::this_thread::sleep_for(
+                        std::chrono::nanoseconds(remaining_ns - kSpinWindowNs));
+                }
+                while (resonate_pal_chrono_ticks_to_nanoseconds(resonate_pal_chrono_ticks() -
+                                                                previous_ticks) < budget_ns)
+                {
+                }
+            }
+        }
     }
 
     if (previous != SIG_ERR)

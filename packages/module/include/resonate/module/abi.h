@@ -291,6 +291,10 @@ typedef struct ResonateModuleInfo
  *
  *   on_attach   dependencies are attached and their capabilities resolvable.
  *               Take and hold what is needed; the frame path must not query.
+ *               RESONATE_E_UNSUPPORTED is a clean skip, not a failure: the run
+ *               continues without the module — a render backend the
+ *               configuration did not choose, for instance. A module answering
+ *               it must have taken nothing yet.
  *   on_detach   release everything. Called in exact reverse topological order.
  *
  * Both run on the main thread and must not throw.

@@ -265,7 +265,7 @@ class World
         return changedSince(entity, ComponentTraits<T>::index, tick);
     }
 
-    /* --- deterministic randomness (Q22) --- */
+    /* --- deterministic randomness --- */
 
     /* The seed every named stream derives from. A run sets it once, before the
        frame loop; calling it again re-derives every stream handed out so far,
