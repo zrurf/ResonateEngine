@@ -29,6 +29,7 @@
 
 #include <cstdint>
 #include <map>
+#include <string>
 #include <vector>
 
 struct VmaAllocator_T;
@@ -254,6 +255,13 @@ class Context
     void drainGraveyard(std::vector<Retired>& graveyard);
     void note(bool& once, const char* what);
 
+    /* The persistent pipeline cache: loaded at device creation, written at
+       teardown. The driver keys its entries by pipeline state and shader code,
+       so a cache from an older shader set is simply not hit. */
+    std::string pipelineCachePath() const;
+    void loadPipelineCache();
+    void savePipelineCache();
+
     VkInstance instance_ = VK_NULL_HANDLE;
     /* The loader's import library exports core and WSI entry points only; the
        debug utils ones resolve through vkGetInstanceProcAddr. */
@@ -291,7 +299,8 @@ class Context
     Pool<ShaderSlot> shaders_;
     Pool<PipelineSlot> pipelines_;
     VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE; /* shared, lazy */
-    std::map<uint32_t, VkRenderPass> pass_cache_;       /* key: color | depth<<8 */
+    VkPipelineCache pipeline_cache_ = VK_NULL_HANDLE;
+    std::map<uint32_t, VkRenderPass> pass_cache_; /* key: color | depth<<8 */
     /* Keyed by the full color and depth handles, generations included: a
        recreated image must not find the framebuffer of its predecessor. */
     std::map<std::pair<uint64_t, uint64_t>, VkFramebuffer> framebuffer_cache_;

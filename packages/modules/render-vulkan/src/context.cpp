@@ -4,6 +4,7 @@
 #include <cstring>
 #include <vector>
 
+#include <resonate/pal/io.h>
 #include <vma/vk_mem_alloc.h>
 
 namespace resonate::render_vulkan
@@ -165,6 +166,8 @@ Context::~Context()
     if (device_ != VK_NULL_HANDLE)
     {
         vkDeviceWaitIdle(device_);
+        /* Pipelines are all created by here; persist what the driver compiled. */
+        savePipelineCache();
         /* The swapchain owns its render pass and framebuffers; taking them down
            first also removes the pass from the cache the loop below drains. */
         destroySwapchainObjects();
@@ -223,6 +226,11 @@ Context::~Context()
             {
                 vkDestroyPipeline(device_, slot.pipeline, nullptr);
             }
+        }
+        if (pipeline_cache_ != VK_NULL_HANDLE)
+        {
+            vkDestroyPipelineCache(device_, pipeline_cache_, nullptr);
+            pipeline_cache_ = VK_NULL_HANDLE;
         }
         if (table_dummy_ != VK_NULL_HANDLE)
         {
@@ -286,6 +294,82 @@ void Context::note(bool& once, const char* what)
         once = true;
         std::fprintf(stderr, "render-vulkan: %s\n", what);
     }
+}
+
+std::string Context::pipelineCachePath() const
+{
+    const char* directory = resonate_pal_io_executable_directory();
+    return std::string(directory != nullptr ? directory : ".") + "/resonate.pipeline-cache";
+}
+
+void Context::loadPipelineCache()
+{
+    std::vector<char> data;
+    ResonateFileHandle file{};
+    if (resonate_pal_io_open_file(&file, pipelineCachePath().c_str(), RESONATE_FILE_READ) ==
+        RESONATE_PAL_OK)
+    {
+        uint64_t size = 0;
+        if (resonate_pal_io_size(&file, &size) == RESONATE_PAL_OK && size > 0U &&
+            size <= 64U * 1024U * 1024U)
+        {
+            data.resize(static_cast<std::size_t>(size));
+            uint64_t read = 0;
+            if (resonate_pal_io_read(&file, data.data(), size, &read) == RESONATE_PAL_OK)
+            {
+                data.resize(static_cast<std::size_t>(read));
+            }
+            else
+            {
+                data.clear();
+            }
+        }
+        resonate_pal_io_close_file(&file);
+    }
+
+    VkPipelineCacheCreateInfo cache{};
+    cache.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    cache.initialDataSize = data.size();
+    cache.pInitialData = data.empty() ? nullptr : data.data();
+    if (vkCreatePipelineCache(device_, &cache, nullptr, &pipeline_cache_) != VK_SUCCESS)
+    {
+        pipeline_cache_ = VK_NULL_HANDLE;
+        return;
+    }
+    if (!data.empty())
+    {
+        std::fprintf(stderr, "render-vulkan: pipeline cache %zu bytes loaded\n", data.size());
+    }
+}
+
+void Context::savePipelineCache()
+{
+    if (pipeline_cache_ == VK_NULL_HANDLE)
+    {
+        return;
+    }
+    std::size_t size = 0;
+    if (vkGetPipelineCacheData(device_, pipeline_cache_, &size, nullptr) != VK_SUCCESS ||
+        size == 0U)
+    {
+        return;
+    }
+    std::vector<char> data(size);
+    if (vkGetPipelineCacheData(device_, pipeline_cache_, &size, data.data()) != VK_SUCCESS)
+    {
+        return;
+    }
+
+    ResonateFileHandle file{};
+    if (resonate_pal_io_open_file(&file, pipelineCachePath().c_str(),
+                                  RESONATE_FILE_WRITE | RESONATE_FILE_CREATE |
+                                      RESONATE_FILE_TRUNCATE) != RESONATE_PAL_OK)
+    {
+        return;
+    }
+    uint64_t written = 0;
+    resonate_pal_io_write(&file, data.data(), size, &written);
+    resonate_pal_io_close_file(&file);
 }
 
 ResonateStatus Context::ensureInstance()
@@ -473,6 +557,10 @@ ResonateStatus Context::ensureDevice()
     }
 
     vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
+
+    /* The pipeline cache is per machine, not per run: it is what keeps a
+       second launch from recompiling every pipeline. */
+    loadPipelineCache();
 
     VmaAllocatorCreateInfo allocator{};
     allocator.physicalDevice = physical_;

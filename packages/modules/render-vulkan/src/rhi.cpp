@@ -538,7 +538,7 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
     PipelineSlot* slot = nullptr;
     const uint32_t index = pipelines_.acquire(&slot);
     *slot = PipelineSlot{};
-    if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipeline, nullptr,
+    if (vkCreateGraphicsPipelines(device_, pipeline_cache_, 1, &pipeline, nullptr,
                                   &slot->pipeline) != VK_SUCCESS)
     {
         pipelines_.retire(index);
@@ -881,8 +881,8 @@ ResonateStatus Context::createComputePipeline(ResonateRenderShader shader,
     PipelineSlot* slot = nullptr;
     const uint32_t index = pipelines_.acquire(&slot);
     *slot = PipelineSlot{};
-    if (vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &pipeline, nullptr, &slot->pipeline) !=
-        VK_SUCCESS)
+    if (vkCreateComputePipelines(device_, pipeline_cache_, 1, &pipeline, nullptr,
+                                 &slot->pipeline) != VK_SUCCESS)
     {
         pipelines_.retire(index);
         note(device_failed_, "compute pipeline creation failed");

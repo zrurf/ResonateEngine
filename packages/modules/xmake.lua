@@ -15,7 +15,7 @@ local modules = {
 -- Build-only dependencies a module links beyond the shared ABI set. They live
 -- beside the table, not in it, because the checker parses that table with a
 -- fixed grammar.
-local extra_deps = {["resonate.render-vulkan"] = {"Resonate.Vulkan"}}
+local extra_deps = {["resonate.render-vulkan"] = {"Resonate.Vulkan", "Resonate.PAL"}}
 
 -- Windows resolves a shared library from the executable's directory, macOS and
 -- Linux from libdir, so both are forced flat. Left alone, plugins would land in
