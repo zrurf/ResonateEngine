@@ -300,6 +300,7 @@ struct RenderSystem::Impl
     std::condition_variable idle_wake;
     std::thread render_thread;
     bool render_thread_started = false;
+    bool warm = false;
 
     /* The render thread's current snapshot; the pass callbacks read it. */
     FrameSnapshot* active = nullptr;
@@ -380,9 +381,11 @@ struct RenderSystem::Impl
     ResonateRenderBuffer uploadStorage(std::uint64_t size_bytes, bool host_visible);
     void bindQueries(ecs::World& world);
     void resolveCapabilities();
+    void ensureThread();
     bool extract(ecs::World& world);
     void publish();
     void renderLoop();
+    bool prepareTargets(uint32_t width, uint32_t height);
     void renderFrame(FrameSnapshot& snapshot);
     void prepareFrame(GraphExecuteContext& commands);
     void runClusters(GraphExecuteContext& commands, ResonateRenderPipeline pipeline);
@@ -1523,6 +1526,18 @@ void RenderSystem::waitIdle()
     impl.idle_wake.wait(lock, [&impl] { return !impl.snapshot_pending && !impl.consumer_busy; });
 }
 
+void RenderSystem::warmup()
+{
+    Impl& impl = *impl_;
+    if (impl.released)
+    {
+        return;
+    }
+    impl.ensureThread();
+    std::unique_lock<std::mutex> lock(impl.handoff_mutex);
+    impl.idle_wake.wait(lock, [&impl] { return impl.warm || impl.stop; });
+}
+
 void RenderSystem::run(ecs::World& world)
 {
     Impl& impl = *impl_;
@@ -1530,14 +1545,7 @@ void RenderSystem::run(ecs::World& world)
     {
         return;
     }
-    if (!impl.render_thread_started)
-    {
-        /* The pointers are resolved before the thread starts and only read
-           afterwards; the producer needs the canvas for the frame's aspect. */
-        impl.resolveCapabilities();
-        impl.render_thread = std::thread([&impl] { impl.renderLoop(); });
-        impl.render_thread_started = true;
-    }
+    impl.ensureThread();
     if (!impl.extract(world))
     {
         return;
@@ -1545,8 +1553,38 @@ void RenderSystem::run(ecs::World& world)
     impl.publish();
 }
 
+void RenderSystem::Impl::ensureThread()
+{
+    if (render_thread_started)
+    {
+        return;
+    }
+    /* The pointers are resolved before the thread starts and only read
+       afterwards; the producer needs the canvas for the frame's aspect. */
+    resolveCapabilities();
+    render_thread = std::thread([this] { renderLoop(); });
+    render_thread_started = true;
+}
+
 void RenderSystem::Impl::renderLoop()
 {
+    /* Warmup: attach, compile the graph and create every pipeline before the
+       first snapshot, so the frame loop starts with a drawable frame. */
+    if (device != nullptr && canvas != nullptr)
+    {
+        const uint32_t width = canvas->width(canvas->self);
+        const uint32_t height = canvas->height(canvas->self);
+        if (width != 0U && height != 0U)
+        {
+            prepareTargets(width, height);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(handoff_mutex);
+        warm = true;
+    }
+    idle_wake.notify_all();
+
     for (;;)
     {
         FrameSnapshot* snapshot = nullptr;
@@ -1580,16 +1618,14 @@ void RenderSystem::Impl::renderLoop()
     }
 }
 
-void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
+bool RenderSystem::Impl::prepareTargets(uint32_t width, uint32_t height)
 {
+    if (width == 0U || height == 0U)
+    {
+        return false;
+    }
     if (!surface_attached && !surface_unavailable)
     {
-        const uint32_t width = snapshot.target_width;
-        const uint32_t height = snapshot.target_height;
-        if (width == 0U || height == 0U)
-        {
-            return;
-        }
         windowed = canvas->is_window_backed(canvas->self) != 0U;
         ResonateStatus attached = RESONATE_E_INVALID;
         if (windowed)
@@ -1609,26 +1645,20 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
             surface_unavailable = true;
             complain(windowed ? "the surface was not attached"
                               : "the offscreen target was not attached");
-            return;
+            return false;
         }
         surface_attached = true;
     }
     if (!surface_attached)
     {
-        return;
+        return false;
     }
 
     /* The scene and post targets follow the canvas extent; a resize waits out
        the frames in flight, rebuilds the plan and its executor, and keeps the
        format-keyed pipelines. */
-    const uint32_t width = snapshot.target_width;
-    const uint32_t height = snapshot.target_height;
     if (!initialized || width != target_width || height != target_height)
     {
-        if (width == 0U || height == 0U)
-        {
-            return;
-        }
         device->wait_idle(device->self);
         executor.reset();
         /* An offscreen target is device-owned, so the renderer re-attaches it
@@ -1639,7 +1669,7 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
         {
             surface_unavailable = true;
             complain("the offscreen target was not resized");
-            return;
+            return false;
         }
         target_width = width;
         target_height = height;
@@ -1648,15 +1678,19 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
         if (!initialize())
         {
             initialized = false;
-            return;
+            return false;
         }
         initialized = true;
     }
-    if (!ensurePipelines())
+    return ensurePipelines();
+}
+
+void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
+{
+    if (!prepareTargets(snapshot.target_width, snapshot.target_height))
     {
         return;
     }
-
     std::string error;
     if (!executor->execute(error, &Impl::prepareEntry, this) && !error.empty())
     {

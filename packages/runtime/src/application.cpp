@@ -165,6 +165,13 @@ int Application::run(const Config& config)
         return EXIT_FAILURE;
     }
 
+    /* Device creation, graph compilation and pipeline warmup belong before the
+       first frame, not inside it. */
+    if (config.startup)
+    {
+        config.startup();
+    }
+
     /* Cleared so two runs in one process are independent, and restored afterwards
        so a caller that had its own handler gets it back. */
     g_stop_requested = 0;

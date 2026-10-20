@@ -180,6 +180,10 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
         return RESONATE_OK;
     };
 
+    /* The renderer's device, graph and pipelines come up before the frame
+       loop, so the first displayed frame draws instead of compiling. */
+    config.startup = [&render_system] { render_system.warmup(); };
+
     /* The renderer's device resources go while the device module is alive;
        after the run the host detaches and the capability dies with it. */
     config.shutdown = [&render_system] { render_system.release(); };

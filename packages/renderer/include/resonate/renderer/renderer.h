@@ -84,6 +84,11 @@ class RenderSystem
        tests and tools that read the device state afterwards. */
     void waitIdle();
 
+    /* Attaches the target, compiles the graph and creates every pipeline
+       before the frame loop starts (Application's startup hook). Safe before
+       the first run; a no-op after release. */
+    void warmup();
+
     /* Releases the graph's device resources. The run calls it before the
        modules detach, while the device that created them is still alive; safe
        to call twice. */

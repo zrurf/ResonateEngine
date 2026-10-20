@@ -62,6 +62,11 @@ class Application
            only. */
         std::function<ResonateStatus(ModuleHost&, ecs::World&)> systems;
 
+        /* Called after the modules attach and before the frame loop: work that
+           must not land in the first frame (device creation, pipeline warmup,
+           graph compilation) goes here. Empty means the loop starts at once. */
+        std::function<void()> startup;
+
         /* Called at the top of every frame, before the stages run. Returning
            false ends the run, which is how a window reports a quit request.
            Empty means the host has no per-frame work. */
