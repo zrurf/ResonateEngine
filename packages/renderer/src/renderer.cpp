@@ -911,7 +911,7 @@ bool RenderSystem::Impl::ensurePipelines()
     const std::string content_directory = contentTexturesDirectory();
     const bool checker_loaded =
         !content_directory.empty() &&
-        loadKtx2Rgba8(content_directory + "/checker.ktx2", checker, texture_error);
+        loadTexture(content_directory + "/checker.ktx2", checker, texture_error);
     if (!content_directory.empty() && !checker_loaded)
     {
         std::fprintf(stderr, "renderer: checker.ktx2: %s\n", texture_error.c_str());

@@ -1,11 +1,11 @@
 #ifndef RESONATE_RENDERER_TEXTURE_H
 #define RESONATE_RENDERER_TEXTURE_H
 
-/* The runtime texture container v1: an uncompressed 2D RGBA8 KTX2
- * (VK_FORMAT_R8G8B8A8_UNORM, one mip level, no arrays, cubes or
- * supercompression). The cook task writes it; the renderer uploads what this
- * decodes. Compressed Basis/BC payloads replace the reader when the asset
- * pipeline lands, behind the same entry point.
+/* The runtime texture container: a 2D KTX2. The loader takes either the v1
+ * uncompressed RGBA8 layout (one mip level, no arrays or cubes) or a KTX2
+ * carrying a Basis Universal payload, which it transcodes to RGBA8. The cook
+ * tool writes UASTC; compressed GPU payloads slot in behind the same entry
+ * point when the RHI grows those formats.
  */
 
 #include <cstdint>
@@ -25,10 +25,13 @@ struct TextureImage
     std::vector<std::uint8_t> rgba; /* tightly packed, four bytes per texel */
 };
 
-/* False with a named error for anything the v1 container does not cover. */
+/* The direct (uncompressed RGBA8) path; false with a named error otherwise. */
 bool decodeKtx2Rgba8(const std::vector<std::uint8_t>& bytes, TextureImage& out_image,
                      std::string& out_error);
-bool loadKtx2Rgba8(const std::string& path, TextureImage& out_image, std::string& out_error);
+
+/* Direct when the container is uncompressed RGBA8, transcoded when it holds a
+   Basis payload. False with a named error for anything else. */
+bool loadTexture(const std::string& path, TextureImage& out_image, std::string& out_error);
 
 } // namespace resonate::renderer
 

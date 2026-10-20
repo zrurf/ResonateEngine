@@ -66,6 +66,11 @@ if is_plat("ohos") then
     add_syslinks("dl", "pthread")
 end
 
+-- Project-local package: the repo port enables every vector extension,
+-- which emits AVX-512 and faults on CPUs where it is fused off.
+includes("packages/thirdparty/basisu")
+
+add_requires("basisu 1.16.4")
 add_requires("catch2 v3.16.0", {verify = false})
 add_requires("emhash 1.2.0")
 add_requires("libhv 1.3.4")
@@ -235,7 +240,7 @@ task("ecs-bench")
 task("texcook")
     set_category("plugin")
     on_run(function ()
-        os.execv(os.programfile(), {"lua", path.join(os.projectdir(), "scripts", "texcook.lua")})
+        os.execv(os.programfile(), {"build", "-y", "Resonate.Tools.TexCook"})
     end)
     set_menu {
         usage = "xmake texcook",
@@ -247,6 +252,7 @@ includes("packages/core")
 includes("packages/ecs")
 includes("packages/gameplay")
 includes("packages/module")
+includes("packages/tools/texcook")
 includes("packages/render")
 includes("packages/window")
 includes("packages/physics")

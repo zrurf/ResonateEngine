@@ -1,5 +1,7 @@
 #include <resonate/renderer/texture.h>
 
+#include <basisu/transcoder/basisu_transcoder.h>
+
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -33,12 +35,10 @@ constexpr std::uint32_t kVkFormatRgba8Unorm = 37U;
 constexpr std::uint32_t kVkFormatRgba8Srgb = 43U;
 constexpr std::uint32_t kSupercompressionNone = 0U;
 
-} // namespace
-
-bool decodeKtx2Rgba8(const std::vector<std::uint8_t>& bytes, TextureImage& out_image,
-                     std::string& out_error)
+/* The uncompressed v1 layout: one 2D RGBA8 level, read directly. */
+bool decodeDirect(const std::vector<std::uint8_t>& bytes, TextureImage& out_image,
+                  std::string& out_error)
 {
-    out_error.clear();
     if (bytes.size() < kHeaderSize + kLevelIndexSize)
     {
         out_error = "shorter than the KTX2 header";
@@ -68,13 +68,13 @@ bool decodeKtx2Rgba8(const std::vector<std::uint8_t>& bytes, TextureImage& out_i
 
     if (vk_format != kVkFormatRgba8Unorm && vk_format != kVkFormatRgba8Srgb)
     {
-        out_error = "the v1 container only holds RGBA8 UNORM or sRGB";
+        out_error = "the direct path only holds RGBA8 UNORM or sRGB";
         return false;
     }
     if (type_size != 1U || depth != 0U || layers != 0U || faces != 1U || levels != 1U ||
         supercompression != kSupercompressionNone)
     {
-        out_error = "the v1 container is one 2D mip level, uncompressed";
+        out_error = "the direct path is one 2D mip level, uncompressed";
         return false;
     }
     if (width == 0U || height == 0U)
@@ -114,7 +114,54 @@ bool decodeKtx2Rgba8(const std::vector<std::uint8_t>& bytes, TextureImage& out_i
     return true;
 }
 
-bool loadKtx2Rgba8(const std::string& path, TextureImage& out_image, std::string& out_error)
+/* A KTX2 whose payload is Basis-encoded (UASTC or ETC1S): transcode level 0
+   to RGBA8. Albedo sources are sRGB, so the result is marked as such. */
+bool transcodeBasis(const std::vector<std::uint8_t>& bytes, TextureImage& out_image,
+                    std::string& out_error)
+{
+    basist::basisu_transcoder_init();
+    basist::ktx2_transcoder transcoder;
+    if (!transcoder.init(bytes.data(), static_cast<std::uint32_t>(bytes.size())))
+    {
+        out_error = "not a readable KTX2";
+        return false;
+    }
+    if (!transcoder.start_transcoding())
+    {
+        out_error = "KTX2 transcoding could not start";
+        return false;
+    }
+    basist::ktx2_image_level_info info{};
+    if (!transcoder.get_image_level_info(info, 0U, 0U, 0U))
+    {
+        out_error = "KTX2 level 0 info missing";
+        return false;
+    }
+
+    out_image.width = info.m_orig_width;
+    out_image.height = info.m_orig_height;
+    out_image.srgb = true;
+    out_image.rgba.assign(static_cast<std::size_t>(out_image.width) * out_image.height * 4U, 0U);
+    if (!transcoder.transcode_image_level(0U, 0U, 0U, out_image.rgba.data(),
+                                          out_image.width * out_image.height,
+                                          basist::transcoder_texture_format::cTFRGBA32))
+    {
+        out_error = "KTX2 transcoding failed";
+        out_image.rgba.clear();
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+bool decodeKtx2Rgba8(const std::vector<std::uint8_t>& bytes, TextureImage& out_image,
+                     std::string& out_error)
+{
+    return decodeDirect(bytes, out_image, out_error);
+}
+
+bool loadTexture(const std::string& path, TextureImage& out_image, std::string& out_error)
 {
     std::ifstream in(path, std::ios::binary);
     if (!in.is_open())
@@ -124,7 +171,21 @@ bool loadKtx2Rgba8(const std::string& path, TextureImage& out_image, std::string
     }
     const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
                                           std::istreambuf_iterator<char>());
-    return decodeKtx2Rgba8(bytes, out_image, out_error);
+
+    /* The uncompressed v1 layout takes the direct path; everything else with a
+       KTX2 identifier goes through libktx (Basis payloads are transcoded). */
+    if (bytes.size() >= kHeaderSize &&
+        std::memcmp(bytes.data(), kIdentifier, sizeof(kIdentifier)) == 0)
+    {
+        const std::uint32_t vk_format = readU32(bytes, 12U);
+        const std::uint32_t supercompression = readU32(bytes, 44U);
+        if ((vk_format == kVkFormatRgba8Unorm || vk_format == kVkFormatRgba8Srgb) &&
+            supercompression == kSupercompressionNone)
+        {
+            return decodeDirect(bytes, out_image, out_error);
+        }
+    }
+    return transcodeBasis(bytes, out_image, out_error);
 }
 
 } // namespace resonate::renderer

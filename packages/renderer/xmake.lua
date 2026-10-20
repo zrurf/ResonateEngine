@@ -20,14 +20,16 @@ target("Resonate.Renderer")
     end)
 
     before_build(function (target)
-        for _, script_name in ipairs({"schema.lua", "texcook.lua"}) do
-            local script = path.join(os.projectdir(), "scripts", script_name)
-            local output = os.iorunv(os.programfile(), {"lua", script})
-            if output ~= nil then
-                print((output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", "")))
-            end
+        local script = path.join(os.projectdir(), "scripts", "schema.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script})
+        if output ~= nil then
+            print((output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", "")))
         end
     end)
 
+    -- The cook tool runs itself after it links; the renderer needs the cooked
+    -- textures at runtime, not to compile, so this is an order-only dep.
     add_deps("Resonate.Render", "Resonate.Render.Graph", "Resonate.ECS",
              "Resonate.Hierarchy", "Resonate.Core.Math")
+    add_deps("Resonate.Tools.TexCook", {links = false, inherit = false})
+    add_packages("basisu", {public = true})
