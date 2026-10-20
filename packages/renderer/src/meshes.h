@@ -22,12 +22,13 @@ struct GpuMesh
     std::uint32_t index_count = 0;
 };
 
-/* One vertex stream: position, normal, color, 36 bytes. */
+/* One vertex stream: position, normal, color, texture coordinate, 44 bytes. */
 struct Vertex
 {
     float position[3];
     float normal[3];
     float color[3];
+    float uv[2];
 };
 
 GpuMesh buildCube(ResonateRenderDevice& device);

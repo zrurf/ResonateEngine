@@ -17,6 +17,13 @@
     <field name="color" type="vec3" default="1 1 1"/>
   </component>
 
+  <!-- An optional surface description on a mesh instance: the albedo texture
+       (0 = white) and a tint the shader multiplies with the vertex color. -->
+  <component name="Material" version="1">
+    <field name="texture" type="u32" default="0"/>
+    <field name="tint" type="vec3" default="1 1 1"/>
+  </component>
+
   <!-- A sun: direction and radiance for the lit passes to come. -->
   <component name="DirectionalLight" version="1">
     <field name="direction" type="vec3" default="0 -1 0"/>

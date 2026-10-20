@@ -81,6 +81,7 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
     const auto cube = world.create();
     world.add(cube, resonate::hierarchy::WorldTransform{translation(0.0F, 2.5F, 0.0F)});
     world.add(cube, resonate::render::MeshInstance{1U, Vec3{1.0F, 1.0F, 1.0F}});
+    world.add(cube, resonate::render::Material{1U, Vec3{1.0F, 1.0F, 1.0F}});
 
     const auto sun = world.create();
     world.add(sun, resonate::render::DirectionalLight{Vec3{0.0F, 0.0F, 1.0F},

@@ -36,16 +36,17 @@ struct ClusterLights
 struct Push
 {
     float4x4 model;
-    float4 tint;  // rgb = albedo, a = unused
-    uint4 slots;  // frame data, cluster boxes, light grid, light indices
-    uint4 slots2; // light list, shadow map slots 0..2
+    float4 tint;          // rgb = albedo tint, a = unused
+    uint4 slots;          // frame data, cluster boxes, light grid, light indices
+    uint4 slots2;         // light list, shadow map slots 0..2
+    uint texture_slot;    // albedo texture (0 = white)
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[64];
 [[vk::binding(1, 0)]] StructuredBuffer<Light> light_table[64];
 [[vk::binding(2, 0)]] StructuredBuffer<uint> light_indices[64];
 [[vk::binding(3, 0)]] StructuredBuffer<ClusterLights> cluster_lights[64];
-[[vk::binding(5, 0)]] Sampler2D shadow_maps[64];
+[[vk::binding(5, 0)]] Sampler2D image_table[64];
 
 [[vk::push_constant]] Push push;
 
@@ -58,6 +59,7 @@ struct VertexInput
     float3 position : POSITION;
     float3 normal : NORMAL;
     float3 color : COLOR;
+    float2 uv : TEXCOORD0;
 };
 
 struct VertexOutput
@@ -67,6 +69,7 @@ struct VertexOutput
     float3 normal;
     float3 world_position;
     float view_depth;
+    float2 uv;
 };
 
 [shader("vertex")]
@@ -85,6 +88,7 @@ VertexOutput sceneVertex(VertexInput input)
     output.color = input.color;
     output.world_position = world.xyz;
     output.view_depth = mul(frame.view_proj, world).w;
+    output.uv = input.uv;
     return output;
 }
 
@@ -135,7 +139,7 @@ float shadowFactor(float3 world_position, float view_depth, FrameData frame)
                             float2(0.5, 0.5)};
     for (uint tap = 0; tap < 4; ++tap)
     {
-        float depth = shadow_maps[shadow_slot].Sample(uv + TAPS[tap] * texel).r;
+        float depth = image_table[shadow_slot].Sample(uv + TAPS[tap] * texel).r;
         sum += receiver - 0.003 > depth ? 0.0 : 1.0;
     }
     return sum * 0.25;
@@ -157,7 +161,8 @@ float4 sceneFragment(VertexOutput input) : SV_Target
     ClusterLights lights = cluster_lights[push.slots.z].Load(
         clusterOf(input.position.xy, input.view_depth, frame));
 
-    float3 albedo = input.color * push.tint.rgb;
+    float3 albedo = input.color * push.tint.rgb *
+                    image_table[push.texture_slot].Sample(input.uv).rgb;
     float3 normal = normalize(input.normal);
     float3 view_direction = normalize(frame.camera_and_near.xyz - input.world_position);
 

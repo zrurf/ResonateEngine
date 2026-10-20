@@ -95,13 +95,15 @@ constexpr std::uint32_t kMaxLightsPerCluster = 128;
    enough for the blur's wide kernel, cheap enough to be free. */
 constexpr std::uint32_t kBloomDivisor = 4U;
 
-/* The push-constant block the scene/cluster shaders read: 112 bytes. */
+/* The push-constant block the scene/cluster shaders read: 116 bytes. The
+   cluster and shadow shaders read only their 112-byte prefix. */
 struct FrameConstants
 {
     Mat4 model;
     Vec4 tint;
-    std::uint32_t slots[4];  /* frame data, cluster boxes, light grid, indices */
-    std::uint32_t slots2[4]; /* light list, shadow map slots 0..2 */
+    std::uint32_t slots[4];     /* frame data, cluster boxes, light grid, indices */
+    std::uint32_t slots2[4];    /* light list, shadow map slots 0..2 */
+    std::uint32_t texture_slot; /* the scene's albedo texture */
 };
 
 /* The block the post shaders read: 32 bytes. */
@@ -117,6 +119,7 @@ struct DrawInstance
     Mat4 model;
     Vec3 color;
     MeshId mesh;
+    std::uint32_t texture; /* 0 = white, 1 = checker (v1's built-ins) */
 };
 
 /* One extracted frame, handed to the render thread. The producer fills a
@@ -164,6 +167,29 @@ std::vector<char> readFile(const std::filesystem::path& path)
 constexpr std::uint32_t slotOf(ResonateRenderBuffer handle)
 {
     return static_cast<std::uint32_t>(handle.value & 0xFFFFFFFFU);
+}
+
+constexpr std::uint32_t slotOf(ResonateRenderImage handle)
+{
+    return static_cast<std::uint32_t>(handle.value & 0xFFFFFFFFU);
+}
+
+/* A tightly packed RGBA8 texture in the sampled-image table. */
+bool createSampledTexture(ResonateRenderDevice& device, std::uint32_t width, std::uint32_t height,
+                          const std::vector<std::uint8_t>& pixels, ResonateRenderImage& out_texture)
+{
+    ResonateRenderImageDesc desc{};
+    desc.struct_size = sizeof(desc);
+    desc.format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+    desc.width = width;
+    desc.height = height;
+    desc.usage = RESONATE_RENDER_IMAGE_SAMPLED;
+    if (device.create_image(device.self, &desc, &out_texture) != RESONATE_OK)
+    {
+        return false;
+    }
+    return device.upload_image(device.self, out_texture, pixels.data(), pixels.size(),
+                               static_cast<std::uint64_t>(width) * 4U) == RESONATE_OK;
 }
 
 /* The three frustum-corner world positions of one cascade slice: the light's
@@ -288,6 +314,17 @@ struct RenderSystem::Impl
     GpuMesh cube{};
     GpuMesh ground{};
     MeshId bound_mesh = kMeshNone;
+
+    /* The two albedo textures v1 ships: a white 1x1 (material id 0) and an
+       8x8 checker (id 1). Created once; their table slots ride the push
+       constants. */
+    ResonateRenderImage white_texture{};
+    ResonateRenderImage checker_texture{};
+    std::uint32_t white_texture_slot = 0U;
+    std::uint32_t checker_texture_slot = 0U;
+
+    /* The producer's world, for the optional Material lookup. */
+    ecs::World* extract_world = nullptr;
 
     /* The frame's per-view data, rewritten every frame. The cluster outputs
        are graph transients: the executor materializes them and its barriers
@@ -720,7 +757,7 @@ bool RenderSystem::Impl::ensurePipelines()
         return false;
     }
 
-    ResonateRenderVertexAttribute attributes[3] = {};
+    ResonateRenderVertexAttribute attributes[4] = {};
     attributes[0].location = 0U;
     attributes[0].format = RESONATE_RENDER_FORMAT_R32G32B32_SFLOAT;
     attributes[0].offset_bytes = 0U;
@@ -730,10 +767,13 @@ bool RenderSystem::Impl::ensurePipelines()
     attributes[2].location = 2U;
     attributes[2].format = RESONATE_RENDER_FORMAT_R32G32B32_SFLOAT;
     attributes[2].offset_bytes = 24U;
+    attributes[3].location = 3U;
+    attributes[3].format = RESONATE_RENDER_FORMAT_R32G32_SFLOAT;
+    attributes[3].offset_bytes = 36U;
 
     ResonateRenderVertexStream stream{};
     stream.stride_bytes = sizeof(Vertex);
-    stream.attribute_count = 3U;
+    stream.attribute_count = 4U;
     stream.attributes = attributes;
 
     ResonateRenderGraphicsPipelineDesc scene_desc{};
@@ -829,6 +869,35 @@ bool RenderSystem::Impl::ensurePipelines()
         return false;
     }
 
+    /* The albedo tables v1 ships: white (material 0) and a checker (material
+       1). Both land in the sampled-image table at creation. */
+    const std::vector<std::uint8_t> white_pixels(4U, 255U);
+    /* An 8x8 checker with two-pixel squares: the boxes' faces read it as a
+       clear pattern, and it stays a multiplier on the vertex colors. */
+    std::vector<std::uint8_t> checker_pixels(8U * 8U * 4U);
+    for (std::uint32_t y = 0; y < 8U; ++y)
+    {
+        for (std::uint32_t x = 0; x < 8U; ++x)
+        {
+            const bool light = ((x / 2U) + (y / 2U)) % 2U == 0U;
+            const std::uint8_t value = light ? 235U : 120U;
+            const std::size_t index = (static_cast<std::size_t>(y) * 8U + x) * 4U;
+            checker_pixels[index] = value;
+            checker_pixels[index + 1U] = value;
+            checker_pixels[index + 2U] = value;
+            checker_pixels[index + 3U] = 255U;
+        }
+    }
+    if (!createSampledTexture(*device, 1U, 1U, white_pixels, white_texture) ||
+        !createSampledTexture(*device, 8U, 8U, checker_pixels, checker_texture))
+    {
+        complain("texture creation failed");
+        pipelines_failed = true;
+        return false;
+    }
+    white_texture_slot = slotOf(white_texture);
+    checker_texture_slot = slotOf(checker_texture);
+
     /* A handle's low half is its table slot; the push constants carry them. */
     frame_data_slot = slotOf(frame_data.vertices);
     light_list_slot = slotOf(light_list.vertices);
@@ -897,6 +966,7 @@ void RenderSystem::Impl::resolveCapabilities()
 bool RenderSystem::Impl::extract(ecs::World& world)
 {
     bindQueries(world);
+    extract_world = &world;
     scratch.instances.clear();
     scratch.lights.clear();
     have_camera = false;
@@ -982,8 +1052,20 @@ bool RenderSystem::Impl::extract(ecs::World& world)
             {
                 DrawInstance instance;
                 instance.model = transform.data[row].matrix;
-                instance.color = mesh.data[row].color;
                 instance.mesh = mesh.data[row].mesh == kMeshGround ? kMeshGround : kMeshCube;
+                instance.texture = 0U;
+                instance.color = mesh.data[row].color;
+                /* A material is optional: without one the mesh keeps its
+                   vertex-driven color and the white texture. */
+                if (const render::Material* material =
+                        self->extract_world->get<render::Material>(view.entities[row]);
+                    material != nullptr)
+                {
+                    instance.texture = material->texture;
+                    instance.color = Vec3{instance.color.x * material->tint.x,
+                                          instance.color.y * material->tint.y,
+                                          instance.color.z * material->tint.z};
+                }
                 self->scratch.instances.push_back(instance);
             }
         },
@@ -1205,6 +1287,7 @@ void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
 
         constants.model = instance.model;
         constants.tint = Vec4{instance.color.x, instance.color.y, instance.color.z, 1.0F};
+        constants.texture_slot = instance.texture == 1U ? checker_texture_slot : white_texture_slot;
         device.set_constants(device.self, &constants, sizeof(constants));
 
         if (bound_mesh != instance.mesh)
@@ -1350,6 +1433,7 @@ bool RenderSystem::registerComponents(ecs::World& world)
 {
     bool ok = world.registerComponent<render::Camera>() != ecs::kInvalidComponent;
     ok = world.registerComponent<render::MeshInstance>() != ecs::kInvalidComponent && ok;
+    ok = world.registerComponent<render::Material>() != ecs::kInvalidComponent && ok;
     ok = world.registerComponent<render::DirectionalLight>() != ecs::kInvalidComponent && ok;
     ok = world.registerComponent<render::PointLight>() != ecs::kInvalidComponent && ok;
     return ok;
@@ -1555,6 +1639,7 @@ void composeDemoScene(ecs::World& world)
                 box, hierarchy::LocalTransform{position, resonate::Quat{}, Vec3{1.0F, 1.0F, 1.0F}});
             world.add(box, hierarchy::WorldTransform{Mat4{}});
             world.add(box, render::MeshInstance{kMeshCube, kColors[x][z]});
+            world.add(box, render::Material{1U, Vec3{1.0F, 1.0F, 1.0F}});
         }
     }
 

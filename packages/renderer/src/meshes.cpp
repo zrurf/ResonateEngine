@@ -60,12 +60,14 @@ void addFace(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
              const std::array<std::array<float, 3>, 4>& corners, const std::array<float, 3>& normal,
              const std::array<float, 3>& color)
 {
+    static constexpr float kUv[4][2] = {{0.0F, 1.0F}, {1.0F, 1.0F}, {1.0F, 0.0F}, {0.0F, 0.0F}};
     const uint32_t base = static_cast<uint32_t>(vertices.size());
-    for (const std::array<float, 3>& corner : corners)
+    for (std::uint32_t corner = 0; corner < 4U; ++corner)
     {
-        vertices.push_back(Vertex{{corner[0], corner[1], corner[2]},
+        vertices.push_back(Vertex{{corners[corner][0], corners[corner][1], corners[corner][2]},
                                   {normal[0], normal[1], normal[2]},
-                                  {color[0], color[1], color[2]}});
+                                  {color[0], color[1], color[2]},
+                                  {kUv[corner][0], kUv[corner][1]}});
     }
     const uint32_t order[6] = {0U, 1U, 2U, 0U, 2U, 3U};
     for (uint32_t index : order)
@@ -139,10 +141,10 @@ GpuMesh buildCube(ResonateRenderDevice& device)
 GpuMesh buildGround(ResonateRenderDevice& device, float half_extent)
 {
     const std::array<Vertex, 4> vertices = {
-        Vertex{{-half_extent, 0.0F, half_extent}, {0, 1, 0}, {0.24F, 0.26F, 0.30F}},
-        Vertex{{half_extent, 0.0F, half_extent}, {0, 1, 0}, {0.24F, 0.26F, 0.30F}},
-        Vertex{{half_extent, 0.0F, -half_extent}, {0, 1, 0}, {0.16F, 0.18F, 0.22F}},
-        Vertex{{-half_extent, 0.0F, -half_extent}, {0, 1, 0}, {0.16F, 0.18F, 0.22F}},
+        Vertex{{-half_extent, 0.0F, half_extent}, {0, 1, 0}, {0.24F, 0.26F, 0.30F}, {0.0F, 0.0F}},
+        Vertex{{half_extent, 0.0F, half_extent}, {0, 1, 0}, {0.24F, 0.26F, 0.30F}, {1.0F, 0.0F}},
+        Vertex{{half_extent, 0.0F, -half_extent}, {0, 1, 0}, {0.16F, 0.18F, 0.22F}, {1.0F, 1.0F}},
+        Vertex{{-half_extent, 0.0F, -half_extent}, {0, 1, 0}, {0.16F, 0.18F, 0.22F}, {0.0F, 1.0F}},
     };
     const std::vector<uint32_t> indices = {0U, 1U, 2U, 0U, 2U, 3U};
 
