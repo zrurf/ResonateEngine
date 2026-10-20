@@ -19,6 +19,9 @@ struct TextureImage
 {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+    /* True when the payload is sRGB-encoded (the device linearizes it on
+       sampling); false for a plain linear multiplier. */
+    bool srgb = false;
     std::vector<std::uint8_t> rgba; /* tightly packed, four bytes per texel */
 };
 

@@ -30,6 +30,7 @@ constexpr std::uint8_t kIdentifier[12] = {0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
 constexpr std::uint32_t kHeaderSize = 80U;
 constexpr std::uint32_t kLevelIndexSize = 24U;
 constexpr std::uint32_t kVkFormatRgba8Unorm = 37U;
+constexpr std::uint32_t kVkFormatRgba8Srgb = 43U;
 constexpr std::uint32_t kSupercompressionNone = 0U;
 
 } // namespace
@@ -65,9 +66,9 @@ bool decodeKtx2Rgba8(const std::vector<std::uint8_t>& bytes, TextureImage& out_i
     const std::uint64_t sgd_offset = readU64(bytes, 64U);
     const std::uint64_t sgd_length = readU64(bytes, 72U);
 
-    if (vk_format != kVkFormatRgba8Unorm)
+    if (vk_format != kVkFormatRgba8Unorm && vk_format != kVkFormatRgba8Srgb)
     {
-        out_error = "the v1 container only holds RGBA8 UNORM";
+        out_error = "the v1 container only holds RGBA8 UNORM or sRGB";
         return false;
     }
     if (type_size != 1U || depth != 0U || layers != 0U || faces != 1U || levels != 1U ||
@@ -107,6 +108,7 @@ bool decodeKtx2Rgba8(const std::vector<std::uint8_t>& bytes, TextureImage& out_i
 
     out_image.width = width;
     out_image.height = height;
+    out_image.srgb = vk_format == kVkFormatRgba8Srgb;
     out_image.rgba.assign(bytes.begin() + static_cast<std::ptrdiff_t>(level_offset),
                           bytes.begin() + static_cast<std::ptrdiff_t>(level_offset + level_length));
     return true;

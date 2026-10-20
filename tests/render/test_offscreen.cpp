@@ -85,7 +85,7 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
 
     const auto sun = world.create();
     world.add(sun, resonate::render::DirectionalLight{Vec3{0.0F, 0.0F, 1.0F},
-                                                      Vec3{1.0F, 1.0F, 1.0F}, 1.0F});
+                                                      Vec3{1.0F, 1.0F, 1.0F}, 2.0F});
 
     resonate::renderer::RenderSystem render_system;
     render_system.setRegistry(host->capabilities());
@@ -115,6 +115,7 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
 
     const std::uint32_t sky = lumaAt(pixels, width, 4U, 4U);
     const std::uint32_t center = lumaAt(pixels, width, width / 2U, height / 2U);
+    INFO("center=" << center << " sky=" << sky);
     CHECK(center > sky + 40U);
 
     /* The cube covers a meaningful area of the frame, not a stray pixel. */
@@ -126,6 +127,7 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
             lit += lumaAt(pixels, width, x, y) > sky + 40U ? 1U : 0U;
         }
     }
+    INFO("lit=" << lit);
     CHECK(lit > 400U);
 
     render_system.release();

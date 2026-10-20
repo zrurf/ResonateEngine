@@ -1,5 +1,5 @@
 -- Cooks the source textures under content/render/textures into the runtime
--- container. v1 writes uncompressed 2D RGBA8 KTX2 (VK_FORMAT_R8G8B8A8_UNORM):
+-- container. v1 writes uncompressed 2D RGBA8 KTX2 (VK_FORMAT_R8G8B8A8_SRGB):
 -- the container and the loader are the contract, and the compressed
 -- Basis/BC path replaces the writer when the asset pipeline lands.
 --
@@ -88,7 +88,7 @@ local function dfd()
         samples[#samples + 1] = descriptor
     end
     local block = u16(0) .. u16(0) .. u16(2) .. u16(88)   -- vendor, type, version, block size
-        .. string.pack("BBBB", 0, 0, 2, 0)                 -- RGBSDA, primaries, linear, flags
+        .. string.pack("BBBB", 0, 0, 1, 0)                 -- RGBSDA, primaries, sRGB, flags
         .. string.pack("BBBB", 0, 0, 0, 0)                 -- texel block dimensions minus one
         .. string.pack("BBBBBBBB", 4, 0, 0, 0, 0, 0, 0, 0) -- bytes per plane
         .. table.concat(samples)
@@ -106,7 +106,7 @@ local function ktx2(width, height, rgba)
     local level_offset = (kvd_offset + 7) & ~7
     local level_length = width * height * 4
     local header = identifier
-        .. u32(37)                                  -- VK_FORMAT_R8G8B8A8_UNORM
+        .. u32(43)                                  -- VK_FORMAT_R8G8B8A8_SRGB
         .. u32(1)                                   -- typeSize
         .. u32(width) .. u32(height) .. u32(0)      -- extent, depth 0 for 2D
         .. u32(0) .. u32(1) .. u32(1) .. u32(0)     -- layers, faces, levels, supercompression

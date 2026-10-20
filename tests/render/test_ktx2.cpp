@@ -22,6 +22,7 @@ TEST_CASE("ktx2: the cooked checker decodes", "[render][ktx2]")
     REQUIRE(resonate::renderer::loadKtx2Rgba8(content + "/textures/checker.ktx2", image, error));
     CHECK(image.width == 16U);
     CHECK(image.height == 16U);
+    CHECK(image.srgb);
     REQUIRE(image.rgba.size() == 16U * 16U * 4U);
 
     const auto value = [&](std::uint32_t x, std::uint32_t y)

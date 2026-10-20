@@ -203,11 +203,12 @@ constexpr std::uint32_t slotOf(ResonateRenderImage handle)
 
 /* A tightly packed RGBA8 texture in the sampled-image table. */
 bool createSampledTexture(ResonateRenderDevice& device, std::uint32_t width, std::uint32_t height,
-                          const std::vector<std::uint8_t>& pixels, ResonateRenderImage& out_texture)
+                          ResonateRenderFormat format, const std::vector<std::uint8_t>& pixels,
+                          ResonateRenderImage& out_texture)
 {
     ResonateRenderImageDesc desc{};
     desc.struct_size = sizeof(desc);
-    desc.format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+    desc.format = format;
     desc.width = width;
     desc.height = height;
     desc.usage = RESONATE_RENDER_IMAGE_SAMPLED;
@@ -940,9 +941,15 @@ bool RenderSystem::Impl::ensurePipelines()
             }
         }
     }
-    if (!createSampledTexture(*device, 1U, 1U, white_pixels, white_texture) ||
-        !createSampledTexture(*device, checker_width, checker_height, checker_pixels,
-                              checker_texture))
+    /* Albedo is sRGB-encoded unless the container says otherwise; the device
+       linearizes it on sampling. */
+    const ResonateRenderFormat checker_format = checker_loaded && !checker.srgb
+                                                    ? RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM
+                                                    : RESONATE_RENDER_FORMAT_R8G8B8A8_SRGB;
+    if (!createSampledTexture(*device, 1U, 1U, RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, white_pixels,
+                              white_texture) ||
+        !createSampledTexture(*device, checker_width, checker_height, checker_format,
+                              checker_pixels, checker_texture))
     {
         complain("texture creation failed");
         pipelines_failed = true;
