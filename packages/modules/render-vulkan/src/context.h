@@ -120,6 +120,14 @@ class Context
        Vulkan is unavailable and RESONATE_E_INTERNAL on creation failure. */
     ResonateStatus attachSurface(const void* native_surface, uint32_t width, uint32_t height);
 
+    /* The offscreen counterpart: the device owns the target images, present()
+       ends the frame without a WSI presentation, and readbackCanvas() copies
+       the last frame out. Re-attaching resizes; a context has one target kind
+       for its life. */
+    ResonateStatus attachOffscreen(uint32_t width, uint32_t height);
+    ResonateStatus readbackCanvas(void* data, uint64_t size_bytes, uint32_t* out_width,
+                                  uint32_t* out_height);
+
     /* True once a swapchain exists to draw into. */
     bool hasSurface() const;
 
@@ -242,9 +250,10 @@ class Context
         std::vector<Retired> graveyard;
     };
 
-    ResonateStatus ensureInstance();
+    ResonateStatus ensureInstance(bool needs_surface);
     ResonateStatus ensureDevice();
     ResonateStatus createSwapchain(uint32_t width, uint32_t height);
+    ResonateStatus createOffscreen(uint32_t width, uint32_t height);
     VkBuffer resolveBuffer(ResonateRenderBuffer handle) const;
     void destroySwapchainObjects();
     void recreateSwapchain();
@@ -280,12 +289,18 @@ class Context
     VkExtent2D extent_{};
     VkRenderPass render_pass_ = VK_NULL_HANDLE;
     VkCommandPool command_pool_ = VK_NULL_HANDLE;
-    /* The swapchain owns the images; the views and framebuffers are ours. One
-       present-wait semaphore per image: reusing one across images would signal
-       it while the presentation engine still holds it. */
+    /* The swapchain owns its images; the views and framebuffers are ours. An
+       offscreen target is the reverse: we own the images too. */
     std::vector<VkImageView> views_;
     std::vector<VkFramebuffer> framebuffers_;
     std::vector<VkSemaphore> present_semaphores_;
+    struct OwnedImage
+    {
+        VkImage image = VK_NULL_HANDLE;
+        VmaAllocation_T* allocation = nullptr;
+    };
+    std::vector<OwnedImage> offscreen_images_;
+    bool offscreen_ = false;
 
     static constexpr uint32_t kFramesInFlight = 2;
     static constexpr uint32_t kMaxConstants = 128;

@@ -397,9 +397,11 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
     {
         return RESONATE_E_INVALID;
     }
-    if (desc.color_format == RESONATE_RENDER_FORMAT_UNKNOWN && swapchain_ == VK_NULL_HANDLE)
+    if (desc.color_format == RESONATE_RENDER_FORMAT_UNKNOWN && swapchain_ == VK_NULL_HANDLE &&
+        !offscreen_)
     {
-        /* UNKNOWN names the swapchain format; there is no swapchain to name. */
+        /* UNKNOWN names the canvas's image format; there is no target to
+           name. */
         return RESONATE_E_STATE;
     }
 

@@ -330,6 +330,20 @@ typedef struct ResonateRenderDevice
        this wait. RESONATE_E_STATE without a device or during an open frame. */
     ResonateStatus (*wait_idle)(void* self);
 
+    /* Attaches an offscreen target instead of a surface: the device creates
+       its own images and the frame path is otherwise identical. present() ends
+       the frame without a WSI presentation; readback_canvas() exposes the
+       last one. A run has one target, so this and attach_surface are
+       exclusive. */
+    ResonateStatus (*attach_offscreen)(void* self, uint32_t width, uint32_t height);
+
+    /* Copies the last presented offscreen frame into `data` as tightly packed
+       RGBA8 (width * height * 4, sRGB-encoded) and answers its extent. Blocks
+       until the copy completes. RESONATE_E_STATE when no offscreen frame has
+       been presented. */
+    ResonateStatus (*readback_canvas)(void* self, void* data, uint64_t size_bytes,
+                                      uint32_t* out_width, uint32_t* out_height);
+
     /* Provider state; the host never interprets it. */
     void* self;
 } ResonateRenderDevice;

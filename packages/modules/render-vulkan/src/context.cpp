@@ -41,6 +41,24 @@ bool combinedGraphicsAndPresent(VkPhysicalDevice physical, VkSurfaceKHR surface,
     return false;
 }
 
+/* Offscreen runs need no present support: any graphics family will do. */
+bool graphicsQueueFamily(VkPhysicalDevice physical, uint32_t* family_out)
+{
+    uint32_t count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, nullptr);
+    std::vector<VkQueueFamilyProperties> families(count);
+    vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, families.data());
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        if ((families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0)
+        {
+            *family_out = i;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool hasExtension(const std::vector<VkExtensionProperties>& list, const char* name)
 {
     for (const VkExtensionProperties& entry : list)
@@ -372,7 +390,7 @@ void Context::savePipelineCache()
     resonate_pal_io_close_file(&file);
 }
 
-ResonateStatus Context::ensureInstance()
+ResonateStatus Context::ensureInstance(bool needs_surface)
 {
     if (instance_ != VK_NULL_HANDLE)
     {
@@ -406,8 +424,19 @@ ResonateStatus Context::ensureInstance()
     vkEnumerateInstanceExtensionProperties(nullptr, &extension_count, available_extensions.data());
     bool debug_utils = hasExtension(available_extensions, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
-    const char* extensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, surface_extension,
-                                VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
+    /* The surface extensions are only for a windowed target; an offscreen run
+       asks for neither. */
+    const char* extensions[3];
+    uint32_t enabled_extensions = 0;
+    if (needs_surface)
+    {
+        extensions[enabled_extensions++] = VK_KHR_SURFACE_EXTENSION_NAME;
+        extensions[enabled_extensions++] = surface_extension;
+    }
+    if (debug_utils)
+    {
+        extensions[enabled_extensions++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    }
     const char* layers[] = {"VK_LAYER_KHRONOS_validation"};
 
     VkApplicationInfo app{};
@@ -418,7 +447,7 @@ ResonateStatus Context::ensureInstance()
     VkInstanceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     info.pApplicationInfo = &app;
-    info.enabledExtensionCount = debug_utils ? 3u : 2u;
+    info.enabledExtensionCount = enabled_extensions;
     info.ppEnabledExtensionNames = extensions;
     info.enabledLayerCount = validation ? 1u : 0u;
     info.ppEnabledLayerNames = layers;
@@ -465,10 +494,14 @@ ResonateStatus Context::ensureDevice()
 
     int best = -1;
     uint32_t family = UINT32_MAX;
+    const bool windowed = surface_ != VK_NULL_HANDLE;
     for (VkPhysicalDevice candidate : devices)
     {
         uint32_t candidate_family = UINT32_MAX;
-        if (!combinedGraphicsAndPresent(candidate, surface_, &candidate_family))
+        const bool eligible =
+            windowed ? combinedGraphicsAndPresent(candidate, surface_, &candidate_family)
+                     : graphicsQueueFamily(candidate, &candidate_family);
+        if (!eligible)
         {
             continue;
         }
@@ -485,7 +518,8 @@ ResonateStatus Context::ensureDevice()
     }
     if (physical_ == VK_NULL_HANDLE)
     {
-        note(device_failed_, "no Vulkan device with a graphics+present queue");
+        note(device_failed_, windowed ? "no Vulkan device with a graphics+present queue"
+                                      : "no Vulkan device with a graphics queue");
         return RESONATE_E_UNSUPPORTED;
     }
     queue_family_ = family;
@@ -494,7 +528,7 @@ ResonateStatus Context::ensureDevice()
     vkEnumerateDeviceExtensionProperties(physical_, nullptr, &extension_count, nullptr);
     std::vector<VkExtensionProperties> extensions(extension_count);
     vkEnumerateDeviceExtensionProperties(physical_, nullptr, &extension_count, extensions.data());
-    if (!hasExtension(extensions, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+    if (windowed && !hasExtension(extensions, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
     {
         note(device_failed_, "device has no swapchain extension");
         return RESONATE_E_UNSUPPORTED;
@@ -541,14 +575,19 @@ ResonateStatus Context::ensureDevice()
     queue.queueCount = 1;
     queue.pQueuePriorities = &priority;
 
-    const char* device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-                                       VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME};
+    const char* device_extensions[2];
+    uint32_t device_extension_count = 0;
+    if (windowed)
+    {
+        device_extensions[device_extension_count++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+    }
+    device_extensions[device_extension_count++] = VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME;
     VkDeviceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     info.pNext = &enabled_indexing;
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = &queue;
-    info.enabledExtensionCount = 2;
+    info.enabledExtensionCount = device_extension_count;
     info.ppEnabledExtensionNames = device_extensions;
     if (vkCreateDevice(physical_, &info, nullptr, &device_) != VK_SUCCESS)
     {
@@ -748,11 +787,11 @@ ResonateStatus Context::ensureDevice()
 
 ResonateStatus Context::attachSurface(const void* native_surface, uint32_t width, uint32_t height)
 {
-    if (native_surface == nullptr)
+    if (native_surface == nullptr || offscreen_)
     {
         return RESONATE_E_INVALID;
     }
-    if (ResonateStatus status = ensureInstance(); status != RESONATE_OK)
+    if (ResonateStatus status = ensureInstance(true); status != RESONATE_OK)
     {
         return status;
     }
@@ -788,7 +827,31 @@ ResonateStatus Context::attachSurface(const void* native_surface, uint32_t width
 
 bool Context::hasSurface() const
 {
-    return swapchain_ != VK_NULL_HANDLE;
+    return swapchain_ != VK_NULL_HANDLE || offscreen_;
+}
+
+ResonateStatus Context::attachOffscreen(uint32_t width, uint32_t height)
+{
+    if (width == 0U || height == 0U || surface_ != VK_NULL_HANDLE)
+    {
+        return RESONATE_E_INVALID;
+    }
+    if (ResonateStatus status = ensureInstance(false); status != RESONATE_OK)
+    {
+        return status;
+    }
+    if (ResonateStatus status = ensureDevice(); status != RESONATE_OK)
+    {
+        return status;
+    }
+
+    /* Re-attaching resizes an existing target; a window target is never
+       replaced. */
+    offscreen_ = true;
+    canvas_width_ = width;
+    canvas_height_ = height;
+    destroySwapchainObjects();
+    return createOffscreen(width, height);
 }
 
 ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
@@ -945,6 +1008,91 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
     return RESONATE_OK;
 }
 
+ResonateStatus Context::createOffscreen(uint32_t width, uint32_t height)
+{
+    extent_ = VkExtent2D{width, height};
+    surface_format_.format = VK_FORMAT_R8G8B8A8_SRGB;
+    surface_format_.colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+
+    /* The image index shares the frame slot: the fence waited at begin_frame
+       then guarantees the image is free as well. */
+    constexpr uint32_t kOffscreenImages = kFramesInFlight;
+
+    VkImageCreateInfo image_info{};
+    image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = surface_format_.format;
+    image_info.extent = VkExtent3D{width, height, 1U};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VmaAllocationCreateInfo allocation{};
+    allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+
+    VkImageViewCreateInfo view{};
+    view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = surface_format_.format;
+    view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    view.subresourceRange.levelCount = 1;
+    view.subresourceRange.layerCount = 1;
+
+    offscreen_images_.reserve(kOffscreenImages);
+    views_.reserve(kOffscreenImages);
+    for (uint32_t index = 0; index < kOffscreenImages; ++index)
+    {
+        OwnedImage owned;
+        if (vmaCreateImage(allocator_, &image_info, &allocation, &owned.image, &owned.allocation,
+                           nullptr) != VK_SUCCESS)
+        {
+            note(device_failed_, "offscreen image creation failed");
+            return RESONATE_E_INTERNAL;
+        }
+        view.image = owned.image;
+        VkImageView handle = VK_NULL_HANDLE;
+        if (vkCreateImageView(device_, &view, nullptr, &handle) != VK_SUCCESS)
+        {
+            vmaDestroyImage(allocator_, owned.image, owned.allocation);
+            note(device_failed_, "offscreen view creation failed");
+            return RESONATE_E_INTERNAL;
+        }
+        offscreen_images_.push_back(owned);
+        views_.push_back(handle);
+    }
+
+    if (renderPassFor(RESONATE_RENDER_FORMAT_UNKNOWN, RESONATE_RENDER_FORMAT_UNKNOWN,
+                      &render_pass_) != RESONATE_OK)
+    {
+        note(device_failed_, "render pass creation failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    framebuffers_.reserve(views_.size());
+    for (VkImageView image_view : views_)
+    {
+        VkFramebufferCreateInfo framebuffer{};
+        framebuffer.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebuffer.renderPass = render_pass_;
+        framebuffer.attachmentCount = 1;
+        framebuffer.pAttachments = &image_view;
+        framebuffer.width = extent_.width;
+        framebuffer.height = extent_.height;
+        framebuffer.layers = 1;
+        VkFramebuffer created = VK_NULL_HANDLE;
+        if (vkCreateFramebuffer(device_, &framebuffer, nullptr, &created) != VK_SUCCESS)
+        {
+            note(device_failed_, "framebuffer creation failed");
+            return RESONATE_E_INTERNAL;
+        }
+        framebuffers_.push_back(created);
+    }
+    return RESONATE_OK;
+}
+
 void Context::destroySwapchainObjects()
 {
     if (device_ == VK_NULL_HANDLE)
@@ -966,6 +1114,13 @@ void Context::destroySwapchainObjects()
         vkDestroySemaphore(device_, semaphore, nullptr);
     }
     present_semaphores_.clear();
+    /* Offscreen images are ours, unlike swapchain images; the views above are
+       already gone. */
+    for (OwnedImage& owned : offscreen_images_)
+    {
+        vmaDestroyImage(allocator_, owned.image, owned.allocation);
+    }
+    offscreen_images_.clear();
     /* The cached pass object for the swapchain key is retired like any other;
        recreateSwapchain rebuilds it on demand. */
     if (render_pass_ != VK_NULL_HANDLE)
@@ -1046,7 +1201,10 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
         attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[0].finalLayout = color == RESONATE_RENDER_FORMAT_UNKNOWN
+        /* Only a swapchain image ends a pass in the present layout; an
+           offscreen target stays a color attachment, which is where readback
+           picks it up. */
+        attachments[0].finalLayout = color == RESONATE_RENDER_FORMAT_UNKNOWN && !offscreen_
                                          ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
                                          : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
@@ -1203,15 +1361,20 @@ void Context::drainGraveyard(std::vector<Retired>& graveyard)
 
 ResonateStatus Context::beginFrame()
 {
-    if (swapchain_ == VK_NULL_HANDLE || frame_open_)
+    if ((swapchain_ == VK_NULL_HANDLE && !offscreen_) || frame_open_)
     {
         return RESONATE_E_STATE;
     }
-    /* Recreate only when the canvas changed size; the swapchain's own extent
-       may differ (DPI scaling, clamping) without that meaning a resize. */
+    /* The swapchain recreates itself when the canvas changes size; an offscreen
+       target is re-attached by its owner instead. */
     const uint32_t width = canvas_ != nullptr ? canvas_->width(canvas_->self) : canvas_width_;
     const uint32_t height = canvas_ != nullptr ? canvas_->height(canvas_->self) : canvas_height_;
-    if (recreate_pending_ || width != canvas_width_ || height != canvas_height_)
+    if (offscreen_)
+    {
+        canvas_width_ = width;
+        canvas_height_ = height;
+    }
+    else if (recreate_pending_ || width != canvas_width_ || height != canvas_height_)
     {
         canvas_width_ = width;
         canvas_height_ = height;
@@ -1223,22 +1386,32 @@ ResonateStatus Context::beginFrame()
     vkWaitForFences(device_, 1, &frame.in_flight, VK_TRUE, UINT64_MAX);
     drainGraveyard(frame.graveyard);
 
-    uint32_t image_index = 0;
-    VkResult acquired = vkAcquireNextImageKHR(device_, swapchain_, kAcquireTimeoutNs,
-                                              frame.image_available, VK_NULL_HANDLE, &image_index);
-    if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
+    if (offscreen_)
     {
-        recreateSwapchain();
-        acquired = vkAcquireNextImageKHR(device_, swapchain_, kAcquireTimeoutNs,
-                                         frame.image_available, VK_NULL_HANDLE, &image_index);
+        /* The image shares the frame slot, so the fence above guarantees the
+           image is free as well. */
+        image_index_ = frame_ % kFramesInFlight;
     }
-    if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
+    else
     {
-        note(surface_failed_, "image acquisition failed");
-        return RESONATE_E_STATE;
+        uint32_t image_index = 0;
+        VkResult acquired =
+            vkAcquireNextImageKHR(device_, swapchain_, kAcquireTimeoutNs, frame.image_available,
+                                  VK_NULL_HANDLE, &image_index);
+        if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            recreateSwapchain();
+            acquired = vkAcquireNextImageKHR(device_, swapchain_, kAcquireTimeoutNs,
+                                             frame.image_available, VK_NULL_HANDLE, &image_index);
+        }
+        if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
+        {
+            note(surface_failed_, "image acquisition failed");
+            return RESONATE_E_STATE;
+        }
+        recreate_pending_ = acquired == VK_SUBOPTIMAL_KHR;
+        image_index_ = image_index;
     }
-    recreate_pending_ = acquired == VK_SUBOPTIMAL_KHR;
-    image_index_ = image_index;
 
     vkResetFences(device_, 1, &frame.in_flight);
     vkResetCommandBuffer(frame.command, 0);
@@ -1519,24 +1692,33 @@ ResonateStatus Context::waitIdle()
 
 ResonateStatus Context::present()
 {
-    if (!frame_open_ || swapchain_ == VK_NULL_HANDLE)
+    if (!frame_open_ || (swapchain_ == VK_NULL_HANDLE && !offscreen_))
     {
         return RESONATE_E_STATE;
     }
     Frame& frame = frames_[frame_ % kFramesInFlight];
     vkEndCommandBuffer(frame.command);
 
+    /* An offscreen frame waits on and signals nothing: there is no acquire and
+       no presentation engine. */
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    VkSemaphore render_done = present_semaphores_[image_index_];
+    VkSemaphore render_done =
+        present_semaphores_.empty() ? VK_NULL_HANDLE : present_semaphores_[image_index_];
     VkSubmitInfo submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.waitSemaphoreCount = 1;
-    submit.pWaitSemaphores = &frame.image_available;
-    submit.pWaitDstStageMask = &wait_stage;
+    if (!offscreen_)
+    {
+        submit.waitSemaphoreCount = 1;
+        submit.pWaitSemaphores = &frame.image_available;
+        submit.pWaitDstStageMask = &wait_stage;
+    }
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &frame.command;
-    submit.signalSemaphoreCount = 1;
-    submit.pSignalSemaphores = &render_done;
+    if (!offscreen_)
+    {
+        submit.signalSemaphoreCount = 1;
+        submit.pSignalSemaphores = &render_done;
+    }
     const VkResult submitted = vkQueueSubmit(queue_, 1, &submit, frame.in_flight);
     frame_open_ = false;
     pass_open_ = false;
@@ -1548,6 +1730,10 @@ ResonateStatus Context::present()
     {
         note(surface_failed_, "command submission failed");
         return RESONATE_E_INTERNAL;
+    }
+    if (offscreen_)
+    {
+        return RESONATE_OK;
     }
 
     VkPresentInfoKHR info{};
@@ -1568,6 +1754,89 @@ ResonateStatus Context::present()
         return RESONATE_E_INTERNAL;
     }
     return RESONATE_OK;
+}
+
+ResonateStatus Context::readbackCanvas(void* data, uint64_t size_bytes, uint32_t* out_width,
+                                       uint32_t* out_height)
+{
+    if (!offscreen_ || data == nullptr || out_width == nullptr || out_height == nullptr ||
+        frame_open_ || frame_ == 0U || offscreen_images_.empty())
+    {
+        return RESONATE_E_STATE;
+    }
+    const uint64_t tight = static_cast<uint64_t>(extent_.width) * extent_.height * 4U;
+    if (size_bytes < tight)
+    {
+        return RESONATE_E_INVALID;
+    }
+    vkDeviceWaitIdle(device_);
+
+    VkBufferCreateInfo staging_info{};
+    staging_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    staging_info.size = tight;
+    staging_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    staging_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VmaAllocationCreateInfo staging_allocation{};
+    staging_allocation.usage = VMA_MEMORY_USAGE_AUTO;
+    staging_allocation.flags =
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VkBuffer staging = VK_NULL_HANDLE;
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    VmaAllocationInfo allocation_info{};
+    if (vmaCreateBuffer(allocator_, &staging_info, &staging_allocation, &staging, &allocation,
+                        &allocation_info) != VK_SUCCESS)
+    {
+        return RESONATE_E_INTERNAL;
+    }
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    vkResetCommandBuffer(aux_command_, 0);
+    vkBeginCommandBuffer(aux_command_, &begin);
+
+    VkImageMemoryBarrier to_copy{};
+    to_copy.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_copy.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    to_copy.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_copy.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    to_copy.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_copy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_copy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_copy.image = offscreen_images_[image_index_].image;
+    to_copy.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    to_copy.subresourceRange.levelCount = 1;
+    to_copy.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(aux_command_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_copy);
+
+    VkBufferImageCopy copy{};
+    copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.imageSubresource.layerCount = 1;
+    copy.imageExtent = VkExtent3D{extent_.width, extent_.height, 1U};
+    vkCmdCopyImageToBuffer(aux_command_, to_copy.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           staging, 1, &copy);
+
+    /* Back to the attachment layout, so a second readback sees the same state
+       and the next frame's render pass starts from it. */
+    VkImageMemoryBarrier to_color = to_copy;
+    to_color.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_color.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    to_color.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_color.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    vkCmdPipelineBarrier(aux_command_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr,
+                         1, &to_color);
+
+    vkEndCommandBuffer(aux_command_);
+    const ResonateStatus status = submitAndRun(aux_command_);
+    if (status == RESONATE_OK)
+    {
+        std::memcpy(data, allocation_info.pMappedData, static_cast<std::size_t>(tight));
+        *out_width = extent_.width;
+        *out_height = extent_.height;
+    }
+    vmaDestroyBuffer(allocator_, staging, allocation);
+    return status;
 }
 
 } // namespace resonate::render_vulkan

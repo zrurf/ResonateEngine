@@ -190,6 +190,7 @@ struct RenderSystem::Impl
     ResonateRenderCanvas* canvas = nullptr;
     bool surface_attached = false;
     bool surface_unavailable = false;
+    bool windowed = false;
     bool initialized = false;
     bool released = false;
 
@@ -1310,27 +1311,39 @@ void RenderSystem::run(ecs::World& world)
         return; /* headless, or the render module is absent: nothing draws */
     }
 
-    /* The surface comes from the canvas: a window-backed one attaches once, an
-       offscreen one leaves the device without a swapchain and the frame
-       without a picture. */
+    /* The target comes from the canvas: a window-backed one gets a surface, an
+       offscreen one gets device-owned images. A server run with no canvas never
+       gets here. */
     if (!impl.surface_attached && !impl.surface_unavailable)
     {
         ResonateRenderCanvas* canvas = impl.canvas;
-        const void* native = canvas != nullptr && canvas->is_window_backed(canvas->self) != 0U
-                                 ? canvas->native_handle(canvas->self)
-                                 : nullptr;
-        if (native == nullptr)
+        const uint32_t width = canvas->width(canvas->self);
+        const uint32_t height = canvas->height(canvas->self);
+        if (width == 0U || height == 0U)
         {
             impl.surface_unavailable = true;
             return;
         }
-        const uint32_t width = canvas->width(canvas->self);
-        const uint32_t height = canvas->height(canvas->self);
-        if (width == 0U || height == 0U ||
-            impl.device->attach_surface(impl.device->self, native, width, height) != RESONATE_OK)
+
+        impl.windowed = canvas->is_window_backed(canvas->self) != 0U;
+        ResonateStatus attached = RESONATE_E_INVALID;
+        if (impl.windowed)
+        {
+            const void* native = canvas->native_handle(canvas->self);
+            if (native != nullptr)
+            {
+                attached = impl.device->attach_surface(impl.device->self, native, width, height);
+            }
+        }
+        else
+        {
+            attached = impl.device->attach_offscreen(impl.device->self, width, height);
+        }
+        if (attached != RESONATE_OK)
         {
             impl.surface_unavailable = true;
-            impl.complain("the surface was not attached");
+            impl.complain(impl.windowed ? "the surface was not attached"
+                                        : "the offscreen target was not attached");
             return;
         }
         impl.surface_attached = true;
@@ -1353,6 +1366,16 @@ void RenderSystem::run(ecs::World& world)
         }
         impl.device->wait_idle(impl.device->self);
         impl.executor.reset();
+        /* An offscreen target is device-owned, so the renderer re-attaches it
+           at the new extent; the first attach already used the current size.
+           The swapchain resizes itself in begin_frame. */
+        if (impl.initialized && !impl.windowed &&
+            impl.device->attach_offscreen(impl.device->self, width, height) != RESONATE_OK)
+        {
+            impl.surface_unavailable = true;
+            impl.complain("the offscreen target was not resized");
+            return;
+        }
         impl.target_width = width;
         impl.target_height = height;
         impl.bloom_width = std::max(1U, width / kBloomDivisor);

@@ -258,6 +258,27 @@ ResonateStatus waitIdle(void* self)
                                                          : RESONATE_E_STATE;
 }
 
+ResonateStatus attachOffscreen(void* self, uint32_t width, uint32_t height)
+{
+    auto* state = static_cast<State*>(self);
+    if (state == nullptr || state->context == nullptr)
+    {
+        return RESONATE_E_STATE;
+    }
+    return state->context->attachOffscreen(width, height);
+}
+
+ResonateStatus readbackCanvas(void* self, void* data, uint64_t size_bytes, uint32_t* out_width,
+                              uint32_t* out_height)
+{
+    auto* state = static_cast<State*>(self);
+    if (state == nullptr || state->context == nullptr)
+    {
+        return RESONATE_E_STATE;
+    }
+    return state->context->readbackCanvas(data, size_bytes, out_width, out_height);
+}
+
 ResonateRenderDevice g_device = {
     RESONATE_CAPABILITY_HEADER_INIT(ResonateRenderDevice, RESONATE_THREAD_ANY),
     &attachSurface,
@@ -288,6 +309,8 @@ ResonateRenderDevice g_device = {
     &updateBuffer,
     &present,
     &waitIdle,
+    &attachOffscreen,
+    &readbackCanvas,
     nullptr,
 };
 
