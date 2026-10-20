@@ -254,9 +254,13 @@ Context::~Context()
         {
             vmaDestroyBuffer(allocator_, table_dummy_, table_dummy_allocation_);
         }
-        if (table_sampler_ != VK_NULL_HANDLE)
+        if (table_sampler_linear_ != VK_NULL_HANDLE)
         {
-            vkDestroySampler(device_, table_sampler_, nullptr);
+            vkDestroySampler(device_, table_sampler_linear_, nullptr);
+        }
+        if (table_sampler_nearest_ != VK_NULL_HANDLE)
+        {
+            vkDestroySampler(device_, table_sampler_nearest_, nullptr);
         }
         if (table_pool_ != VK_NULL_HANDLE)
         {
@@ -713,17 +717,25 @@ ResonateStatus Context::ensureDevice()
         vkUpdateDescriptorSets(device_, kStorageTableBindings, writes, 0, nullptr);
     }
 
-    /* One linear-clamp sampler backs every sampled-image slot: the post and
-       shadow reads are all full-screen or texel-aligned. */
+    /* Two clamp samplers back the sampled-image slots: linear for the post
+       chain and shadow reads (full-screen or texel-offset taps), nearest for
+       albedo texels the image asks to keep crisp. */
     VkSamplerCreateInfo table_sampler{};
     table_sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    table_sampler.minFilter = VK_FILTER_LINEAR;
-    table_sampler.magFilter = VK_FILTER_LINEAR;
     table_sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     table_sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     table_sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     table_sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    if (vkCreateSampler(device_, &table_sampler, nullptr, &table_sampler_) != VK_SUCCESS)
+    table_sampler.minFilter = VK_FILTER_LINEAR;
+    table_sampler.magFilter = VK_FILTER_LINEAR;
+    if (vkCreateSampler(device_, &table_sampler, nullptr, &table_sampler_linear_) != VK_SUCCESS)
+    {
+        note(device_failed_, "table sampler creation failed");
+        return RESONATE_E_INTERNAL;
+    }
+    table_sampler.minFilter = VK_FILTER_NEAREST;
+    table_sampler.magFilter = VK_FILTER_NEAREST;
+    if (vkCreateSampler(device_, &table_sampler, nullptr, &table_sampler_nearest_) != VK_SUCCESS)
     {
         note(device_failed_, "table sampler creation failed");
         return RESONATE_E_INTERNAL;
@@ -1298,10 +1310,10 @@ void Context::writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size)
     vkUpdateDescriptorSets(device_, kStorageTableBindings, writes, 0, nullptr);
 }
 
-void Context::writeImageSlot(uint32_t slot, VkImageView view)
+void Context::writeImageSlot(uint32_t slot, VkImageView view, bool nearest)
 {
     VkDescriptorImageInfo image_info{};
-    image_info.sampler = table_sampler_;
+    image_info.sampler = nearest ? table_sampler_nearest_ : table_sampler_linear_;
     image_info.imageView = view;
     image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkWriteDescriptorSet write{};

@@ -7,6 +7,7 @@
 
 #include "context.h"
 
+#include <cstddef>
 #include <cstring>
 #include <iostream>
 
@@ -234,7 +235,12 @@ ResonateStatus Context::createImage(const ResonateRenderImageDesc& desc, Resonat
     slot->alive = true;
     if ((desc.usage & RESONATE_RENDER_IMAGE_SAMPLED) != 0U)
     {
-        writeImageSlot(index, slot->view);
+        /* The field is a tail addition; an older writer's struct stops short
+           of it and means linear. */
+        const bool nearest =
+            desc.struct_size >= offsetof(ResonateRenderImageDesc, nearest) + sizeof(uint32_t) &&
+            desc.nearest != 0U;
+        writeImageSlot(index, slot->view, nearest);
     }
     *out = ResonateRenderImage{handleValue(slot->generation, index)};
     return RESONATE_OK;

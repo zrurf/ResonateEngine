@@ -165,6 +165,10 @@ typedef struct ResonateRenderImageDesc
     uint32_t width;
     uint32_t height;
     uint32_t usage; /* RESONATE_RENDER_IMAGE_* bits */
+    /* 1: the resource table samples this image nearest-neighbour (crisp
+       texels, the usual choice for albedo); 0 — also when struct_size stops
+       short — samples it linearly. */
+    uint32_t nearest;
 } ResonateRenderImageDesc;
 
 typedef struct ResonateRenderSamplerDesc

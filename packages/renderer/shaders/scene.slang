@@ -40,6 +40,8 @@ struct Push
     uint4 slots;          // frame data, cluster boxes, light grid, light indices
     uint4 slots2;         // light list, shadow map slots 0..2
     uint texture_slot;    // albedo texture (0 = white)
+    float roughness;      // metal-rough parameters of the material
+    float metallic;
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[64];
@@ -145,13 +147,48 @@ float shadowFactor(float3 world_position, float view_depth, FrameData frame)
     return sum * 0.25;
 }
 
-float3 shade(float3 albedo, float3 normal, float3 view_direction, float3 light_direction,
-             float3 light_color)
+static const float PI = 3.14159265;
+
+float distributionGGX(float3 n, float3 h, float roughness)
 {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float n_dot_h = saturate(dot(n, h));
+    float denominator = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    return a2 / max(PI * denominator * denominator, 1e-5);
+}
+
+float geometrySchlick(float n_dot_v, float roughness)
+{
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return n_dot_v / max(n_dot_v * (1.0 - k) + k, 1e-5);
+}
+
+float3 fresnelSchlick(float cos_theta, float3 f0)
+{
+    return f0 + (1.0 - f0) * pow(saturate(1.0 - cos_theta), 5.0);
+}
+
+// Metal-rough GGX for one light; `radiance` already carries the shadow and
+// attenuation factors.
+float3 shade(float3 albedo, float3 normal, float3 view_direction, float3 light_direction,
+             float3 radiance, float roughness, float metallic)
+{
+    float n_dot_l = saturate(dot(normal, light_direction));
+    if (n_dot_l <= 0.0)
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
     float3 half_vector = normalize(view_direction + light_direction);
-    float diffuse = saturate(dot(normal, light_direction)) * 0.5 + 0.5;
-    float specular = pow(saturate(dot(normal, half_vector)), 24.0);
-    return albedo * light_color * diffuse + light_color * specular * 0.25;
+    float n_dot_v = saturate(dot(normal, view_direction));
+    float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
+    float d = distributionGGX(normal, half_vector, roughness);
+    float g = geometrySchlick(n_dot_v, roughness) * geometrySchlick(n_dot_l, roughness);
+    float3 f = fresnelSchlick(saturate(dot(half_vector, view_direction)), f0);
+    float3 specular = (d * g * f) / max(4.0 * n_dot_v * n_dot_l, 1e-4);
+    float3 diffuse = (1.0 - f) * (1.0 - metallic) * albedo / PI;
+    return (diffuse + specular) * radiance * n_dot_l;
 }
 
 [shader("fragment")]
@@ -170,8 +207,9 @@ float4 sceneFragment(VertexOutput input) : SV_Target
     float3 directional_color = frame.directional_color_intensity.rgb *
                                frame.directional_color_intensity.a;
     float shadow = shadowFactor(input.world_position, input.view_depth, frame);
+    const float roughness = clamp(push.roughness, 0.04, 1.0);
     color += shade(albedo, normal, view_direction, -frame.direction_and_far.xyz,
-                   directional_color * shadow);
+                   directional_color * shadow, roughness, push.metallic);
 
     for (uint i = 0; i < lights.count; ++i)
     {
@@ -181,7 +219,7 @@ float4 sceneFragment(VertexOutput input) : SV_Target
         float distance = length(to_light);
         float attenuation = saturate(1.0 - distance / light.radius);
         color += shade(albedo, normal, view_direction, to_light / distance,
-                       light.color * light.intensity * attenuation);
+                       light.color * light.intensity * attenuation, roughness, push.metallic);
     }
 
     // Depth fog: the last tenth of the view range fades into the sky tone.

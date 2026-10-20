@@ -95,7 +95,7 @@ constexpr std::uint32_t kMaxLightsPerCluster = 128;
    enough for the blur's wide kernel, cheap enough to be free. */
 constexpr std::uint32_t kBloomDivisor = 4U;
 
-/* The push-constant block the scene/cluster shaders read: 116 bytes. The
+/* The push-constant block the scene/cluster shaders read: 124 bytes. The
    cluster and shadow shaders read only their 112-byte prefix. */
 struct FrameConstants
 {
@@ -104,6 +104,8 @@ struct FrameConstants
     std::uint32_t slots[4];     /* frame data, cluster boxes, light grid, indices */
     std::uint32_t slots2[4];    /* light list, shadow map slots 0..2 */
     std::uint32_t texture_slot; /* the scene's albedo texture */
+    float roughness;
+    float metallic;
 };
 
 /* The block the post shaders read: 32 bytes. */
@@ -120,6 +122,8 @@ struct DrawInstance
     Vec3 color;
     MeshId mesh;
     std::uint32_t texture; /* 0 = white, 1 = checker (v1's built-ins) */
+    float roughness = 0.5F;
+    float metallic = 0.0F;
 };
 
 /* One extracted frame, handed to the render thread. The producer fills a
@@ -184,6 +188,8 @@ bool createSampledTexture(ResonateRenderDevice& device, std::uint32_t width, std
     desc.width = width;
     desc.height = height;
     desc.usage = RESONATE_RENDER_IMAGE_SAMPLED;
+    /* Albedo texels stay crisp: a checker or pixel art must not smear. */
+    desc.nearest = 1U;
     if (device.create_image(device.self, &desc, &out_texture) != RESONATE_OK)
     {
         return false;
@@ -1065,6 +1071,8 @@ bool RenderSystem::Impl::extract(ecs::World& world)
                     instance.color = Vec3{instance.color.x * material->tint.x,
                                           instance.color.y * material->tint.y,
                                           instance.color.z * material->tint.z};
+                    instance.roughness = material->roughness;
+                    instance.metallic = material->metallic;
                 }
                 self->scratch.instances.push_back(instance);
             }
@@ -1288,6 +1296,8 @@ void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
         constants.model = instance.model;
         constants.tint = Vec4{instance.color.x, instance.color.y, instance.color.z, 1.0F};
         constants.texture_slot = instance.texture == 1U ? checker_texture_slot : white_texture_slot;
+        constants.roughness = instance.roughness;
+        constants.metallic = instance.metallic;
         device.set_constants(device.self, &constants, sizeof(constants));
 
         if (bound_mesh != instance.mesh)

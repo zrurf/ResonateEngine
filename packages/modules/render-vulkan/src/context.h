@@ -332,13 +332,14 @@ class Context
     static constexpr uint32_t kSampledTableBinding = 5;
     static constexpr uint32_t kTableBindingCount = kSampledTableBinding + 1;
     void writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size);
-    void writeImageSlot(uint32_t slot, VkImageView view);
+    void writeImageSlot(uint32_t slot, VkImageView view, bool nearest);
     VkDescriptorSetLayout table_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool table_pool_ = VK_NULL_HANDLE;
     VkDescriptorSet table_set_ = VK_NULL_HANDLE;
     VkBuffer table_dummy_ = VK_NULL_HANDLE;
     VmaAllocation_T* table_dummy_allocation_ = nullptr;
-    VkSampler table_sampler_ = VK_NULL_HANDLE;
+    VkSampler table_sampler_linear_ = VK_NULL_HANDLE;
+    VkSampler table_sampler_nearest_ = VK_NULL_HANDLE;
 
     /* The open frame and pass, and the state their commands use. One command
        buffer per frame: begin_frame opens it, present closes and submits it. */
