@@ -1,5 +1,7 @@
 #include <resonate/renderer/renderer.h>
 
+#include <resonate/renderer/texture.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -165,6 +167,27 @@ std::vector<char> readFile(const std::filesystem::path& path)
 {
     std::ifstream in(path, std::ios::binary);
     return std::vector<char>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+/* The cooked textures sit beside the executable in a shipped layout and under
+   the build directory during development; the walk covers both. */
+std::string contentTexturesDirectory()
+{
+    std::filesystem::path directory = resonate_pal_io_executable_directory();
+    for (int level = 0; level < 5; ++level)
+    {
+        const std::filesystem::path candidate = directory / "content" / "textures";
+        if (std::filesystem::is_directory(candidate))
+        {
+            return candidate.string();
+        }
+        if (!directory.has_parent_path())
+        {
+            break;
+        }
+        directory = directory.parent_path();
+    }
+    return {};
 }
 
 /* A handle's index half is its resource-table slot (device.h). */
@@ -876,26 +899,47 @@ bool RenderSystem::Impl::ensurePipelines()
     }
 
     /* The albedo tables v1 ships: white (material 0) and a checker (material
-       1). Both land in the sampled-image table at creation. */
+       1). The checker comes from the cooked KTX2 when the content tree is
+       there; the procedural pattern keeps a bare build drawing. */
     const std::vector<std::uint8_t> white_pixels(4U, 255U);
-    /* An 8x8 checker with two-pixel squares: the boxes' faces read it as a
-       clear pattern, and it stays a multiplier on the vertex colors. */
-    std::vector<std::uint8_t> checker_pixels(8U * 8U * 4U);
-    for (std::uint32_t y = 0; y < 8U; ++y)
+    TextureImage checker;
+    std::string texture_error;
+    const std::string content_directory = contentTexturesDirectory();
+    const bool checker_loaded =
+        !content_directory.empty() &&
+        loadKtx2Rgba8(content_directory + "/checker.ktx2", checker, texture_error);
+    if (!content_directory.empty() && !checker_loaded)
     {
-        for (std::uint32_t x = 0; x < 8U; ++x)
+        std::fprintf(stderr, "renderer: checker.ktx2: %s\n", texture_error.c_str());
+    }
+    std::uint32_t checker_width = 8U;
+    std::uint32_t checker_height = 8U;
+    std::vector<std::uint8_t> checker_pixels(8U * 8U * 4U);
+    if (checker_loaded)
+    {
+        checker_width = checker.width;
+        checker_height = checker.height;
+        checker_pixels = std::move(checker.rgba);
+    }
+    else
+    {
+        for (std::uint32_t y = 0; y < 8U; ++y)
         {
-            const bool light = ((x / 2U) + (y / 2U)) % 2U == 0U;
-            const std::uint8_t value = light ? 235U : 120U;
-            const std::size_t index = (static_cast<std::size_t>(y) * 8U + x) * 4U;
-            checker_pixels[index] = value;
-            checker_pixels[index + 1U] = value;
-            checker_pixels[index + 2U] = value;
-            checker_pixels[index + 3U] = 255U;
+            for (std::uint32_t x = 0; x < 8U; ++x)
+            {
+                const bool light = ((x / 2U) + (y / 2U)) % 2U == 0U;
+                const std::uint8_t value = light ? 235U : 120U;
+                const std::size_t index = (static_cast<std::size_t>(y) * 8U + x) * 4U;
+                checker_pixels[index] = value;
+                checker_pixels[index + 1U] = value;
+                checker_pixels[index + 2U] = value;
+                checker_pixels[index + 3U] = 255U;
+            }
         }
     }
     if (!createSampledTexture(*device, 1U, 1U, white_pixels, white_texture) ||
-        !createSampledTexture(*device, 8U, 8U, checker_pixels, checker_texture))
+        !createSampledTexture(*device, checker_width, checker_height, checker_pixels,
+                              checker_texture))
     {
         complain("texture creation failed");
         pipelines_failed = true;

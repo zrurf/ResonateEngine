@@ -232,6 +232,16 @@ task("ecs-bench")
         description = "Run the ECS acceptance bench.",
     }
 
+task("texcook")
+    set_category("plugin")
+    on_run(function ()
+        os.execv(os.programfile(), {"lua", path.join(os.projectdir(), "scripts", "texcook.lua")})
+    end)
+    set_menu {
+        usage = "xmake texcook",
+        description = "Cook the source textures into the runtime KTX2 container.",
+    }
+
 includes("packages/pal")
 includes("packages/core")
 includes("packages/ecs")

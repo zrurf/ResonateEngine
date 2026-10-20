@@ -20,10 +20,12 @@ target("Resonate.Renderer")
     end)
 
     before_build(function (target)
-        local script = path.join(os.projectdir(), "scripts", "schema.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print((output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", "")))
+        for _, script_name in ipairs({"schema.lua", "texcook.lua"}) do
+            local script = path.join(os.projectdir(), "scripts", script_name)
+            local output = os.iorunv(os.programfile(), {"lua", script})
+            if output ~= nil then
+                print((output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", "")))
+            end
         end
     end)
 
