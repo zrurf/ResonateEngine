@@ -325,6 +325,11 @@ typedef struct ResonateRenderDevice
        RESONATE_E_STATE when no frame is open. */
     ResonateStatus (*present)(void* self);
 
+    /* Blocks until every submitted frame has completed. Resource surgery that
+       rewrites table slots or destroys resources happens between frames, under
+       this wait. RESONATE_E_STATE without a device or during an open frame. */
+    ResonateStatus (*wait_idle)(void* self);
+
     /* Provider state; the host never interprets it. */
     void* self;
 } ResonateRenderDevice;

@@ -495,14 +495,12 @@ ResonateStatus Context::ensureDevice()
         table_bindings[binding].binding = binding;
         table_bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         table_bindings[binding].descriptorCount = kTableSize;
-        table_bindings[binding].stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
-                                             VK_SHADER_STAGE_FRAGMENT_BIT |
-                                             VK_SHADER_STAGE_COMPUTE_BIT;
+        table_bindings[binding].stageFlags =
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
         table_bindings[binding].pImmutableSamplers = nullptr;
     }
     table_bindings[kSampledTableBinding].binding = kSampledTableBinding;
-    table_bindings[kSampledTableBinding].descriptorType =
-        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    table_bindings[kSampledTableBinding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     table_bindings[kSampledTableBinding].descriptorCount = kTableSize;
     table_bindings[kSampledTableBinding].stageFlags =
         VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
@@ -513,8 +511,7 @@ ResonateStatus Context::ensureDevice()
         flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
     }
     VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{};
-    binding_flags_info.sType =
-        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    binding_flags_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
     binding_flags_info.bindingCount = kTableBindingCount;
     binding_flags_info.pBindingFlags = binding_flags;
 
@@ -1420,6 +1417,16 @@ ResonateStatus Context::barrier(const ResonateRenderBarrierDesc* desc)
         return RESONATE_OK;
     }
     return RESONATE_E_INVALID;
+}
+
+ResonateStatus Context::waitIdle()
+{
+    if (device_ == VK_NULL_HANDLE || frame_open_)
+    {
+        return RESONATE_E_STATE;
+    }
+    vkDeviceWaitIdle(device_);
+    return RESONATE_OK;
 }
 
 ResonateStatus Context::present()

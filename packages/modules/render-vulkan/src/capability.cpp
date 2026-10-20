@@ -251,6 +251,13 @@ ResonateStatus present(void* self)
                                                          : RESONATE_E_STATE;
 }
 
+ResonateStatus waitIdle(void* self)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr ? state->context->waitIdle()
+                                                         : RESONATE_E_STATE;
+}
+
 ResonateRenderDevice g_device = {
     RESONATE_CAPABILITY_HEADER_INIT(ResonateRenderDevice, RESONATE_THREAD_ANY),
     &attachSurface,
@@ -280,6 +287,7 @@ ResonateRenderDevice g_device = {
     &dispatch,
     &updateBuffer,
     &present,
+    &waitIdle,
     nullptr,
 };
 

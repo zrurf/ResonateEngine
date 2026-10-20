@@ -72,7 +72,11 @@ float3 tonemap(float3 color)
 float4 compositeFragment(VertexOutput input) : SV_Target
 {
     float3 hdr = image_table[push.slots.x].Sample(input.uv).rgb;
-    float3 bloom = image_table[push.slots.y].Sample(input.uv).rgb;
+    // z: 1 when the stack has bloom, so the second slot is sampled only when
+    // the feature exists.
+    float3 bloom = push.params.z > 0.5
+                       ? image_table[push.slots.y].Sample(input.uv).rgb
+                       : float3(0.0, 0.0, 0.0);
     return float4(tonemap(hdr + bloom * 0.35), 1.0);
 }
 

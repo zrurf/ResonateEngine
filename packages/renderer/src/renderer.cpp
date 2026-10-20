@@ -1,5 +1,6 @@
 #include <resonate/renderer/renderer.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -52,7 +53,7 @@ struct ShaderFrameData
     Vec4 camera_and_near;             /* xyz = camera position, w = near_z */
     Vec4 direction_and_far;           /* xyz = directional direction, w = far_z */
     Vec4 directional_color_intensity; /* rgb = color, w = intensity */
-    Vec4 light_count_and_pad;         /* x = light count */
+    Vec4 light_count_and_pad;         /* x = light count, yz = cluster tile pixels */
     Mat4 light_view_proj[3];
     Vec4 split_distances; /* far view-space depth per cascade */
 };
@@ -84,12 +85,9 @@ constexpr std::uint32_t kClustersZ = 24;
 constexpr std::uint32_t kClusterCount = kClustersX * kClustersY * kClustersZ;
 constexpr std::uint32_t kMaxLightsPerCluster = 128;
 
-/* Post targets at a fixed size: the canvas resizes, these do not (the final
-   FXAA pass renders at the canvas's extent and samples with normalized UVs). */
-constexpr std::uint32_t kPostWidth = 1920U;
-constexpr std::uint32_t kPostHeight = 1080U;
-constexpr std::uint32_t kBloomWidth = 480U;
-constexpr std::uint32_t kBloomHeight = 270U;
+/* The bloom targets run at a quarter of the scene target's extent per axis:
+   enough for the blur's wide kernel, cheap enough to be free. */
+constexpr std::uint32_t kBloomDivisor = 4U;
 
 /* The push-constant block the scene/cluster shaders read: 112 bytes. */
 struct FrameConstants
@@ -97,7 +95,7 @@ struct FrameConstants
     Mat4 model;
     Vec4 tint;
     std::uint32_t slots[4];  /* frame data, cluster boxes, light grid, indices */
-    std::uint32_t slots2[4]; /* light list, shadow map base */
+    std::uint32_t slots2[4]; /* light list, shadow map slots 0..2 */
 };
 
 /* The block the post shaders read: 32 bytes. */
@@ -195,6 +193,9 @@ struct RenderSystem::Impl
     bool initialized = false;
     bool released = false;
 
+    /* The view's post-chain selection, defaults until the run sets it. */
+    FeatureStack features = FeatureStack::defaults();
+
     ecs::Query instances;
     ecs::Query cameras;
     ecs::Query point_lights;
@@ -226,6 +227,13 @@ struct RenderSystem::Impl
     ResourceId grid_resource = 0;
     ResourceId indices_resource = 0;
     std::unique_ptr<resonate::render::GraphExecutor> executor;
+
+    /* The scene and post targets follow the canvas extent; a resize rebuilds
+       the plan and its executor. */
+    std::uint32_t target_width = 0U;
+    std::uint32_t target_height = 0U;
+    std::uint32_t bloom_width = 1U;
+    std::uint32_t bloom_height = 1U;
 
     ResonateRenderPipeline scene_pipeline{};
     ResonateRenderPipeline shadow_pipeline{};
@@ -292,28 +300,46 @@ struct RenderSystem::Impl
 
 bool RenderSystem::Impl::initialize()
 {
-    /* The graph: three CSM shadow passes, two cluster compute passes, the
-       lit scene into HDR, then bright / blur / composite / FXAA into the
-       canvas. */
+    /* The fixed spine: three CSM shadow passes, two cluster compute passes and
+       the lit scene into HDR. The post chain after it comes from the feature
+       stack: bloom adds its extraction and blur passes, tonemap composites, and
+       the AA slot either runs FXAA into the canvas or leaves the composite's
+       output there. */
+    const bool bloom = features.has("bloom");
+    const bool fxaa = features.antialiases();
+
     resonate::render::RenderGraph graph;
     canvas_resource = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
-    depth_resource = graph.declareImage("depth", RESONATE_RENDER_FORMAT_D32_SFLOAT, kPostWidth,
-                                        kPostHeight, RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT);
+    depth_resource = graph.declareImage("depth", RESONATE_RENDER_FORMAT_D32_SFLOAT, target_width,
+                                        target_height, RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT);
     hdr_resource = graph.declareImage(
-        "hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, kPostWidth, kPostHeight,
+        "hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, target_width, target_height,
         RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
-    ldr_resource =
-        graph.declareImage("ldr", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, kPostWidth, kPostHeight,
-                           RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
-    bright_resource = graph.declareImage(
-        "bright", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, kBloomWidth, kBloomHeight,
-        RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
-    blur_a_resource = graph.declareImage(
-        "blur_a", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, kBloomWidth, kBloomHeight,
-        RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
-    blur_b_resource = graph.declareImage(
-        "blur_b", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, kBloomWidth, kBloomHeight,
-        RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
+
+    /* Resources a feature does not ask for stay invalid: no pass names them and
+       the executor does not create them. */
+    ldr_resource = resonate::render::kInvalidResource;
+    bright_resource = resonate::render::kInvalidResource;
+    blur_a_resource = resonate::render::kInvalidResource;
+    blur_b_resource = resonate::render::kInvalidResource;
+    if (fxaa)
+    {
+        ldr_resource = graph.declareImage(
+            "ldr", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
+            RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
+    }
+    if (bloom)
+    {
+        bright_resource = graph.declareImage(
+            "bright", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, bloom_width, bloom_height,
+            RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
+        blur_a_resource = graph.declareImage(
+            "blur_a", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, bloom_width, bloom_height,
+            RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
+        blur_b_resource = graph.declareImage(
+            "blur_b", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, bloom_width, bloom_height,
+            RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
+    }
     for (std::uint32_t cascade = 0; cascade < kCascades; ++cascade)
     {
         shadow_resource[cascade] = graph.declareImage(
@@ -420,109 +446,121 @@ bool RenderSystem::Impl::initialize()
     scene.execute = &Impl::drawSceneEntry;
     graph.addPass(scene);
 
-    Use hdr_read{};
-    hdr_read.resource = hdr_resource;
-    hdr_read.stages = resonate::render::kStageFragment;
-    hdr_read.access = resonate::render::kAccessShaderRead;
-    hdr_read.layout = kLayoutShaderReadOnly;
-    Use bright_write{};
-    bright_write.resource = bright_resource;
-    bright_write.stages = resonate::render::kStageColorOutput;
-    bright_write.access = resonate::render::kAccessColorWrite;
-    bright_write.layout = kLayoutColorAttachment;
-    resonate::render::PassDesc bright{};
-    bright.name = "bright";
-    bright.reads = &hdr_read;
-    bright.read_count = 1U;
-    bright.writes = &bright_write;
-    bright.write_count = 1U;
-    bright.context = this;
-    bright.execute = &Impl::brightEntry;
-    graph.addPass(bright);
+    if (bloom)
+    {
+        Use hdr_read{};
+        hdr_read.resource = hdr_resource;
+        hdr_read.stages = resonate::render::kStageFragment;
+        hdr_read.access = resonate::render::kAccessShaderRead;
+        hdr_read.layout = kLayoutShaderReadOnly;
+        Use bright_write{};
+        bright_write.resource = bright_resource;
+        bright_write.stages = resonate::render::kStageColorOutput;
+        bright_write.access = resonate::render::kAccessColorWrite;
+        bright_write.layout = kLayoutColorAttachment;
+        resonate::render::PassDesc bright{};
+        bright.name = "bright";
+        bright.reads = &hdr_read;
+        bright.read_count = 1U;
+        bright.writes = &bright_write;
+        bright.write_count = 1U;
+        bright.context = this;
+        bright.execute = &Impl::brightEntry;
+        graph.addPass(bright);
 
-    Use bright_read{};
-    bright_read.resource = bright_resource;
-    bright_read.stages = resonate::render::kStageFragment;
-    bright_read.access = resonate::render::kAccessShaderRead;
-    bright_read.layout = kLayoutShaderReadOnly;
-    Use blur_a_write{};
-    blur_a_write.resource = blur_a_resource;
-    blur_a_write.stages = resonate::render::kStageColorOutput;
-    blur_a_write.access = resonate::render::kAccessColorWrite;
-    blur_a_write.layout = kLayoutColorAttachment;
-    resonate::render::PassDesc blur_h{};
-    blur_h.name = "blur-h";
-    blur_h.reads = &bright_read;
-    blur_h.read_count = 1U;
-    blur_h.writes = &blur_a_write;
-    blur_h.write_count = 1U;
-    blur_h.context = this;
-    blur_h.execute = &Impl::blurHEntry;
-    graph.addPass(blur_h);
+        Use bright_read{};
+        bright_read.resource = bright_resource;
+        bright_read.stages = resonate::render::kStageFragment;
+        bright_read.access = resonate::render::kAccessShaderRead;
+        bright_read.layout = kLayoutShaderReadOnly;
+        Use blur_a_write{};
+        blur_a_write.resource = blur_a_resource;
+        blur_a_write.stages = resonate::render::kStageColorOutput;
+        blur_a_write.access = resonate::render::kAccessColorWrite;
+        blur_a_write.layout = kLayoutColorAttachment;
+        resonate::render::PassDesc blur_h{};
+        blur_h.name = "blur-h";
+        blur_h.reads = &bright_read;
+        blur_h.read_count = 1U;
+        blur_h.writes = &blur_a_write;
+        blur_h.write_count = 1U;
+        blur_h.context = this;
+        blur_h.execute = &Impl::blurHEntry;
+        graph.addPass(blur_h);
 
-    Use blur_a_read{};
-    blur_a_read.resource = blur_a_resource;
-    blur_a_read.stages = resonate::render::kStageFragment;
-    blur_a_read.access = resonate::render::kAccessShaderRead;
-    blur_a_read.layout = kLayoutShaderReadOnly;
-    Use blur_b_write{};
-    blur_b_write.resource = blur_b_resource;
-    blur_b_write.stages = resonate::render::kStageColorOutput;
-    blur_b_write.access = resonate::render::kAccessColorWrite;
-    blur_b_write.layout = kLayoutColorAttachment;
-    resonate::render::PassDesc blur_v{};
-    blur_v.name = "blur-v";
-    blur_v.reads = &blur_a_read;
-    blur_v.read_count = 1U;
-    blur_v.writes = &blur_b_write;
-    blur_v.write_count = 1U;
-    blur_v.context = this;
-    blur_v.execute = &Impl::blurVEntry;
-    graph.addPass(blur_v);
+        Use blur_a_read{};
+        blur_a_read.resource = blur_a_resource;
+        blur_a_read.stages = resonate::render::kStageFragment;
+        blur_a_read.access = resonate::render::kAccessShaderRead;
+        blur_a_read.layout = kLayoutShaderReadOnly;
+        Use blur_b_write{};
+        blur_b_write.resource = blur_b_resource;
+        blur_b_write.stages = resonate::render::kStageColorOutput;
+        blur_b_write.access = resonate::render::kAccessColorWrite;
+        blur_b_write.layout = kLayoutColorAttachment;
+        resonate::render::PassDesc blur_v{};
+        blur_v.name = "blur-v";
+        blur_v.reads = &blur_a_read;
+        blur_v.read_count = 1U;
+        blur_v.writes = &blur_b_write;
+        blur_v.write_count = 1U;
+        blur_v.context = this;
+        blur_v.execute = &Impl::blurVEntry;
+        graph.addPass(blur_v);
+    }
 
+    /* Without an AA pass the composite owns the canvas; with one it writes the
+       LDR target FXAA reads. */
+    const ResourceId composite_target = fxaa ? ldr_resource : canvas_resource;
     Use composite_reads[2]{};
     composite_reads[0].resource = hdr_resource;
     composite_reads[0].stages = resonate::render::kStageFragment;
     composite_reads[0].access = resonate::render::kAccessShaderRead;
     composite_reads[0].layout = kLayoutShaderReadOnly;
-    composite_reads[1].resource = blur_b_resource;
-    composite_reads[1].stages = resonate::render::kStageFragment;
-    composite_reads[1].access = resonate::render::kAccessShaderRead;
-    composite_reads[1].layout = kLayoutShaderReadOnly;
-    Use ldr_write{};
-    ldr_write.resource = ldr_resource;
-    ldr_write.stages = resonate::render::kStageColorOutput;
-    ldr_write.access = resonate::render::kAccessColorWrite;
-    ldr_write.layout = kLayoutColorAttachment;
+    if (bloom)
+    {
+        composite_reads[1].resource = blur_b_resource;
+        composite_reads[1].stages = resonate::render::kStageFragment;
+        composite_reads[1].access = resonate::render::kAccessShaderRead;
+        composite_reads[1].layout = kLayoutShaderReadOnly;
+    }
+    Use composite_write{};
+    composite_write.resource = composite_target;
+    composite_write.stages = resonate::render::kStageColorOutput;
+    composite_write.access = resonate::render::kAccessColorWrite;
+    composite_write.layout = kLayoutColorAttachment;
     resonate::render::PassDesc composite{};
     composite.name = "composite";
     composite.reads = composite_reads;
-    composite.read_count = 2U;
-    composite.writes = &ldr_write;
+    composite.read_count = bloom ? 2U : 1U;
+    composite.writes = &composite_write;
     composite.write_count = 1U;
     composite.context = this;
     composite.execute = &Impl::compositeEntry;
     graph.addPass(composite);
 
-    Use ldr_read{};
-    ldr_read.resource = ldr_resource;
-    ldr_read.stages = resonate::render::kStageFragment;
-    ldr_read.access = resonate::render::kAccessShaderRead;
-    ldr_read.layout = kLayoutShaderReadOnly;
-    Use canvas_write{};
-    canvas_write.resource = canvas_resource;
-    canvas_write.stages = resonate::render::kStageColorOutput;
-    canvas_write.access = resonate::render::kAccessColorWrite;
-    canvas_write.layout = kLayoutColorAttachment;
-    resonate::render::PassDesc fxaa{};
-    fxaa.name = "fxaa";
-    fxaa.reads = &ldr_read;
-    fxaa.read_count = 1U;
-    fxaa.writes = &canvas_write;
-    fxaa.write_count = 1U;
-    fxaa.context = this;
-    fxaa.execute = &Impl::fxaaEntry;
-    graph.addPass(fxaa);
+    if (fxaa)
+    {
+        Use ldr_read{};
+        ldr_read.resource = ldr_resource;
+        ldr_read.stages = resonate::render::kStageFragment;
+        ldr_read.access = resonate::render::kAccessShaderRead;
+        ldr_read.layout = kLayoutShaderReadOnly;
+        Use canvas_write{};
+        canvas_write.resource = canvas_resource;
+        canvas_write.stages = resonate::render::kStageColorOutput;
+        canvas_write.access = resonate::render::kAccessColorWrite;
+        canvas_write.layout = kLayoutColorAttachment;
+        resonate::render::PassDesc fxaa{};
+        fxaa.name = "fxaa";
+        fxaa.reads = &ldr_read;
+        fxaa.read_count = 1U;
+        fxaa.writes = &canvas_write;
+        fxaa.write_count = 1U;
+        fxaa.context = this;
+        fxaa.execute = &Impl::fxaaEntry;
+        graph.addPass(fxaa);
+    }
     graph.exportResource(canvas_resource);
 
     std::string error;
@@ -708,9 +746,14 @@ bool RenderSystem::Impl::ensurePipelines()
         return false;
     }
 
-    const ResonateRenderFormat post_targets[4] = {
-        RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
-        RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, RESONATE_RENDER_FORMAT_UNKNOWN};
+    /* Without an AA pass the composite owns the canvas, so its pipeline names
+       the swapchain format instead of the LDR target's. */
+    const ResonateRenderFormat composite_format = features.antialiases()
+                                                      ? RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM
+                                                      : RESONATE_RENDER_FORMAT_UNKNOWN;
+    const ResonateRenderFormat post_targets[4] = {RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+                                                  RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+                                                  composite_format, RESONATE_RENDER_FORMAT_UNKNOWN};
     ResonateRenderShader* post_fragments[4] = {&bright, &blur, &composite, &fxaa};
     ResonateRenderPipeline* post_pipelines[4] = {&bright_pipeline, &blur_pipeline,
                                                  &composite_pipeline, &fxaa_pipeline};
@@ -900,8 +943,12 @@ void RenderSystem::Impl::extract(ecs::World& world)
         Vec4{directional_direction.x, directional_direction.y, directional_direction.z, far_z};
     frame.frame_data.directional_color_intensity =
         Vec4{directional_color.x, directional_color.y, directional_color.z, directional_intensity};
+    /* The cluster grid's pixel tile size travels with the frame data, so the
+       fragment shader's lookup follows the target's extent. */
     frame.frame_data.light_count_and_pad =
-        Vec4{static_cast<float>(frame.lights.size()), 0.0F, 0.0F, 0.0F};
+        Vec4{static_cast<float>(frame.lights.size()),
+             static_cast<float>(target_width) / static_cast<float>(kClustersX),
+             static_cast<float>(target_height) / static_cast<float>(kClustersY), 0.0F};
 
     /* CSM: three logarithmic splits, ascending, the last at 35% of the view
        distance — shadow range trades against texel density. Each cascade's
@@ -1153,7 +1200,8 @@ void RenderSystem::Impl::brightEntry(void* context, GraphExecuteContext& command
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
     self->runPost(commands, self->bright_resource, self->bright_pipeline,
-                  commands.imageSlot(self->hdr_resource), 0U, Vec4{1.0F, 0.0F, 0.0F, 0.0F});
+                  commands.imageSlot(self->hdr_resource), 0U,
+                  Vec4{self->features.bloom_threshold, 0.0F, 0.0F, 0.0F});
 }
 
 void RenderSystem::Impl::blurHEntry(void* context, GraphExecuteContext& commands)
@@ -1161,7 +1209,7 @@ void RenderSystem::Impl::blurHEntry(void* context, GraphExecuteContext& commands
     auto* self = static_cast<RenderSystem::Impl*>(context);
     self->runPost(commands, self->blur_a_resource, self->blur_pipeline,
                   commands.imageSlot(self->bright_resource), 0U,
-                  Vec4{1.0F / kBloomWidth, 0.0F, 0.0F, 0.0F});
+                  Vec4{1.0F / static_cast<float>(self->bloom_width), 0.0F, 0.0F, 0.0F});
 }
 
 void RenderSystem::Impl::blurVEntry(void* context, GraphExecuteContext& commands)
@@ -1169,15 +1217,19 @@ void RenderSystem::Impl::blurVEntry(void* context, GraphExecuteContext& commands
     auto* self = static_cast<RenderSystem::Impl*>(context);
     self->runPost(commands, self->blur_b_resource, self->blur_pipeline,
                   commands.imageSlot(self->blur_a_resource), 0U,
-                  Vec4{0.0F, 1.0F / kBloomHeight, 0.0F, 0.0F});
+                  Vec4{0.0F, 1.0F / static_cast<float>(self->bloom_height), 0.0F, 0.0F});
 }
 
 void RenderSystem::Impl::compositeEntry(void* context, GraphExecuteContext& commands)
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
-    self->runPost(commands, self->ldr_resource, self->composite_pipeline,
-                  commands.imageSlot(self->hdr_resource), commands.imageSlot(self->blur_b_resource),
-                  Vec4{});
+    const bool bloom = self->features.has("bloom");
+    const ResourceId target =
+        self->features.antialiases() ? self->ldr_resource : self->canvas_resource;
+    self->runPost(commands, target, self->composite_pipeline,
+                  commands.imageSlot(self->hdr_resource),
+                  bloom ? commands.imageSlot(self->blur_b_resource) : 0U,
+                  Vec4{0.0F, 0.0F, bloom ? 1.0F : 0.0F, 0.0F});
 }
 
 void RenderSystem::Impl::fxaaEntry(void* context, GraphExecuteContext& commands)
@@ -1185,7 +1237,8 @@ void RenderSystem::Impl::fxaaEntry(void* context, GraphExecuteContext& commands)
     auto* self = static_cast<RenderSystem::Impl*>(context);
     self->runPost(commands, self->canvas_resource, self->fxaa_pipeline,
                   commands.imageSlot(self->ldr_resource), 0U,
-                  Vec4{1.0F / kPostWidth, 1.0F / kPostHeight, 0.0F, 0.0F});
+                  Vec4{1.0F / static_cast<float>(self->target_width),
+                       1.0F / static_cast<float>(self->target_height), 0.0F, 0.0F});
 }
 
 RenderSystem::RenderSystem() : impl_(std::make_unique<Impl>())
@@ -1197,6 +1250,11 @@ RenderSystem::~RenderSystem() = default;
 void RenderSystem::setRegistry(ResonateCapabilityRegistry* registry)
 {
     impl_->registry = registry;
+}
+
+void RenderSystem::setFeatures(const FeatureStack& stack)
+{
+    impl_->features = stack;
 }
 
 bool RenderSystem::registerComponents(ecs::World& world)
@@ -1282,10 +1340,26 @@ void RenderSystem::run(ecs::World& world)
         return;
     }
 
-    if (!impl.initialized)
+    /* The scene and post targets follow the canvas extent; a resize waits out
+       the frames in flight, rebuilds the plan and its executor, and keeps the
+       format-keyed pipelines. */
+    const uint32_t width = impl.canvas->width(impl.canvas->self);
+    const uint32_t height = impl.canvas->height(impl.canvas->self);
+    if (!impl.initialized || width != impl.target_width || height != impl.target_height)
     {
+        if (width == 0U || height == 0U)
+        {
+            return;
+        }
+        impl.device->wait_idle(impl.device->self);
+        impl.executor.reset();
+        impl.target_width = width;
+        impl.target_height = height;
+        impl.bloom_width = std::max(1U, width / kBloomDivisor);
+        impl.bloom_height = std::max(1U, height / kBloomDivisor);
         if (!impl.initialize())
         {
+            impl.initialized = false;
             return;
         }
         impl.initialized = true;

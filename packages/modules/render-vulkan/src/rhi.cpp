@@ -804,8 +804,8 @@ ResonateStatus Context::setConstants(const void* data, uint32_t size_bytes)
     return RESONATE_OK;
 }
 
-ResonateStatus Context::updateBuffer(ResonateRenderBuffer handle, uint64_t offset,
-                                     const void* data, uint64_t size_bytes)
+ResonateStatus Context::updateBuffer(ResonateRenderBuffer handle, uint64_t offset, const void* data,
+                                     uint64_t size_bytes)
 {
     /* Recorded, not applied: the copy lands with the frame, which is what makes
        per-frame data safe without waiting on the frames in flight. */

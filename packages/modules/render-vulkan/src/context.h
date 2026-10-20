@@ -159,6 +159,9 @@ class Context
     ResonateStatus drawIndexed(uint32_t index_count, uint32_t instance_count);
     ResonateStatus dispatch(uint32_t groups_x, uint32_t groups_y, uint32_t groups_z);
     ResonateStatus present();
+    /* Waits for every submitted frame; used before resource surgery between
+       frames. An open frame refuses. */
+    ResonateStatus waitIdle();
 
   private:
     struct BufferSlot

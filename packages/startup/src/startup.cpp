@@ -127,6 +127,36 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
                                             RESONATE_STAGE_LATE_UPDATE,
                                             &hierarchy::PropagationSystem::invoke, &propagation};
     renderer::RenderSystem render_system;
+
+    /* The view's post chain is data: the configured feature names are validated
+       at assembly, and a bad stack ends the run with the reason rather than
+       falling back to something the project did not ask for. */
+    renderer::FeatureStack features = renderer::FeatureStack::defaults();
+    {
+        const std::string chain =
+            config.settings.value("resonate.render", "features").value_or("bloom, tonemap");
+        const std::string antialiasing =
+            config.settings.value("resonate.render", "antialiasing").value_or("fxaa");
+        std::string error;
+        if (!renderer::parseFeatureStack(chain, antialiasing, features, error))
+        {
+            std::fprintf(stderr, "resonate: feature stack: %s\n", error.c_str());
+            return EXIT_FAILURE;
+        }
+        if (const std::optional<std::string> threshold =
+                config.settings.value("resonate.render", "bloom-threshold");
+            threshold.has_value())
+        {
+            char* end = nullptr;
+            const float parsed = std::strtof(threshold->c_str(), &end);
+            if (end != threshold->c_str() && *end == '\0' && parsed > 0.0F)
+            {
+                features.bloom_threshold = parsed;
+            }
+        }
+    }
+    render_system.setFeatures(features);
+
     const EngineSystemDesc render_desc{"renderer.frame", RESONATE_STAGE_RENDER,
                                        &renderer::RenderSystem::invoke, &render_system};
     config.systems = [&propagation, &propagation_desc, &render_system,

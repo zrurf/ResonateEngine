@@ -15,6 +15,8 @@
  */
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
@@ -23,6 +25,30 @@ struct ResonateCapabilityRegistry;
 
 namespace resonate::renderer
 {
+
+/* The view's post-chain selection. v1 covers the post chain; the scene,
+   lighting and shadow passes are fixed. `chain` names the ordered post
+   features — "bloom" is optional, "tonemap" is required — and `antialiasing`
+   names the AA slot, "fxaa" or "none". */
+struct FeatureStack
+{
+    std::vector<std::string> chain;
+    std::string antialiasing;
+    float bloom_threshold = 1.0F;
+
+    [[nodiscard]] bool has(const std::string& name) const;
+    [[nodiscard]] bool antialiases() const; /* the AA slot is not "none" */
+
+    static FeatureStack defaults();
+};
+
+/* Parses the comma-separated chain and the AA slot name, validating names,
+   duplicates, order and the slot. A refusal names the offending entry. */
+bool parseFeatureStack(const std::string& chain, const std::string& antialiasing,
+                       FeatureStack& out_stack, std::string& out_error);
+
+/* The rules parseFeatureStack applies; callable on a hand-built stack. */
+bool validateFeatureStack(const FeatureStack& stack, std::string& out_error);
 
 class RenderSystem
 {
@@ -36,6 +62,10 @@ class RenderSystem
     /* The registry the device capability is resolved through. Borrowed; the
        host outlives the frame loop. */
     void setRegistry(ResonateCapabilityRegistry* registry);
+
+    /* The post-chain selection, validated by parseFeatureStack before this
+       call; the defaults apply when it is never called. */
+    void setFeatures(const FeatureStack& stack);
 
     /* Registers the render components; idempotent, and a refusal (a name
        collision) answers false. */

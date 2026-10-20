@@ -76,18 +76,24 @@ VertexOutput sceneVertex(VertexInput input)
     FrameData frame = frame_table[push.slots.x].Load(0);
     float4 world = mul(push.model, float4(input.position, 1.0));
     output.position = mul(frame.view_proj, world);
-    output.normal = normalize(mul((float3x3)push.model, input.normal));
+    // The cofactor matrix is the inverse transpose up to the determinant, which
+    // the normalize removes: normals stay perpendicular under non-uniform scale.
+    float3x3 basis = (float3x3)push.model;
+    float3x3 normal_matrix =
+        float3x3(cross(basis[1], basis[2]), cross(basis[2], basis[0]), cross(basis[0], basis[1]));
+    output.normal = normalize(mul(normal_matrix, input.normal));
     output.color = input.color;
     output.world_position = world.xyz;
     output.view_depth = mul(frame.view_proj, world).w;
     return output;
 }
 
-// The pixel's cluster: 120-pixel tiles over a 16x9 grid, and the depth slice
-// by inverting the exponential spacing the build pass used.
+// The pixel's cluster: CLUSTERS_X x CLUSTERS_Y tiles of the target's extent,
+// and the depth slice by inverting the exponential spacing the build pass used.
 uint clusterOf(float2 pixel, float view_depth, FrameData frame)
 {
-    uint2 tile = uint2(pixel / float2(120.0, 120.0));
+    float2 tile_size = frame.light_count_and_pad.yz;
+    uint2 tile = min(uint2(pixel / tile_size), uint2(CLUSTERS_X - 1, CLUSTERS_Y - 1));
     float slice_t = log(view_depth / frame.camera_and_near.w) /
                     log(frame.direction_and_far.w / frame.camera_and_near.w);
     uint slice = uint(saturate(slice_t) * float(CLUSTERS_Z));
