@@ -8,6 +8,7 @@
 #include "context.h"
 
 #include <cstring>
+#include <iostream>
 
 namespace resonate::render_vulkan
 {
@@ -99,6 +100,15 @@ ResonateStatus Context::createBuffer(const ResonateRenderBufferDesc& desc,
     *slot = BufferSlot{};
     slot->size = desc.size_bytes;
 
+    /* The slot is the handle index, and the table has kTableSize slots: a
+       storage buffer past them could never be named by a shader. */
+    if ((desc.usage & RESONATE_RENDER_BUFFER_STORAGE) != 0U && index >= kTableSize)
+    {
+        buffers_.retire(index);
+        note(device_failed_, "the resource table is full");
+        return RESONATE_E_INVALID;
+    }
+
     VkBufferCreateInfo buffer{};
     buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer.size = desc.size_bytes;
@@ -122,12 +132,18 @@ ResonateStatus Context::createBuffer(const ResonateRenderBufferDesc& desc,
                         &allocation_info) != VK_SUCCESS)
     {
         buffers_.retire(index);
-        note(device_failed_, "buffer creation failed");
+        std::fprintf(stderr, "render-vulkan: buffer creation failed (%llu bytes, usage %x)\n",
+                     static_cast<unsigned long long>(desc.size_bytes), desc.usage);
         return RESONATE_E_INTERNAL;
     }
     slot->mapped = allocation_info.pMappedData;
     slot->alive = true;
-    *out = ResonateRenderBuffer{handleValue(slot->generation, index)};
+    const uint64_t handle = handleValue(slot->generation, index);
+    if ((desc.usage & RESONATE_RENDER_BUFFER_STORAGE) != 0U)
+    {
+        writeBufferSlot(index, slot->buffer, desc.size_bytes);
+    }
+    *out = ResonateRenderBuffer{handle};
     return RESONATE_OK;
 }
 
@@ -162,6 +178,12 @@ ResonateStatus Context::createImage(const ResonateRenderImageDesc& desc, Resonat
     ImageSlot* slot = nullptr;
     const uint32_t index = images_.acquire(&slot);
     *slot = ImageSlot{};
+    if ((desc.usage & RESONATE_RENDER_IMAGE_SAMPLED) != 0U && index >= kTableSize)
+    {
+        images_.retire(index);
+        note(device_failed_, "the resource table is full");
+        return RESONATE_E_INVALID;
+    }
     slot->format = formatOf(desc.format);
     slot->format_id = desc.format;
     slot->bytes_per_pixel = formatBytesOf(desc.format);
@@ -210,6 +232,10 @@ ResonateStatus Context::createImage(const ResonateRenderImageDesc& desc, Resonat
         return RESONATE_E_INTERNAL;
     }
     slot->alive = true;
+    if ((desc.usage & RESONATE_RENDER_IMAGE_SAMPLED) != 0U)
+    {
+        writeImageSlot(index, slot->view);
+    }
     *out = ResonateRenderImage{handleValue(slot->generation, index)};
     return RESONATE_OK;
 }
@@ -226,6 +252,21 @@ void Context::destroyImage(ResonateRenderImage handle)
         return;
     }
     Frame& frame = frames_[frame_ % kFramesInFlight];
+    /* A cached framebuffer holds this image's view; it goes first, in the same
+       deferred batch as the view and the image. */
+    for (auto entry = framebuffer_cache_.begin(); entry != framebuffer_cache_.end();)
+    {
+        if (entry->first.first == handle.value || entry->first.second == handle.value)
+        {
+            frame.graveyard.push_back(
+                Retired{kRetiredFramebuffer, static_cast<void*>(entry->second), nullptr});
+            entry = framebuffer_cache_.erase(entry);
+        }
+        else
+        {
+            ++entry;
+        }
+    }
     frame.graveyard.push_back(Retired{kRetiredImageView, static_cast<void*>(slot->view), nullptr});
     frame.graveyard.push_back(
         Retired{kRetiredImage, static_cast<void*>(slot->image), slot->allocation});
@@ -364,14 +405,18 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
 
     if (pipeline_layout_ == VK_NULL_HANDLE)
     {
-        /* No descriptor sets: constants ride the 128-byte push-constant block. */
+        /* Set 0 is the resource table, shared by every pipeline; constants ride
+           the 128-byte push-constant block. */
         VkPushConstantRange range{};
-        range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        range.stageFlags =
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
         range.offset = 0;
         range.size = kMaxConstants;
 
         VkPipelineLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layout.setLayoutCount = 1;
+        layout.pSetLayouts = &table_layout_;
         layout.pushConstantRangeCount = 1;
         layout.pPushConstantRanges = &range;
         if (vkCreatePipelineLayout(device_, &layout, nullptr, &pipeline_layout_) != VK_SUCCESS)
@@ -457,10 +502,17 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
     VkPipelineColorBlendAttachmentState blend_attachment{};
     blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    /* A depth-only pass has no color attachment, so the blend state names
+       none either. */
+    const bool colorless = desc.color_format == RESONATE_RENDER_FORMAT_NONE;
     VkPipelineColorBlendStateCreateInfo blend{};
     blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blend.attachmentCount = 1;
-    blend.pAttachments = &blend_attachment;
+    blend.attachmentCount = colorless ? 0U : 1U;
+    blend.pAttachments = colorless ? nullptr : &blend_attachment;
+
+    VkPipelineMultisampleStateCreateInfo multisample{};
+    multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
     VkDynamicState dynamics[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamic{};
@@ -478,6 +530,7 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
     pipeline.pRasterizationState = &raster;
     pipeline.pDepthStencilState = &depth_state;
     pipeline.pColorBlendState = &blend;
+    pipeline.pMultisampleState = &multisample;
     pipeline.pDynamicState = &dynamic;
     pipeline.layout = pipeline_layout_;
     pipeline.renderPass = pass;
@@ -493,6 +546,7 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
         return RESONATE_E_INTERNAL;
     }
     slot->alive = true;
+    slot->compute = false;
     *out = ResonateRenderPipeline{handleValue(slot->generation, index)};
     return RESONATE_OK;
 }
@@ -527,12 +581,15 @@ ResonateStatus Context::uploadBuffer(ResonateRenderBuffer handle, uint64_t offse
     BufferSlot* slot = buffers_.live(handleIndex(handle.value), handleGeneration(handle.value));
     if (slot == nullptr || offset > slot->size || size_bytes > slot->size - offset)
     {
+        std::fprintf(stderr, "render-vulkan: buffer upload refused\n");
         return RESONATE_E_INVALID;
     }
 
     if (slot->mapped != nullptr)
     {
         std::memcpy(static_cast<unsigned char*>(slot->mapped) + offset, data, size_bytes);
+        /* Mapped host memory is not necessarily coherent. */
+        vmaFlushAllocation(allocator_, slot->allocation, offset, size_bytes);
         return RESONATE_OK;
     }
 
@@ -671,19 +728,23 @@ ResonateStatus Context::uploadImage(ResonateRenderImage handle, const void* data
 
 ResonateStatus Context::bindPipeline(ResonateRenderPipeline handle)
 {
-    if (!pass_open_)
-    {
-        return RESONATE_E_STATE;
-    }
     PipelineSlot* slot = pipelines_.live(handleIndex(handle.value), handleGeneration(handle.value));
     if (slot == nullptr)
     {
         return RESONATE_E_INVALID;
     }
-    VkCommandBuffer command =
-        pass_on_swapchain_ ? frames_[frame_ % kFramesInFlight].command : aux_command_;
-    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, slot->pipeline);
+    /* A graphics pipeline binds inside a render pass; a compute pipeline binds
+       for the frame and dispatches outside one. */
+    if (slot->compute ? !frame_open_ : !pass_open_)
+    {
+        return RESONATE_E_STATE;
+    }
+    VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
+    vkCmdBindPipeline(
+        command, slot->compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS,
+        slot->pipeline);
     bound_pipeline_ = slot->pipeline;
+    bound_compute_ = slot->compute;
     return RESONATE_OK;
 }
 
@@ -698,8 +759,7 @@ ResonateStatus Context::bindVertexBuffer(ResonateRenderBuffer handle, uint64_t o
     {
         return RESONATE_E_INVALID;
     }
-    VkCommandBuffer command =
-        pass_on_swapchain_ ? frames_[frame_ % kFramesInFlight].command : aux_command_;
+    VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
     VkDeviceSize device_offset = offset;
     vkCmdBindVertexBuffers(command, 0, 1, &slot->buffer, &device_offset);
     bound_vertex_ = slot->buffer;
@@ -717,8 +777,7 @@ ResonateStatus Context::bindIndexBuffer(ResonateRenderBuffer handle, uint64_t of
     {
         return RESONATE_E_INVALID;
     }
-    VkCommandBuffer command =
-        pass_on_swapchain_ ? frames_[frame_ % kFramesInFlight].command : aux_command_;
+    VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
     vkCmdBindIndexBuffer(command, slot->buffer, offset, VK_INDEX_TYPE_UINT32);
     bound_index_ = slot->buffer;
     return RESONATE_OK;
@@ -726,7 +785,7 @@ ResonateStatus Context::bindIndexBuffer(ResonateRenderBuffer handle, uint64_t of
 
 ResonateStatus Context::setConstants(const void* data, uint32_t size_bytes)
 {
-    if (!pass_open_)
+    if (!frame_open_)
     {
         return RESONATE_E_STATE;
     }
@@ -735,11 +794,36 @@ ResonateStatus Context::setConstants(const void* data, uint32_t size_bytes)
     {
         return RESONATE_E_INVALID;
     }
-    VkCommandBuffer command =
-        pass_on_swapchain_ ? frames_[frame_ % kFramesInFlight].command : aux_command_;
+    VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
+    /* The layout's range covers all three stages, and a graphics pipeline's
+       draw may still be preceded by a compute pass's constants. */
     vkCmdPushConstants(command, pipeline_layout_,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, size_bytes,
-                       data);
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                           VK_SHADER_STAGE_COMPUTE_BIT,
+                       0, size_bytes, data);
+    return RESONATE_OK;
+}
+
+ResonateStatus Context::updateBuffer(ResonateRenderBuffer handle, uint64_t offset,
+                                     const void* data, uint64_t size_bytes)
+{
+    /* Recorded, not applied: the copy lands with the frame, which is what makes
+       per-frame data safe without waiting on the frames in flight. */
+    if (!frame_open_ || pass_open_)
+    {
+        return RESONATE_E_STATE;
+    }
+    if (data == nullptr || size_bytes == 0U || size_bytes > 65536U)
+    {
+        return RESONATE_E_INVALID;
+    }
+    BufferSlot* slot = buffers_.live(handleIndex(handle.value), handleGeneration(handle.value));
+    if (slot == nullptr || offset > slot->size || size_bytes > slot->size - offset)
+    {
+        return RESONATE_E_INVALID;
+    }
+    VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
+    vkCmdUpdateBuffer(command, slot->buffer, offset, size_bytes, data);
     return RESONATE_OK;
 }
 
@@ -749,8 +833,7 @@ ResonateStatus Context::draw(uint32_t vertex_count, uint32_t instance_count)
     {
         return RESONATE_E_STATE;
     }
-    VkCommandBuffer command =
-        pass_on_swapchain_ ? frames_[frame_ % kFramesInFlight].command : aux_command_;
+    VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
     vkCmdDraw(command, vertex_count, instance_count, 0, 0);
     return RESONATE_OK;
 }
@@ -761,9 +844,68 @@ ResonateStatus Context::drawIndexed(uint32_t index_count, uint32_t instance_coun
     {
         return RESONATE_E_STATE;
     }
-    VkCommandBuffer command =
-        pass_on_swapchain_ ? frames_[frame_ % kFramesInFlight].command : aux_command_;
+    VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
     vkCmdDrawIndexed(command, index_count, instance_count, 0, 0, 0);
+    return RESONATE_OK;
+}
+
+ResonateStatus Context::createComputePipeline(ResonateRenderShader shader,
+                                              ResonateRenderPipeline* out)
+{
+    if (device_ == VK_NULL_HANDLE)
+    {
+        return RESONATE_E_STATE;
+    }
+    if (pipeline_layout_ == VK_NULL_HANDLE)
+    {
+        return RESONATE_E_INTERNAL;
+    }
+    ShaderSlot* shader_slot =
+        shaders_.live(handleIndex(shader.value), handleGeneration(shader.value));
+    if (shader_slot == nullptr)
+    {
+        return RESONATE_E_INVALID;
+    }
+
+    VkPipelineShaderStageCreateInfo stage{};
+    stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.module = shader_slot->module;
+    stage.pName = "main";
+
+    VkComputePipelineCreateInfo pipeline{};
+    pipeline.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeline.stage = stage;
+    pipeline.layout = pipeline_layout_;
+
+    PipelineSlot* slot = nullptr;
+    const uint32_t index = pipelines_.acquire(&slot);
+    *slot = PipelineSlot{};
+    if (vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &pipeline, nullptr, &slot->pipeline) !=
+        VK_SUCCESS)
+    {
+        pipelines_.retire(index);
+        note(device_failed_, "compute pipeline creation failed");
+        return RESONATE_E_INTERNAL;
+    }
+    slot->alive = true;
+    slot->compute = true;
+    *out = ResonateRenderPipeline{handleValue(slot->generation, index)};
+    return RESONATE_OK;
+}
+
+ResonateStatus Context::dispatch(uint32_t groups_x, uint32_t groups_y, uint32_t groups_z)
+{
+    if (!frame_open_ || bound_pipeline_ == VK_NULL_HANDLE)
+    {
+        return RESONATE_E_STATE;
+    }
+    if (bound_compute_ == false)
+    {
+        return RESONATE_E_INVALID;
+    }
+    VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
+    vkCmdDispatch(command, groups_x, groups_y, groups_z);
     return RESONATE_OK;
 }
 

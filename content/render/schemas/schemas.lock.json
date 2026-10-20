@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "tool": "0.1.0",
+  "module": "resonate.render",
+  "types": [
+    {
+      "name": "Camera",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Camera version 1",
+        "  size 12 align 4",
+        "  field fov_y_degrees f32 @0 size 4 default=60",
+        "  field near_z f32 @4 size 4 default=0.1",
+        "  field far_z f32 @8 size 4 default=1000"
+      ]
+    },
+    {
+      "name": "DirectionalLight",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component DirectionalLight version 1",
+        "  size 28 align 4",
+        "  field direction vec3 @0 size 12 default=0 -1 0",
+        "  field color vec3 @12 size 12 default=1 1 1",
+        "  field intensity f32 @24 size 4 default=1"
+      ]
+    },
+    {
+      "name": "MeshInstance",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component MeshInstance version 1",
+        "  size 16 align 4",
+        "  field mesh u32 @0 size 4",
+        "  field color vec3 @4 size 12 default=1 1 1"
+      ]
+    },
+    {
+      "name": "PointLight",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component PointLight version 1",
+        "  size 20 align 4",
+        "  field color vec3 @0 size 12 default=1 1 1",
+        "  field intensity f32 @12 size 4 default=1",
+        "  field radius f32 @16 size 4 default=10"
+      ]
+    }
+  ]
+}

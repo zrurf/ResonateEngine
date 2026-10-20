@@ -17,6 +17,7 @@
 #include <resonate/hierarchy/tree.h>
 #include <resonate/module/host.hpp>
 #include <resonate/render/offscreen.hpp>
+#include <resonate/renderer/renderer.h>
 #include <resonate/window/session.hpp>
 
 namespace resonate::startup
@@ -118,21 +119,40 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     window::Session session;
 
     /* The engine's own systems, in every composition: the hierarchy's transform
-       propagation resolves WorldTransform in LATE. The descriptor and the system
-       outlive the run, which is what the borrowed-context rule needs. */
+       propagation resolves WorldTransform in LATE, the renderer extracts and
+       draws in RENDER. The descriptors and the systems outlive the run, which
+       is what the borrowed-context rule needs. */
     hierarchy::PropagationSystem propagation;
     const EngineSystemDesc propagation_desc{"resonate.hierarchy.propagation",
                                             RESONATE_STAGE_LATE_UPDATE,
                                             &hierarchy::PropagationSystem::invoke, &propagation};
-    config.systems = [&propagation, &propagation_desc](ModuleHost& host, ecs::World& world)
+    renderer::RenderSystem render_system;
+    const EngineSystemDesc render_desc{"renderer.frame", RESONATE_STAGE_RENDER,
+                                       &renderer::RenderSystem::invoke, &render_system};
+    config.systems = [&propagation, &propagation_desc, &render_system,
+                      &render_desc](ModuleHost& host, ecs::World& world)
     {
-        if (!hierarchy::registerComponents(world))
+        if (!hierarchy::registerComponents(world) ||
+            !renderer::RenderSystem::registerComponents(world))
         {
             return RESONATE_E_INVALID;
         }
         propagation.jobs = host.jobs();
-        return addEngineSystem(host, propagation_desc);
+        render_system.setRegistry(host.capabilities());
+        if (addEngineSystem(host, propagation_desc) != RESONATE_OK ||
+            addEngineSystem(host, render_desc) != RESONATE_OK)
+        {
+            return RESONATE_E_INVALID;
+        }
+        /* The demo scene is what the window shows until scenes load from disk;
+           it is plain ECS entities, created before the frame loop starts. */
+        renderer::composeDemoScene(world);
+        return RESONATE_OK;
     };
+
+    /* The renderer's device resources go while the device module is alive;
+       after the run the host detaches and the capability dies with it. */
+    config.shutdown = [&render_system] { render_system.release(); };
 
     if (display.headless)
     {

@@ -92,7 +92,8 @@ target("Resonate.Tests")
     add_deps("Resonate.Module", "Resonate.Window", "Resonate.Render",
              "Resonate.UI.Abi", "Resonate.PAL", "Resonate.Runtime",
              "Resonate.Core.Container", "Resonate.Core.Math", "Resonate.Core.Job",
-             "Resonate.ECS", "Resonate.Gameplay", "Resonate.Hierarchy")
+             "Resonate.ECS", "Resonate.Gameplay", "Resonate.Hierarchy",
+             "Resonate.Renderer")
 
     -- The plugins, order-only: their directory is what the end-to-end tests load,
     -- and a `xmake test` that did not build them once reported a green suite whose

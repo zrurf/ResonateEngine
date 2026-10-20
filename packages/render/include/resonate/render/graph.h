@@ -42,36 +42,35 @@ namespace resonate::render
 using ResourceId = std::uint32_t;
 constexpr ResourceId kInvalidResource = UINT32_MAX;
 
-/* The sync2 vocabulary a use is declared in. */
+/* The sync2 vocabulary a use is declared in; single-sourced in the device's
+   C surface. */
 using StageFlags = std::uint32_t;
 constexpr StageFlags kStageNone = 0U;
-constexpr StageFlags kStageVertex = 1U << 0;
-constexpr StageFlags kStageFragment = 1U << 1;
-constexpr StageFlags kStageColorOutput = 1U << 2;
-constexpr StageFlags kStageDepthOutput = 1U << 3;
-constexpr StageFlags kStageCompute = 1U << 4;
-constexpr StageFlags kStageTransfer = 1U << 5;
+constexpr StageFlags kStageVertex = RESONATE_RENDER_STAGE_VERTEX;
+constexpr StageFlags kStageFragment = RESONATE_RENDER_STAGE_FRAGMENT;
+constexpr StageFlags kStageColorOutput = RESONATE_RENDER_STAGE_COLOR_OUTPUT;
+constexpr StageFlags kStageDepthOutput = RESONATE_RENDER_STAGE_DEPTH_OUTPUT;
+constexpr StageFlags kStageCompute = RESONATE_RENDER_STAGE_COMPUTE;
+constexpr StageFlags kStageTransfer = RESONATE_RENDER_STAGE_TRANSFER;
 
 using AccessFlags = std::uint32_t;
 constexpr AccessFlags kAccessNone = 0U;
-constexpr AccessFlags kAccessShaderRead = 1U << 0;
-constexpr AccessFlags kAccessShaderWrite = 1U << 1;
-constexpr AccessFlags kAccessColorWrite = 1U << 2;
-constexpr AccessFlags kAccessDepthRead = 1U << 3;
-constexpr AccessFlags kAccessDepthWrite = 1U << 4;
-constexpr AccessFlags kAccessTransferRead = 1U << 5;
-constexpr AccessFlags kAccessTransferWrite = 1U << 6;
+constexpr AccessFlags kAccessShaderRead = RESONATE_RENDER_ACCESS_SHADER_READ;
+constexpr AccessFlags kAccessShaderWrite = RESONATE_RENDER_ACCESS_SHADER_WRITE;
+constexpr AccessFlags kAccessColorWrite = RESONATE_RENDER_ACCESS_COLOR_WRITE;
+constexpr AccessFlags kAccessDepthRead = RESONATE_RENDER_ACCESS_DEPTH_READ;
+constexpr AccessFlags kAccessDepthWrite = RESONATE_RENDER_ACCESS_DEPTH_WRITE;
+constexpr AccessFlags kAccessTransferRead = RESONATE_RENDER_ACCESS_TRANSFER_READ;
+constexpr AccessFlags kAccessTransferWrite = RESONATE_RENDER_ACCESS_TRANSFER_WRITE;
 
-enum class ImageLayout : std::uint8_t
-{
-    Undefined = 0,
-    ColorAttachment,
-    DepthAttachment,
-    ShaderReadOnly,
-    TransferSrc,
-    TransferDst,
-    Present,
-};
+using ImageLayout = ResonateRenderImageLayout;
+constexpr ImageLayout kLayoutUndefined = RESONATE_RENDER_LAYOUT_UNDEFINED;
+constexpr ImageLayout kLayoutColorAttachment = RESONATE_RENDER_LAYOUT_COLOR_ATTACHMENT;
+constexpr ImageLayout kLayoutDepthAttachment = RESONATE_RENDER_LAYOUT_DEPTH_ATTACHMENT;
+constexpr ImageLayout kLayoutShaderReadOnly = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
+constexpr ImageLayout kLayoutTransferSrc = RESONATE_RENDER_LAYOUT_TRANSFER_SRC;
+constexpr ImageLayout kLayoutTransferDst = RESONATE_RENDER_LAYOUT_TRANSFER_DST;
+constexpr ImageLayout kLayoutPresent = RESONATE_RENDER_LAYOUT_PRESENT;
 
 enum class Queue : std::uint8_t
 {
@@ -98,7 +97,7 @@ struct Use
     StageFlags stages = kStageNone;
     AccessFlags access = kAccessNone;
     /* Images only; buffers ignore it. */
-    ImageLayout layout = ImageLayout::Undefined;
+    ImageLayout layout = kLayoutUndefined;
 };
 
 struct GraphExecuteContext;
@@ -128,8 +127,8 @@ struct Barrier
     StageFlags after_stages = kStageNone;
     AccessFlags before_access = kAccessNone;
     AccessFlags after_access = kAccessNone;
-    ImageLayout before_layout = ImageLayout::Undefined;
-    ImageLayout after_layout = ImageLayout::Undefined;
+    ImageLayout before_layout = kLayoutUndefined;
+    ImageLayout after_layout = kLayoutUndefined;
 };
 
 struct PlanResource
@@ -141,12 +140,15 @@ struct PlanResource
     ResonateRenderFormat format = RESONATE_RENDER_FORMAT_UNKNOWN;
     std::uint32_t width = 0U;
     std::uint32_t height = 0U;
+    /* RESONATE_RENDER_IMAGE_* or RESONATE_RENDER_BUFFER_* bits, the usage the
+       materializer creates the resource with. */
+    std::uint32_t usage = 0U;
     /* Buffers. */
     std::uint64_t size_bytes = 0U;
     /* An imported resource's state outside the frame: the swapchain backbuffer
        starts the frame undefined and must end in present, for instance. */
-    ImageLayout initial_layout = ImageLayout::Undefined;
-    ImageLayout final_layout = ImageLayout::Undefined;
+    ImageLayout initial_layout = kLayoutUndefined;
+    ImageLayout final_layout = kLayoutUndefined;
     bool exported = false;
 };
 
@@ -196,12 +198,13 @@ struct GraphPlan
 class RenderGraph
 {
   public:
-    /* Transient resources: created (and aliased) per frame by the
-       materializer. UNKNOWN-format images are refused — a transient target
-       knows its format. */
+    /* Transient resources: created once by the executor, reused every frame.
+       `usage` is RESONATE_RENDER_IMAGE_* / RESONATE_RENDER_BUFFER_* bits.
+       UNKNOWN-format images are refused — a transient target knows its
+       format. */
     ResourceId declareImage(const char* name, ResonateRenderFormat format, std::uint32_t width,
-                            std::uint32_t height);
-    ResourceId declareBuffer(const char* name, std::uint64_t size_bytes);
+                            std::uint32_t height, std::uint32_t usage);
+    ResourceId declareBuffer(const char* name, std::uint64_t size_bytes, std::uint32_t usage);
 
     /* External resources the executor does not create: the swapchain
        backbuffer's initial and final states are the importer's contract. */

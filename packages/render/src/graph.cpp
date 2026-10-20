@@ -20,7 +20,7 @@ struct TrackedState
 {
     StageFlags stages = kStageNone;
     AccessFlags access = kAccessNone;
-    ImageLayout layout = ImageLayout::Undefined;
+    ImageLayout layout = kLayoutUndefined;
     bool ever_used = false;
     bool last_was_write = false;
 };
@@ -33,7 +33,7 @@ bool RenderGraph::isWrite(AccessFlags access)
 }
 
 ResourceId RenderGraph::declareImage(const char* name, ResonateRenderFormat format,
-                                     std::uint32_t width, std::uint32_t height)
+                                     std::uint32_t width, std::uint32_t height, std::uint32_t usage)
 {
     DeclaredResource declared;
     declared.plan.name = name;
@@ -41,16 +41,19 @@ ResourceId RenderGraph::declareImage(const char* name, ResonateRenderFormat form
     declared.plan.format = format;
     declared.plan.width = width;
     declared.plan.height = height;
+    declared.plan.usage = usage;
     resources_.push_back(declared);
     return static_cast<ResourceId>(resources_.size() - 1U);
 }
 
-ResourceId RenderGraph::declareBuffer(const char* name, std::uint64_t size_bytes)
+ResourceId RenderGraph::declareBuffer(const char* name, std::uint64_t size_bytes,
+                                      std::uint32_t usage)
 {
     DeclaredResource declared;
     declared.plan.name = name;
     declared.plan.kind = ResourceKind::Buffer;
     declared.plan.size_bytes = size_bytes;
+    declared.plan.usage = usage;
     resources_.push_back(declared);
     return static_cast<ResourceId>(resources_.size() - 1U);
 }

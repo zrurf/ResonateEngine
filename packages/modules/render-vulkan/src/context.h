@@ -24,6 +24,7 @@
 
 #include <resonate/module/abi.h>
 #include <resonate/module/types.h>
+#include <resonate/render/canvas.h>
 #include <resonate/render/device.h>
 
 #include <cstdint>
@@ -72,14 +73,19 @@ template <typename Slot> class Pool
         return static_cast<uint32_t>(slots_.size() - 1U);
     }
 
-    Slot* live(uint32_t index, uint32_t generation)
+    const Slot* live(uint32_t index, uint32_t generation) const
     {
         if (index >= slots_.size())
         {
             return nullptr;
         }
-        Slot& slot = slots_[index];
+        const Slot& slot = slots_[index];
         return slot.alive && slot.generation == generation ? &slot : nullptr;
+    }
+
+    Slot* live(uint32_t index, uint32_t generation)
+    {
+        return const_cast<Slot*>(static_cast<const Pool*>(this)->live(index, generation));
     }
 
     void retire(uint32_t index)
@@ -99,8 +105,9 @@ class Context
   public:
     /* `vsync` picks the presentation mode: FIFO when on, MAILBOX or IMMEDIATE
        when off, FIFO when neither is offered. Read once from the run's
-       configuration at attach; restart-to-apply. */
-    explicit Context(bool vsync);
+       configuration at attach; restart-to-apply. The canvas is where frame
+       sizes come from. */
+    Context(bool vsync, ResonateRenderCanvas* canvas);
     ~Context();
 
     Context(const Context&) = delete;
@@ -129,20 +136,28 @@ class Context
     ResonateStatus createPipeline(const ResonateRenderGraphicsPipelineDesc& desc,
                                   ResonateRenderPipeline* out);
     void destroyPipeline(ResonateRenderPipeline handle);
+    ResonateStatus createComputePipeline(ResonateRenderShader shader, ResonateRenderPipeline* out);
 
     ResonateStatus uploadBuffer(ResonateRenderBuffer handle, uint64_t offset, const void* data,
                                 uint64_t size_bytes);
     ResonateStatus uploadImage(ResonateRenderImage handle, const void* data, uint64_t size_bytes,
                                uint64_t row_pitch_bytes);
+    ResonateStatus updateBuffer(ResonateRenderBuffer handle, uint64_t offset, const void* data,
+                                uint64_t size_bytes);
 
+    /* Acquires the canvas's image and opens the frame's command buffer; every
+       pass and barrier lands in it, and present submits it. */
+    ResonateStatus beginFrame();
     ResonateStatus beginPass(const ResonateRenderPassDesc& desc);
     ResonateStatus endPass();
+    ResonateStatus barrier(const ResonateRenderBarrierDesc* desc);
     ResonateStatus bindPipeline(ResonateRenderPipeline handle);
     ResonateStatus bindVertexBuffer(ResonateRenderBuffer handle, uint64_t offset);
     ResonateStatus bindIndexBuffer(ResonateRenderBuffer handle, uint64_t offset);
     ResonateStatus setConstants(const void* data, uint32_t size_bytes);
     ResonateStatus draw(uint32_t vertex_count, uint32_t instance_count);
     ResonateStatus drawIndexed(uint32_t index_count, uint32_t instance_count);
+    ResonateStatus dispatch(uint32_t groups_x, uint32_t groups_y, uint32_t groups_z);
     ResonateStatus present();
 
   private:
@@ -190,6 +205,7 @@ class Context
         VkPipeline pipeline = VK_NULL_HANDLE;
         uint32_t generation = 1;
         bool alive = false;
+        bool compute = false;
     };
 
     /* One retired Vk object: kind names the destroy call, `a` the object,
@@ -218,7 +234,6 @@ class Context
     {
         VkCommandBuffer command = VK_NULL_HANDLE;
         VkSemaphore image_available = VK_NULL_HANDLE;
-        VkSemaphore render_done = VK_NULL_HANDLE;
         VkFence in_flight = VK_NULL_HANDLE;
         std::vector<Retired> graveyard;
     };
@@ -226,6 +241,7 @@ class Context
     ResonateStatus ensureInstance();
     ResonateStatus ensureDevice();
     ResonateStatus createSwapchain(uint32_t width, uint32_t height);
+    VkBuffer resolveBuffer(ResonateRenderBuffer handle) const;
     void destroySwapchainObjects();
     void recreateSwapchain();
     ResonateStatus renderPassFor(ResonateRenderFormat color, ResonateRenderFormat depth,
@@ -253,9 +269,12 @@ class Context
     VkExtent2D extent_{};
     VkRenderPass render_pass_ = VK_NULL_HANDLE;
     VkCommandPool command_pool_ = VK_NULL_HANDLE;
-    /* The swapchain owns the images; the views and framebuffers are ours. */
+    /* The swapchain owns the images; the views and framebuffers are ours. One
+       present-wait semaphore per image: reusing one across images would signal
+       it while the presentation engine still holds it. */
     std::vector<VkImageView> views_;
     std::vector<VkFramebuffer> framebuffers_;
+    std::vector<VkSemaphore> present_semaphores_;
 
     static constexpr uint32_t kFramesInFlight = 2;
     static constexpr uint32_t kMaxConstants = 128;
@@ -268,26 +287,47 @@ class Context
     Pool<SamplerSlot> samplers_;
     Pool<ShaderSlot> shaders_;
     Pool<PipelineSlot> pipelines_;
-    VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE;   /* shared, lazy */
-    std::map<uint32_t, VkRenderPass> pass_cache_;         /* key: color | depth<<8 */
-    std::map<uint64_t, VkFramebuffer> framebuffer_cache_; /* key: image<<16 | pass key */
+    VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE; /* shared, lazy */
+    std::map<uint32_t, VkRenderPass> pass_cache_;       /* key: color | depth<<8 */
+    /* Keyed by the full color and depth handles, generations included: a
+       recreated image must not find the framebuffer of its predecessor. */
+    std::map<std::pair<uint64_t, uint64_t>, VkFramebuffer> framebuffer_cache_;
 
-    /* The open pass and the state its draws use. */
-    VkCommandBuffer aux_command_ = VK_NULL_HANDLE; /* sync work: uploads, image passes */
+    /* The resource tables: set 0, bindings 0-4 = 64 storage buffers each,
+       binding 5 = 64 combined image samplers, all indexed by handle slot. A
+       storage buffer's slot is written to every storage binding, so any typed
+       array declaration can name it. Dummies fill every storage slot at device
+       creation, so an unwritten index reads defined zeros; the sampled slots
+       are partially bound, so an unwritten one is never accessed. Sampled
+       images share one device-owned linear-clamp sampler. */
+    static constexpr uint32_t kTableSize = 64;
+    static constexpr uint32_t kStorageTableBindings = 5;
+    static constexpr uint32_t kSampledTableBinding = 5;
+    static constexpr uint32_t kTableBindingCount = kSampledTableBinding + 1;
+    void writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size);
+    void writeImageSlot(uint32_t slot, VkImageView view);
+    VkDescriptorSetLayout table_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool table_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet table_set_ = VK_NULL_HANDLE;
+    VkBuffer table_dummy_ = VK_NULL_HANDLE;
+    VmaAllocation_T* table_dummy_allocation_ = nullptr;
+    VkSampler table_sampler_ = VK_NULL_HANDLE;
+
+    /* The open frame and pass, and the state their commands use. One command
+       buffer per frame: begin_frame opens it, present closes and submits it. */
+    VkCommandBuffer aux_command_ = VK_NULL_HANDLE; /* sync work: uploads */
+    bool frame_open_ = false;
     bool pass_open_ = false;
-    bool pass_on_swapchain_ = false;
-    ResonateRenderImage pass_color_{};
-    VkRenderPass open_pass_ = VK_NULL_HANDLE;
-    VkFramebuffer open_framebuffer_ = VK_NULL_HANDLE;
     VkPipeline bound_pipeline_ = VK_NULL_HANDLE;
+    bool bound_compute_ = false;
     VkBuffer bound_vertex_ = VK_NULL_HANDLE;
     VkBuffer bound_index_ = VK_NULL_HANDLE;
 
     uint32_t image_index_ = 0;
-    VkSemaphore last_render_done_ = VK_NULL_HANDLE;
     VkPresentModeKHR present_mode_ = VK_PRESENT_MODE_FIFO_KHR;
     bool vsync_ = true;
     bool recreate_pending_ = false;
+    ResonateRenderCanvas* canvas_ = nullptr; /* frame sizes come from here */
     uint32_t canvas_width_ = 0;
     uint32_t canvas_height_ = 0;
 

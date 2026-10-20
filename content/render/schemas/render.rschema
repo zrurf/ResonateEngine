@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<schema module="resonate.render">
+
+  <!-- A view into the scene: the projection the frame renders with. The
+       camera's WorldTransform is the view basis; the renderer derives the view
+       matrix from it. -->
+  <component name="Camera" version="1">
+    <field name="fov_y_degrees" type="f32" default="60"/>
+    <field name="near_z" type="f32" default="0.1"/>
+    <field name="far_z" type="f32" default="1000"/>
+  </component>
+
+  <!-- A drawn object: which procedural mesh the renderer draws and the color
+       its shader shades with. The entity's WorldTransform places it. -->
+  <component name="MeshInstance" version="1">
+    <field name="mesh" type="u32"/>
+    <field name="color" type="vec3" default="1 1 1"/>
+  </component>
+
+  <!-- A sun: direction and radiance for the lit passes to come. -->
+  <component name="DirectionalLight" version="1">
+    <field name="direction" type="vec3" default="0 -1 0"/>
+    <field name="color" type="vec3" default="1 1 1"/>
+    <field name="intensity" type="f32" default="1"/>
+  </component>
+
+  <!-- A local light: the WorldTransform positions it, the component shades it. -->
+  <component name="PointLight" version="1">
+    <field name="color" type="vec3" default="1 1 1"/>
+    <field name="intensity" type="f32" default="1"/>
+    <field name="radius" type="f32" default="10"/>
+  </component>
+
+</schema>

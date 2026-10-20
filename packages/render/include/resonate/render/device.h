@@ -15,7 +15,14 @@
  * Handles are opaque 64-bit ids, {0} being null. The index half names the
  * resource's slot in the device's resource table: shaders reach resources
  * through indexed arrays and a draw names them by handle, which is why draw
- * calls carry no binding calls.
+ * calls carry no binding calls. The table is set 0: bindings 0-4 are 64-slot
+ * storage-buffer arrays and binding 5 is a 64-slot combined-image-sampler
+ * array. A buffer created with the STORAGE usage, or an image with the SAMPLED
+ * usage, is written into its slot (a buffer into every storage binding) at
+ * creation, so any of those shader declarations can name it by slot:
+ * `[[vk::binding(0, 0)]] StructuredBuffer<T> table[64];` on a Vulkan backend.
+ * Because the write is the creation, resources must exist before the frame
+ * that reads them.
  *
  * Calls are serialised by the stage schedule (THREAD_ANY). Uploads are
  * synchronous.
@@ -72,6 +79,9 @@ typedef enum ResonateRenderFormat : uint8_t
     RESONATE_RENDER_FORMAT_R32G32_SFLOAT,
     RESONATE_RENDER_FORMAT_R32G32B32_SFLOAT,
     RESONATE_RENDER_FORMAT_D32_SFLOAT,
+    /* A pipeline marker, not a real format: a pipeline whose color format is
+       NONE has no color outputs (depth-only). */
+    RESONATE_RENDER_FORMAT_NONE = 0xFF,
 } ResonateRenderFormat;
 
 typedef enum ResonateRenderShaderStage : uint8_t
@@ -92,6 +102,36 @@ typedef enum ResonateRenderAddressMode : uint8_t
     RESONATE_RENDER_ADDRESS_REPEAT = 0,
     RESONATE_RENDER_ADDRESS_CLAMP,
 } ResonateRenderAddressMode;
+
+/* Image layouts a barrier moves a resource between; the graph derives them
+   from the passes' declarations. */
+typedef enum ResonateRenderImageLayout : uint8_t
+{
+    RESONATE_RENDER_LAYOUT_UNDEFINED = 0,
+    RESONATE_RENDER_LAYOUT_COLOR_ATTACHMENT,
+    RESONATE_RENDER_LAYOUT_DEPTH_ATTACHMENT,
+    RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY,
+    RESONATE_RENDER_LAYOUT_TRANSFER_SRC,
+    RESONATE_RENDER_LAYOUT_TRANSFER_DST,
+    RESONATE_RENDER_LAYOUT_PRESENT,
+} ResonateRenderImageLayout;
+
+/* Pipeline stages and memory access, the barrier's vocabulary. A stage mask
+   of zero reads as "no prior work" (source) or "no later work" (destination). */
+#define RESONATE_RENDER_STAGE_VERTEX (1u << 0)
+#define RESONATE_RENDER_STAGE_FRAGMENT (1u << 1)
+#define RESONATE_RENDER_STAGE_COLOR_OUTPUT (1u << 2)
+#define RESONATE_RENDER_STAGE_DEPTH_OUTPUT (1u << 3)
+#define RESONATE_RENDER_STAGE_COMPUTE (1u << 4)
+#define RESONATE_RENDER_STAGE_TRANSFER (1u << 5)
+
+#define RESONATE_RENDER_ACCESS_SHADER_READ (1u << 0)
+#define RESONATE_RENDER_ACCESS_SHADER_WRITE (1u << 1)
+#define RESONATE_RENDER_ACCESS_COLOR_WRITE (1u << 2)
+#define RESONATE_RENDER_ACCESS_DEPTH_READ (1u << 3)
+#define RESONATE_RENDER_ACCESS_DEPTH_WRITE (1u << 4)
+#define RESONATE_RENDER_ACCESS_TRANSFER_READ (1u << 5)
+#define RESONATE_RENDER_ACCESS_TRANSFER_WRITE (1u << 6)
 
 /* Buffer usage bits; vertex/index/uniform/storage also gate the resource
    table a resource lands in. */
@@ -168,14 +208,33 @@ typedef struct ResonateRenderGraphicsPipelineDesc
 
 /* The pass's targets. color {0} means the canvas's swapchain (the windowed or
    offscreen canvas the device attached); an explicit image renders into that
-   image. depth {0} means none. The pass always clears. */
+   image. depth {0} means none. The pass always clears. `colorless` (a tail
+   field, read only when struct_size covers it) drops the color attachment for
+   a depth-only pass; `color` is then ignored. */
 typedef struct ResonateRenderPassDesc
 {
     uint32_t struct_size;
     ResonateRenderImage color;
     ResonateVec4 clear_color;
     ResonateRenderImage depth;
+    uint32_t colorless;
 } ResonateRenderPassDesc;
+
+/* A memory dependency: what a resource's state was, what it becomes. The
+   graph derives these from the passes' declarations; the device applies them
+   inside the open frame. */
+typedef struct ResonateRenderBarrierDesc
+{
+    uint32_t struct_size;
+    ResonateRenderBuffer buffer; /* one of the two, the other null */
+    ResonateRenderImage image;
+    uint32_t before_stages;
+    uint32_t after_stages;
+    uint32_t before_access;
+    uint32_t after_access;
+    ResonateRenderImageLayout before_layout; /* images only */
+    ResonateRenderImageLayout after_layout;
+} ResonateRenderBarrierDesc;
 
 typedef struct ResonateRenderDevice
 {
@@ -208,6 +267,10 @@ typedef struct ResonateRenderDevice
     ResonateStatus (*create_pipeline)(void* self, const ResonateRenderGraphicsPipelineDesc* desc,
                                       ResonateRenderPipeline* out_pipeline);
     void (*destroy_pipeline)(void* self, ResonateRenderPipeline pipeline);
+    /* A compute pipeline runs through dispatch() inside the open frame; its
+       shader is one compute entry point. */
+    ResonateStatus (*create_compute_pipeline)(void* self, ResonateRenderShader shader,
+                                              ResonateRenderPipeline* out_pipeline);
 
     /* Uploads, synchronous. An image's row_pitch must be the tightly packed
        one until a consumer needs otherwise. */
@@ -218,8 +281,19 @@ typedef struct ResonateRenderDevice
 
     /* --- the frame --- */
 
+    /* Acquires the canvas's image and opens the frame: one submission takes
+       every pass and barrier between here and present. RESONATE_E_STATE
+       without a surface. */
+    ResonateStatus (*begin_frame)(void* self);
+
+    /* One render pass inside the open frame. color {0} means the canvas's
+       acquired image; an explicit image renders into that image. depth {0}
+       means none. The pass always clears. */
     ResonateStatus (*begin_pass)(void* self, const ResonateRenderPassDesc* desc);
     ResonateStatus (*end_pass)(void* self);
+
+    /* A memory dependency inside the open frame. */
+    ResonateStatus (*barrier)(void* self, const ResonateRenderBarrierDesc* desc);
 
     /* Graphics state for the draws of the open pass. A pipeline bound inside
        one pass stays bound to it; a new pass resets the state. */
@@ -236,8 +310,19 @@ typedef struct ResonateRenderDevice
     ResonateStatus (*draw)(void* self, uint32_t vertex_count, uint32_t instance_count);
     ResonateStatus (*draw_indexed)(void* self, uint32_t index_count, uint32_t instance_count);
 
-    /* Presents the frame's pass on the canvas. RESONATE_E_STATE when no
-       surface is attached or the frame rendered nothing. */
+    /* A compute dispatch inside the open frame, against the bound compute
+       pipeline. A compute pipeline binds without an open pass. */
+    ResonateStatus (*dispatch)(void* self, uint32_t groups_x, uint32_t groups_y, uint32_t groups_z);
+
+    /* Copies `size_bytes` into the buffer through the open frame's command
+       stream: the write lands with the frame, so per-frame data needs no host
+       mapping and no waiting on the frames in flight. `size_bytes` is capped at
+       64 KiB. */
+    ResonateStatus (*update_buffer)(void* self, ResonateRenderBuffer buffer, uint64_t offset_bytes,
+                                    const void* data, uint64_t size_bytes);
+
+    /* Closes and submits the frame, then presents the canvas's image.
+       RESONATE_E_STATE when no frame is open. */
     ResonateStatus (*present)(void* self);
 
     /* Provider state; the host never interprets it. */

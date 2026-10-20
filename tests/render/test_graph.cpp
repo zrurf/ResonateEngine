@@ -38,17 +38,15 @@ const Barrier* barrierFor(const PlanStep& step, ResourceId resource)
 TEST_CASE("render graph: declaration order is the execution order", "[render][graph]")
 {
     RenderGraph graph;
-    const ResourceId backbuffer =
-        graph.importImage("backbuffer", ImageLayout::Undefined, ImageLayout::Present);
-    const ResourceId hdr =
-        graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, 1600U, 900U);
+    const ResourceId backbuffer = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
+    const ResourceId hdr = graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+                                              1600U, 900U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
 
-    const Use hdr_write =
-        write(hdr, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+    const Use hdr_write = write(hdr, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass({"scene", Queue::Graphics, 0U, nullptr, 0U, &hdr_write, 1U, nullptr, nullptr});
-    const Use hdr_read = read(hdr, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+    const Use hdr_read = read(hdr, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use back_write =
-        write(backbuffer, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(backbuffer, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass({"post", Queue::Graphics, 0U, &hdr_read, 1U, &back_write, 1U, nullptr, nullptr});
     graph.exportResource(backbuffer);
 
@@ -65,32 +63,29 @@ TEST_CASE("render graph: a pass nobody consumes is culled, and its feeders with 
           "[render][graph]")
 {
     RenderGraph graph;
-    const ResourceId backbuffer =
-        graph.importImage("backbuffer", ImageLayout::Undefined, ImageLayout::Present);
-    const ResourceId hdr =
-        graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, 1600U, 900U);
-    const ResourceId scratch =
-        graph.declareImage("scratch", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U, 64U);
-    const ResourceId feed =
-        graph.declareImage("feed", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U, 64U);
+    const ResourceId backbuffer = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
+    const ResourceId hdr = graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+                                              1600U, 900U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
+    const ResourceId scratch = graph.declareImage("scratch", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
+                                                  64U, 64U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
+    const ResourceId feed = graph.declareImage("feed", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U,
+                                               64U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
 
-    const Use hdr_write =
-        write(hdr, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+    const Use hdr_write = write(hdr, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass({"scene", Queue::Graphics, 0U, nullptr, 0U, &hdr_write, 1U, nullptr, nullptr});
     /* Writes scratch, which nothing reads and nothing exports: dead. */
     const Use scratch_write =
-        write(scratch, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(scratch, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass({"dead", Queue::Graphics, 0U, nullptr, 0U, &scratch_write, 1U, nullptr, nullptr});
     /* Reads feed, which only dead work produces: dead with it. */
-    const Use feed_read =
-        read(feed, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+    const Use feed_read = read(feed, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use scratch2_write =
-        write(scratch, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(scratch, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass(
         {"dead-child", Queue::Graphics, 0U, &feed_read, 1U, &scratch2_write, 1U, nullptr, nullptr});
-    const Use hdr_read = read(hdr, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+    const Use hdr_read = read(hdr, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use back_write =
-        write(backbuffer, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(backbuffer, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass({"post", Queue::Graphics, 0U, &hdr_read, 1U, &back_write, 1U, nullptr, nullptr});
     graph.exportResource(backbuffer);
 
@@ -111,17 +106,15 @@ TEST_CASE("render graph: a pass nobody consumes is culled, and its feeders with 
 TEST_CASE("render graph: barriers come from the declarations", "[render][graph]")
 {
     RenderGraph graph;
-    const ResourceId backbuffer =
-        graph.importImage("backbuffer", ImageLayout::Undefined, ImageLayout::Present);
-    const ResourceId hdr =
-        graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, 1600U, 900U);
+    const ResourceId backbuffer = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
+    const ResourceId hdr = graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+                                              1600U, 900U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
 
-    const Use hdr_write =
-        write(hdr, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+    const Use hdr_write = write(hdr, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass({"scene", Queue::Graphics, 0U, nullptr, 0U, &hdr_write, 1U, nullptr, nullptr});
-    const Use hdr_read = read(hdr, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+    const Use hdr_read = read(hdr, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use back_write =
-        write(backbuffer, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(backbuffer, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass({"post", Queue::Graphics, 0U, &hdr_read, 1U, &back_write, 1U, nullptr, nullptr});
     graph.exportResource(backbuffer);
 
@@ -134,56 +127,53 @@ TEST_CASE("render graph: barriers come from the declarations", "[render][graph]"
        reads it in another layout, so the write-to-read transition is here. */
     const Barrier* acquire = barrierFor(plan.steps[0], hdr);
     REQUIRE(acquire != nullptr);
-    CHECK(acquire->before_layout == ImageLayout::Undefined);
-    CHECK(acquire->after_layout == ImageLayout::ColorAttachment);
+    CHECK(acquire->before_layout == kLayoutUndefined);
+    CHECK(acquire->after_layout == kLayoutColorAttachment);
     CHECK(acquire->after_stages == kStageColorOutput);
 
     const Barrier* to_read = barrierFor(plan.steps[1], hdr);
     REQUIRE(to_read != nullptr);
-    CHECK(to_read->before_layout == ImageLayout::ColorAttachment);
-    CHECK(to_read->after_layout == ImageLayout::ShaderReadOnly);
+    CHECK(to_read->before_layout == kLayoutColorAttachment);
+    CHECK(to_read->after_layout == kLayoutShaderReadOnly);
     CHECK(to_read->before_access == kAccessColorWrite);
     CHECK(to_read->after_access == kAccessShaderRead);
 
     /* The backbuffer enters undefined and leaves for present. */
     const Barrier* back_acquire = barrierFor(plan.steps[1], backbuffer);
     REQUIRE(back_acquire != nullptr);
-    CHECK(back_acquire->before_layout == ImageLayout::Undefined);
-    CHECK(back_acquire->after_layout == ImageLayout::ColorAttachment);
+    CHECK(back_acquire->before_layout == kLayoutUndefined);
+    CHECK(back_acquire->after_layout == kLayoutColorAttachment);
     REQUIRE(plan.final_barriers.size() == 1U);
     CHECK(plan.final_barriers[0].resource == backbuffer);
-    CHECK(plan.final_barriers[0].before_layout == ImageLayout::ColorAttachment);
-    CHECK(plan.final_barriers[0].after_layout == ImageLayout::Present);
+    CHECK(plan.final_barriers[0].before_layout == kLayoutColorAttachment);
+    CHECK(plan.final_barriers[0].after_layout == kLayoutPresent);
 }
 
 TEST_CASE("render graph: read after read costs nothing, war does", "[render][graph]")
 {
     RenderGraph graph;
-    const ResourceId image =
-        graph.declareImage("shared", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U, 64U);
-    const ResourceId other =
-        graph.declareImage("other", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U, 64U);
+    const ResourceId image = graph.declareImage("shared", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
+                                                64U, 64U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
+    const ResourceId other = graph.declareImage("other", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U,
+                                                64U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
 
     const Use image_write =
-        write(image, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(image, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass(
         {"produce", Queue::Graphics, 0U, nullptr, 0U, &image_write, 1U, nullptr, nullptr});
-    const Use first_read =
-        read(image, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+    const Use first_read = read(image, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use other_write_a =
-        write(other, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(other, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass(
         {"read-a", Queue::Graphics, 0U, &first_read, 1U, &other_write_a, 1U, nullptr, nullptr});
-    const Use second_read =
-        read(image, kStageCompute, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+    const Use second_read = read(image, kStageCompute, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use other_write_b =
-        write(other, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(other, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass(
         {"read-b", Queue::Compute, 0U, &second_read, 1U, &other_write_b, 1U, nullptr, nullptr});
-    const Use other_read =
-        read(other, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+    const Use other_read = read(other, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use over_write =
-        write(image, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(image, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     const Use over[1] = {other_read};
     graph.addPass({"over", Queue::Graphics, 0U, over, 1U, &over_write, 1U, nullptr, nullptr});
     graph.exportResource(image);
@@ -212,47 +202,46 @@ TEST_CASE("render graph: disjoint lifetimes alias, overlapping ones and imports 
           "[render][graph]")
 {
     RenderGraph graph;
-    const ResourceId backbuffer =
-        graph.importImage("backbuffer", ImageLayout::Undefined, ImageLayout::Present);
-    const ResourceId hdr =
-        graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, 1600U, 900U);
-    const ResourceId scratch_a =
-        graph.declareImage("a", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U, 64U);
-    const ResourceId scratch_b =
-        graph.declareImage("b", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U, 64U);
-    const ResourceId overlap =
-        graph.declareImage("overlap", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U, 64U);
-    const ResourceId scratch_buffer = graph.declareBuffer("data", 1024U);
+    const ResourceId backbuffer = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
+    const ResourceId hdr = graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+                                              1600U, 900U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
+    const ResourceId scratch_a = graph.declareImage("a", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U,
+                                                    64U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
+    const ResourceId scratch_b = graph.declareImage("b", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U,
+                                                    64U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
+    const ResourceId overlap = graph.declareImage("overlap", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
+                                                  64U, 64U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
+    const ResourceId scratch_buffer =
+        graph.declareBuffer("data", 1024U, RESONATE_RENDER_BUFFER_STORAGE);
 
     /* a lives [0, 1]; b lives [2, 3]: disjoint, so they share backing. overlap
        lives [1, 2] and collides with both. The buffer is its own kind. */
     const Use a_write =
-        write(scratch_a, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(scratch_a, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass({"produce-a", Queue::Graphics, 0U, nullptr, 0U, &a_write, 1U, nullptr, nullptr});
-    const Use a_read =
-        read(scratch_a, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
-    const Use hdr_write =
-        write(hdr, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+    const Use a_read = read(scratch_a, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
+    const Use hdr_write = write(hdr, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     const Use overlap_write =
-        write(overlap, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(overlap, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     const Use buffer_write =
-        write(scratch_buffer, kStageCompute, kAccessShaderWrite, ImageLayout::Undefined);
-    graph.addPass({"mid", Queue::Graphics, 0U, &a_read, 1U, &hdr_write, 1U, nullptr, nullptr});
+        write(scratch_buffer, kStageCompute, kAccessShaderWrite, kLayoutUndefined);
+    const Use mid_writes[3] = {overlap_write, hdr_write, buffer_write};
+    graph.addPass(
+        {"mid", Queue::Graphics, 0U, &a_read, 1U, mid_writes, 3U, nullptr, nullptr});
     const Use overlap_read =
-        read(overlap, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+        read(overlap, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use b_write =
-        write(scratch_b, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(scratch_b, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     const Use produce_b_reads[1] = {overlap_read};
     graph.addPass(
         {"produce-b", Queue::Graphics, 0U, produce_b_reads, 1U, &b_write, 1U, nullptr, nullptr});
-    const Use hdr_read = read(hdr, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+    const Use hdr_read = read(hdr, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use buffer_read =
-        read(scratch_buffer, kStageCompute, kAccessShaderRead, ImageLayout::Undefined);
-    const Use b_read =
-        read(scratch_b, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+        read(scratch_buffer, kStageCompute, kAccessShaderRead, kLayoutUndefined);
+    const Use b_read = read(scratch_b, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use reads[3] = {hdr_read, buffer_read, b_read};
     const Use back_write =
-        write(backbuffer, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(backbuffer, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass({"post", Queue::Graphics, 0U, reads, 3U, &back_write, 1U, nullptr, nullptr});
     graph.exportResource(backbuffer);
 
@@ -300,27 +289,25 @@ TEST_CASE("render graph: disjoint lifetimes alias, overlapping ones and imports 
 TEST_CASE("render graph: passes the target's tags do not carry are culled", "[render][graph]")
 {
     RenderGraph graph;
-    const ResourceId backbuffer =
-        graph.importImage("backbuffer", ImageLayout::Undefined, ImageLayout::Present);
-    const ResourceId hdr =
-        graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, 1600U, 900U);
+    const ResourceId backbuffer = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
+    const ResourceId hdr = graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+                                              1600U, 900U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
     const ResourceId shadows =
-        graph.declareImage("shadows", RESONATE_RENDER_FORMAT_D32_SFLOAT, 2048U, 2048U);
+        graph.declareImage("shadows", RESONATE_RENDER_FORMAT_D32_SFLOAT, 2048U, 2048U,
+                           RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT);
 
     const Use shadow_write =
-        write(shadows, kStageCompute, kAccessShaderWrite, ImageLayout::ShaderReadOnly);
+        write(shadows, kStageCompute, kAccessShaderWrite, kLayoutShaderReadOnly);
     graph.addPass({"mobile-shadows", Queue::Compute, kTagHandheld, nullptr, 0U, &shadow_write, 1U,
                    nullptr, nullptr});
-    const Use hdr_write =
-        write(hdr, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
-    const Use shadow_read =
-        read(shadows, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+    const Use hdr_write = write(hdr, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
+    const Use shadow_read = read(shadows, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use reads[1] = {shadow_read};
     graph.addPass(
         {"scene", Queue::Graphics, kTagDesktop, reads, 1U, &hdr_write, 1U, nullptr, nullptr});
-    const Use hdr_read = read(hdr, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+    const Use hdr_read = read(hdr, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
     const Use back_write =
-        write(backbuffer, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+        write(backbuffer, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass({"post", Queue::Graphics, 0U, &hdr_read, 1U, &back_write, 1U, nullptr, nullptr});
     graph.exportResource(backbuffer);
 
@@ -346,11 +333,7 @@ TEST_CASE("render graph: passes the target's tags do not carry are culled", "[re
 TEST_CASE("render graph: declaration errors are named, not guessed at", "[render][graph]")
 {
     RenderGraph graph;
-    const ResourceId image =
-        graph.declareImage("image", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, 64U, 64U);
-
-    const Use undeclared =
-        write(99U, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+    const Use undeclared = write(99U, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
     graph.addPass({"bad", Queue::Graphics, 0U, nullptr, 0U, &undeclared, 1U, nullptr, nullptr});
     GraphPlan plan;
     std::string error;
@@ -364,17 +347,17 @@ TEST_CASE("render graph: compilation is deterministic", "[render][graph]")
     {
         RenderGraph graph;
         const ResourceId backbuffer =
-            graph.importImage("backbuffer", ImageLayout::Undefined, ImageLayout::Present);
+            graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
         const ResourceId hdr =
-            graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, 1600U, 900U);
+            graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, 1600U, 900U,
+                               RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
         const Use hdr_write =
-            write(hdr, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+            write(hdr, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
         graph.addPass(
             {"scene", Queue::Graphics, 0U, nullptr, 0U, &hdr_write, 1U, nullptr, nullptr});
-        const Use hdr_read =
-            read(hdr, kStageFragment, kAccessShaderRead, ImageLayout::ShaderReadOnly);
+        const Use hdr_read = read(hdr, kStageFragment, kAccessShaderRead, kLayoutShaderReadOnly);
         const Use back_write =
-            write(backbuffer, kStageColorOutput, kAccessColorWrite, ImageLayout::ColorAttachment);
+            write(backbuffer, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
         graph.addPass(
             {"post", Queue::Graphics, 0U, &hdr_read, 1U, &back_write, 1U, nullptr, nullptr});
         graph.exportResource(backbuffer);

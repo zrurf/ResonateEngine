@@ -1,0 +1,182 @@
+// The scene pass: Blinn-Phong shading against the frame's clusters, the
+// directional light shadowed by CSM, and depth fog. Renders into the HDR
+// target; the post chain tonemaps.
+// Entries: sceneVertex, sceneFragment.
+//
+// Resource-table convention (device.h): set 0 holds the storage arrays at
+// bindings 0-4 and the sampled-image array at binding 5; slots arrive in the
+// push constants.
+
+struct FrameData
+{
+    float4x4 view_proj;
+    float4x4 camera_world;
+    float4 camera_and_near;             // xyz = world position, w = near
+    float4 direction_and_far;           // xyz = directional direction, w = far
+    float4 directional_color_intensity; // rgb = color, a = intensity
+    float4 light_count_and_pad;         // x = light count
+    float4x4 light_view_proj[3];
+    float4 split_distances; // far view-space depth per cascade
+};
+
+struct Light
+{
+    float3 position;
+    float radius;
+    float3 color;
+    float intensity;
+};
+
+struct ClusterLights
+{
+    uint offset;
+    uint count;
+};
+
+struct Push
+{
+    float4x4 model;
+    float4 tint;  // rgb = albedo, a = unused
+    uint4 slots;  // frame data, cluster boxes, light grid, light indices
+    uint4 slots2; // light list, shadow map slots 0..2
+};
+
+[[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[64];
+[[vk::binding(1, 0)]] StructuredBuffer<Light> light_table[64];
+[[vk::binding(2, 0)]] StructuredBuffer<uint> light_indices[64];
+[[vk::binding(3, 0)]] StructuredBuffer<ClusterLights> cluster_lights[64];
+[[vk::binding(5, 0)]] Sampler2D shadow_maps[64];
+
+[[vk::push_constant]] Push push;
+
+static const uint CLUSTERS_X = 16;
+static const uint CLUSTERS_Y = 9;
+static const uint CLUSTERS_Z = 24;
+
+struct VertexInput
+{
+    float3 position : POSITION;
+    float3 normal : NORMAL;
+    float3 color : COLOR;
+};
+
+struct VertexOutput
+{
+    float4 position : SV_Position;
+    float3 color;
+    float3 normal;
+    float3 world_position;
+    float view_depth;
+};
+
+[shader("vertex")]
+VertexOutput sceneVertex(VertexInput input)
+{
+    VertexOutput output;
+    FrameData frame = frame_table[push.slots.x].Load(0);
+    float4 world = mul(push.model, float4(input.position, 1.0));
+    output.position = mul(frame.view_proj, world);
+    output.normal = normalize(mul((float3x3)push.model, input.normal));
+    output.color = input.color;
+    output.world_position = world.xyz;
+    output.view_depth = mul(frame.view_proj, world).w;
+    return output;
+}
+
+// The pixel's cluster: 120-pixel tiles over a 16x9 grid, and the depth slice
+// by inverting the exponential spacing the build pass used.
+uint clusterOf(float2 pixel, float view_depth, FrameData frame)
+{
+    uint2 tile = uint2(pixel / float2(120.0, 120.0));
+    float slice_t = log(view_depth / frame.camera_and_near.w) /
+                    log(frame.direction_and_far.w / frame.camera_and_near.w);
+    uint slice = uint(saturate(slice_t) * float(CLUSTERS_Z));
+    return tile.x + tile.y * CLUSTERS_X + slice * CLUSTERS_X * CLUSTERS_Y;
+}
+
+// The cascade covering this view depth: the first whose split exceeds it.
+uint cascadeOf(float view_depth, FrameData frame)
+{
+    for (uint cascade = 0; cascade < 2; ++cascade)
+    {
+        if (view_depth < frame.split_distances[cascade])
+        {
+            return cascade;
+        }
+    }
+    return 2;
+}
+
+// Four-tap PCF against the cascade's shadow map; the map was rendered from the
+// light's view, so the shadow coordinates come from the same matrix.
+float shadowFactor(float3 world_position, float view_depth, FrameData frame)
+{
+    uint cascade = cascadeOf(view_depth, frame);
+    float4 shadow_position = mul(frame.light_view_proj[cascade], float4(world_position, 1.0));
+    float3 shadow_ndc = shadow_position.xyz / shadow_position.w;
+    if (shadow_ndc.x < -1.0 || shadow_ndc.x > 1.0 || shadow_ndc.y < -1.0 || shadow_ndc.y > 1.0)
+    {
+        return 1.0; // outside every cascade: unshadowed
+    }
+    float2 uv = float2(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * 0.5 + 0.5);
+    float receiver = shadow_ndc.z;
+    float texel = 1.0 / 2048.0;
+
+    // The cascade differs per pixel, so the table lookup does too.
+    uint shadow_slot = NonUniformResourceIndex(push.slots2[cascade + 1]);
+    float sum = 0.0;
+    const float2 TAPS[4] = {float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5),
+                            float2(0.5, 0.5)};
+    for (uint tap = 0; tap < 4; ++tap)
+    {
+        float depth = shadow_maps[shadow_slot].Sample(uv + TAPS[tap] * texel).r;
+        sum += receiver - 0.003 > depth ? 0.0 : 1.0;
+    }
+    return sum * 0.25;
+}
+
+float3 shade(float3 albedo, float3 normal, float3 view_direction, float3 light_direction,
+             float3 light_color)
+{
+    float3 half_vector = normalize(view_direction + light_direction);
+    float diffuse = saturate(dot(normal, light_direction)) * 0.5 + 0.5;
+    float specular = pow(saturate(dot(normal, half_vector)), 24.0);
+    return albedo * light_color * diffuse + light_color * specular * 0.25;
+}
+
+[shader("fragment")]
+float4 sceneFragment(VertexOutput input) : SV_Target
+{
+    FrameData frame = frame_table[push.slots.x].Load(0);
+    ClusterLights lights = cluster_lights[push.slots.z].Load(
+        clusterOf(input.position.xy, input.view_depth, frame));
+
+    float3 albedo = input.color * push.tint.rgb;
+    float3 normal = normalize(input.normal);
+    float3 view_direction = normalize(frame.camera_and_near.xyz - input.world_position);
+
+    float3 color = albedo * 0.12; // ambient floor
+    float3 directional_color = frame.directional_color_intensity.rgb *
+                               frame.directional_color_intensity.a;
+    float shadow = shadowFactor(input.world_position, input.view_depth, frame);
+    color += shade(albedo, normal, view_direction, -frame.direction_and_far.xyz,
+                   directional_color * shadow);
+
+    for (uint i = 0; i < lights.count; ++i)
+    {
+        uint light_index = light_indices[push.slots.w].Load(lights.offset + i);
+        Light light = light_table[push.slots2.x].Load(light_index);
+        float3 to_light = light.position - input.world_position;
+        float distance = length(to_light);
+        float attenuation = saturate(1.0 - distance / light.radius);
+        color += shade(albedo, normal, view_direction, to_light / distance,
+                       light.color * light.intensity * attenuation);
+    }
+
+    // Depth fog: the last tenth of the view range fades into the sky tone.
+    float fog = saturate((input.view_depth - frame.direction_and_far.w * 0.85) /
+                         (frame.direction_and_far.w * 0.15));
+    color = lerp(color, float3(0.05, 0.06, 0.09), fog);
+
+    return float4(color, 1.0);
+}

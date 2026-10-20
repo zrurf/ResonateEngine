@@ -253,6 +253,11 @@ int Application::run(const Config& config)
         std::signal(SIGINT, previous);
     }
 
+    /* Before the modules go: their capabilities die with them. */
+    if (config.shutdown)
+    {
+        config.shutdown();
+    }
     host->detachAll();
     return EXIT_SUCCESS;
 }

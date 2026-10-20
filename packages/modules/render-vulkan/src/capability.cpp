@@ -116,6 +116,25 @@ void destroyPipeline(void* self, ResonateRenderPipeline pipeline)
     }
 }
 
+ResonateStatus createComputePipeline(void* self, ResonateRenderShader shader,
+                                     ResonateRenderPipeline* out)
+{
+    auto* state = static_cast<State*>(self);
+    if (state == nullptr || state->context == nullptr || out == nullptr)
+    {
+        return RESONATE_E_INVALID;
+    }
+    return state->context->createComputePipeline(shader, out);
+}
+
+ResonateStatus dispatch(void* self, uint32_t groups_x, uint32_t groups_y, uint32_t groups_z)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr
+               ? state->context->dispatch(groups_x, groups_y, groups_z)
+               : RESONATE_E_STATE;
+}
+
 ResonateStatus uploadBuffer(void* self, ResonateRenderBuffer buffer, uint64_t offset_bytes,
                             const void* data, uint64_t size_bytes)
 {
@@ -152,6 +171,20 @@ ResonateStatus endPass(void* self)
 {
     auto* state = static_cast<State*>(self);
     return state != nullptr && state->context != nullptr ? state->context->endPass()
+                                                         : RESONATE_E_STATE;
+}
+
+ResonateStatus beginFrame(void* self)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr ? state->context->beginFrame()
+                                                         : RESONATE_E_STATE;
+}
+
+ResonateStatus barrier(void* self, const ResonateRenderBarrierDesc* desc)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr ? state->context->barrier(desc)
                                                          : RESONATE_E_STATE;
 }
 
@@ -202,6 +235,15 @@ ResonateStatus drawIndexed(void* self, uint32_t index_count, uint32_t instance_c
                : RESONATE_E_STATE;
 }
 
+ResonateStatus updateBuffer(void* self, ResonateRenderBuffer buffer, uint64_t offset_bytes,
+                            const void* data, uint64_t size_bytes)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr
+               ? state->context->updateBuffer(buffer, offset_bytes, data, size_bytes)
+               : RESONATE_E_STATE;
+}
+
 ResonateStatus present(void* self)
 {
     auto* state = static_cast<State*>(self);
@@ -222,16 +264,21 @@ ResonateRenderDevice g_device = {
     &destroyShader,
     &createPipeline,
     &destroyPipeline,
+    &createComputePipeline,
     &uploadBuffer,
     &uploadImage,
+    &beginFrame,
     &beginPass,
     &endPass,
+    &barrier,
     &bindPipeline,
     &bindVertexBuffer,
     &bindIndexBuffer,
     &setConstants,
     &draw,
     &drawIndexed,
+    &dispatch,
+    &updateBuffer,
     &present,
     nullptr,
 };

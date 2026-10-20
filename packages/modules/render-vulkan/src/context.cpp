@@ -67,9 +67,96 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBits
     return VK_FALSE;
 }
 
+VkPipelineStageFlags stagesToVulkan(uint32_t stages)
+{
+    VkPipelineStageFlags flags = 0;
+    if ((stages & RESONATE_RENDER_STAGE_VERTEX) != 0U)
+    {
+        flags |= VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+    }
+    if ((stages & RESONATE_RENDER_STAGE_FRAGMENT) != 0U)
+    {
+        flags |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+    if ((stages & RESONATE_RENDER_STAGE_COLOR_OUTPUT) != 0U)
+    {
+        flags |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    }
+    if ((stages & RESONATE_RENDER_STAGE_DEPTH_OUTPUT) != 0U)
+    {
+        flags |=
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    }
+    if ((stages & RESONATE_RENDER_STAGE_COMPUTE) != 0U)
+    {
+        flags |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    }
+    if ((stages & RESONATE_RENDER_STAGE_TRANSFER) != 0U)
+    {
+        flags |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+    return flags;
+}
+
+VkAccessFlags accessToVulkan(uint32_t access)
+{
+    VkAccessFlags flags = 0;
+    if ((access & RESONATE_RENDER_ACCESS_SHADER_READ) != 0U)
+    {
+        flags |= VK_ACCESS_SHADER_READ_BIT;
+    }
+    if ((access & RESONATE_RENDER_ACCESS_SHADER_WRITE) != 0U)
+    {
+        flags |= VK_ACCESS_SHADER_WRITE_BIT;
+    }
+    if ((access & RESONATE_RENDER_ACCESS_COLOR_WRITE) != 0U)
+    {
+        flags |= VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    }
+    if ((access & RESONATE_RENDER_ACCESS_DEPTH_READ) != 0U)
+    {
+        flags |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    }
+    if ((access & RESONATE_RENDER_ACCESS_DEPTH_WRITE) != 0U)
+    {
+        flags |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    }
+    if ((access & RESONATE_RENDER_ACCESS_TRANSFER_READ) != 0U)
+    {
+        flags |= VK_ACCESS_TRANSFER_READ_BIT;
+    }
+    if ((access & RESONATE_RENDER_ACCESS_TRANSFER_WRITE) != 0U)
+    {
+        flags |= VK_ACCESS_TRANSFER_WRITE_BIT;
+    }
+    return flags;
+}
+
+VkImageLayout layoutToVulkan(ResonateRenderImageLayout layout)
+{
+    switch (layout)
+    {
+        case RESONATE_RENDER_LAYOUT_COLOR_ATTACHMENT:
+            return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        case RESONATE_RENDER_LAYOUT_DEPTH_ATTACHMENT:
+            return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        case RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY:
+            return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        case RESONATE_RENDER_LAYOUT_TRANSFER_SRC:
+            return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        case RESONATE_RENDER_LAYOUT_TRANSFER_DST:
+            return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        case RESONATE_RENDER_LAYOUT_PRESENT:
+            return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        case RESONATE_RENDER_LAYOUT_UNDEFINED:
+        default:
+            return VK_IMAGE_LAYOUT_UNDEFINED;
+    }
+}
+
 } // namespace
 
-Context::Context(bool vsync) : vsync_(vsync)
+Context::Context(bool vsync, ResonateRenderCanvas* canvas) : vsync_(vsync), canvas_(canvas)
 {
 }
 
@@ -78,18 +165,25 @@ Context::~Context()
     if (device_ != VK_NULL_HANDLE)
     {
         vkDeviceWaitIdle(device_);
-        for (Frame& frame : frames_)
-        {
-            drainGraveyard(frame.graveyard);
-        }
+        /* The swapchain owns its render pass and framebuffers; taking them down
+           first also removes the pass from the cache the loop below drains. */
+        destroySwapchainObjects();
+        /* Framebuffers reference image views, so they go before the graveyard's
+           image views are destroyed. */
         for (const auto& entry : framebuffer_cache_)
         {
             vkDestroyFramebuffer(device_, entry.second, nullptr);
+        }
+        for (Frame& frame : frames_)
+        {
+            drainGraveyard(frame.graveyard);
         }
         for (const auto& entry : pass_cache_)
         {
             vkDestroyRenderPass(device_, entry.second, nullptr);
         }
+        pass_cache_.clear();
+        framebuffer_cache_.clear();
         if (pipeline_layout_ != VK_NULL_HANDLE)
         {
             vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
@@ -130,6 +224,22 @@ Context::~Context()
                 vkDestroyPipeline(device_, slot.pipeline, nullptr);
             }
         }
+        if (table_dummy_ != VK_NULL_HANDLE)
+        {
+            vmaDestroyBuffer(allocator_, table_dummy_, table_dummy_allocation_);
+        }
+        if (table_sampler_ != VK_NULL_HANDLE)
+        {
+            vkDestroySampler(device_, table_sampler_, nullptr);
+        }
+        if (table_pool_ != VK_NULL_HANDLE)
+        {
+            vkDestroyDescriptorPool(device_, table_pool_, nullptr);
+        }
+        if (table_layout_ != VK_NULL_HANDLE)
+        {
+            vkDestroyDescriptorSetLayout(device_, table_layout_, nullptr);
+        }
         if (allocator_ != nullptr)
         {
             vmaDestroyAllocator(allocator_);
@@ -145,10 +255,6 @@ Context::~Context()
         if (frame.image_available != VK_NULL_HANDLE)
         {
             vkDestroySemaphore(device_, frame.image_available, nullptr);
-        }
-        if (frame.render_done != VK_NULL_HANDLE)
-        {
-            vkDestroySemaphore(device_, frame.render_done, nullptr);
         }
         if (frame.in_flight != VK_NULL_HANDLE)
         {
@@ -309,6 +415,40 @@ ResonateStatus Context::ensureDevice()
         note(device_failed_, "device has no swapchain extension");
         return RESONATE_E_UNSUPPORTED;
     }
+    if (!hasExtension(extensions, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME))
+    {
+        note(device_failed_, "device has no descriptor indexing extension");
+        return RESONATE_E_UNSUPPORTED;
+    }
+
+    /* The resource table needs partially bound arrays, and the scene shader
+       picks a shadow map with a per-pixel index (a non-uniform sampled-image
+       lookup). Slang's vertex-id path also reads a base-vertex builtin, so
+       shaderDrawParameters is required. */
+    VkPhysicalDeviceVulkan11Features vulkan11{};
+    vulkan11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+    VkPhysicalDeviceDescriptorIndexingFeatures indexing{};
+    indexing.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
+    indexing.pNext = &vulkan11;
+    VkPhysicalDeviceFeatures2 features{};
+    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features.pNext = &indexing;
+    vkGetPhysicalDeviceFeatures2(physical_, &features);
+    if (!indexing.shaderSampledImageArrayNonUniformIndexing ||
+        !indexing.descriptorBindingPartiallyBound || !vulkan11.shaderDrawParameters)
+    {
+        note(device_failed_, "device lacks the resource-table features");
+        return RESONATE_E_UNSUPPORTED;
+    }
+
+    VkPhysicalDeviceVulkan11Features enabled11{};
+    enabled11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+    enabled11.shaderDrawParameters = VK_TRUE;
+    VkPhysicalDeviceDescriptorIndexingFeatures enabled_indexing{};
+    enabled_indexing.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
+    enabled_indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+    enabled_indexing.descriptorBindingPartiallyBound = VK_TRUE;
+    enabled_indexing.pNext = &enabled11;
 
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo queue{};
@@ -317,12 +457,14 @@ ResonateStatus Context::ensureDevice()
     queue.queueCount = 1;
     queue.pQueuePriorities = &priority;
 
-    const char* device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    const char* device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+                                       VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME};
     VkDeviceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    info.pNext = &enabled_indexing;
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = &queue;
-    info.enabledExtensionCount = 1;
+    info.enabledExtensionCount = 2;
     info.ppEnabledExtensionNames = device_extensions;
     if (vkCreateDevice(physical_, &info, nullptr, &device_) != VK_SUCCESS)
     {
@@ -339,6 +481,127 @@ ResonateStatus Context::ensureDevice()
     if (vmaCreateAllocator(&allocator, &allocator_) != VK_SUCCESS)
     {
         note(device_failed_, "allocator creation failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    /* The resource tables: set 0, bindings 0-4 = kTableSize storage buffers
+       each, binding 5 = kTableSize combined image samplers. Every binding is
+       partially bound, so a slot nobody created may be absent from the array.
+       Dummies fill the storage slots at creation, so an index nobody wrote
+       reads defined zeros. */
+    VkDescriptorSetLayoutBinding table_bindings[kTableBindingCount] = {};
+    for (uint32_t binding = 0; binding < kStorageTableBindings; ++binding)
+    {
+        table_bindings[binding].binding = binding;
+        table_bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        table_bindings[binding].descriptorCount = kTableSize;
+        table_bindings[binding].stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
+                                             VK_SHADER_STAGE_FRAGMENT_BIT |
+                                             VK_SHADER_STAGE_COMPUTE_BIT;
+        table_bindings[binding].pImmutableSamplers = nullptr;
+    }
+    table_bindings[kSampledTableBinding].binding = kSampledTableBinding;
+    table_bindings[kSampledTableBinding].descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    table_bindings[kSampledTableBinding].descriptorCount = kTableSize;
+    table_bindings[kSampledTableBinding].stageFlags =
+        VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorBindingFlags binding_flags[kTableBindingCount] = {};
+    for (VkDescriptorBindingFlags& flags : binding_flags)
+    {
+        flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+    }
+    VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{};
+    binding_flags_info.sType =
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    binding_flags_info.bindingCount = kTableBindingCount;
+    binding_flags_info.pBindingFlags = binding_flags;
+
+    VkDescriptorSetLayoutCreateInfo table_layout{};
+    table_layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    table_layout.pNext = &binding_flags_info;
+    table_layout.bindingCount = kTableBindingCount;
+    table_layout.pBindings = table_bindings;
+    if (vkCreateDescriptorSetLayout(device_, &table_layout, nullptr, &table_layout_) != VK_SUCCESS)
+    {
+        note(device_failed_, "table layout creation failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    VkDescriptorPoolSize table_pool_sizes[2] = {};
+    table_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    table_pool_sizes[0].descriptorCount = kStorageTableBindings * kTableSize;
+    table_pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    table_pool_sizes[1].descriptorCount = kTableSize;
+    VkDescriptorPoolCreateInfo table_pool{};
+    table_pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    table_pool.maxSets = 1;
+    table_pool.poolSizeCount = 2;
+    table_pool.pPoolSizes = table_pool_sizes;
+    if (vkCreateDescriptorPool(device_, &table_pool, nullptr, &table_pool_) != VK_SUCCESS)
+    {
+        note(device_failed_, "table pool creation failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    VkDescriptorSetAllocateInfo table_set{};
+    table_set.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    table_set.descriptorPool = table_pool_;
+    table_set.descriptorSetCount = 1;
+    table_set.pSetLayouts = &table_layout_;
+    if (vkAllocateDescriptorSets(device_, &table_set, &table_set_) != VK_SUCCESS)
+    {
+        note(device_failed_, "table allocation failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    VkBufferCreateInfo dummy_info{};
+    dummy_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    dummy_info.size = 256U;
+    dummy_info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    dummy_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VmaAllocationCreateInfo dummy_allocation{};
+    dummy_allocation.usage = VMA_MEMORY_USAGE_AUTO;
+    if (vmaCreateBuffer(allocator_, &dummy_info, &dummy_allocation, &table_dummy_,
+                        &table_dummy_allocation_, nullptr) != VK_SUCCESS)
+    {
+        note(device_failed_, "table dummy buffer creation failed");
+        return RESONATE_E_INTERNAL;
+    }
+    VkDescriptorBufferInfo dummy_buffer_info{};
+    dummy_buffer_info.buffer = table_dummy_;
+    dummy_buffer_info.offset = 0;
+    dummy_buffer_info.range = 256U;
+    for (uint32_t slot = 0; slot < kTableSize; ++slot)
+    {
+        VkWriteDescriptorSet writes[kStorageTableBindings]{};
+        for (uint32_t binding = 0; binding < kStorageTableBindings; ++binding)
+        {
+            writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[binding].dstSet = table_set_;
+            writes[binding].dstBinding = binding;
+            writes[binding].dstArrayElement = slot;
+            writes[binding].descriptorCount = 1;
+            writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[binding].pBufferInfo = &dummy_buffer_info;
+        }
+        vkUpdateDescriptorSets(device_, kStorageTableBindings, writes, 0, nullptr);
+    }
+
+    /* One linear-clamp sampler backs every sampled-image slot: the post and
+       shadow reads are all full-screen or texel-aligned. */
+    VkSamplerCreateInfo table_sampler{};
+    table_sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    table_sampler.minFilter = VK_FILTER_LINEAR;
+    table_sampler.magFilter = VK_FILTER_LINEAR;
+    table_sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    table_sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    table_sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    table_sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if (vkCreateSampler(device_, &table_sampler, nullptr, &table_sampler_) != VK_SUCCESS)
+    {
+        note(device_failed_, "table sampler creation failed");
         return RESONATE_E_INTERNAL;
     }
 
@@ -367,8 +630,7 @@ ResonateStatus Context::ensureDevice()
 
         VkSemaphoreCreateInfo semaphore{};
         semaphore.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        if (vkCreateSemaphore(device_, &semaphore, nullptr, &frame.image_available) != VK_SUCCESS ||
-            vkCreateSemaphore(device_, &semaphore, nullptr, &frame.render_done) != VK_SUCCESS)
+        if (vkCreateSemaphore(device_, &semaphore, nullptr, &frame.image_available) != VK_SUCCESS)
         {
             note(device_failed_, "semaphore creation failed");
             return RESONATE_E_INTERNAL;
@@ -559,6 +821,23 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
         return RESONATE_E_INTERNAL;
     }
 
+    /* One render-done semaphore per image: the presentation engine may hold a
+       semaphore after its image was presented, so it cannot be shared across
+       images. */
+    present_semaphores_.reserve(views_.size());
+    for (std::size_t index = 0; index < views_.size(); ++index)
+    {
+        VkSemaphoreCreateInfo semaphore{};
+        semaphore.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        VkSemaphore created = VK_NULL_HANDLE;
+        if (vkCreateSemaphore(device_, &semaphore, nullptr, &created) != VK_SUCCESS)
+        {
+            note(surface_failed_, "present semaphore creation failed");
+            return RESONATE_E_INTERNAL;
+        }
+        present_semaphores_.push_back(created);
+    }
+
     framebuffers_.reserve(views_.size());
     for (VkImageView image_view : views_)
     {
@@ -597,6 +876,11 @@ void Context::destroySwapchainObjects()
         vkDestroyImageView(device_, view, nullptr);
     }
     views_.clear();
+    for (VkSemaphore semaphore : present_semaphores_)
+    {
+        vkDestroySemaphore(device_, semaphore, nullptr);
+    }
+    present_semaphores_.clear();
     /* The cached pass object for the swapchain key is retired like any other;
        recreateSwapchain rebuilds it on demand. */
     if (render_pass_ != VK_NULL_HANDLE)
@@ -659,45 +943,58 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
         return RESONATE_OK;
     }
 
+    /* Depth-only: color NONE and a depth format make a pass with no color
+       attachment (shadow maps). */
+    const bool colorless = color == RESONATE_RENDER_FORMAT_NONE;
+
     VkAttachmentDescription attachments[2] = {};
     VkAttachmentReference color_reference{};
     color_reference.attachment = 0;
     color_reference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    attachments[0].format = formatOf(color);
-    attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
-    attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachments[0].finalLayout = color == RESONATE_RENDER_FORMAT_UNKNOWN
-                                     ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-                                     : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    if (!colorless)
+    {
+        attachments[0].format = formatOf(color);
+        attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[0].finalLayout = color == RESONATE_RENDER_FORMAT_UNKNOWN
+                                         ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+                                         : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
 
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &color_reference;
-    uint32_t attachment_count = 1;
+    uint32_t attachment_count = 0;
+
+    if (!colorless)
+    {
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &color_reference;
+        attachment_count = 1;
+    }
 
     if (depth != RESONATE_RENDER_FORMAT_UNKNOWN)
     {
         VkAttachmentReference depth_reference{};
-        depth_reference.attachment = 1;
+        depth_reference.attachment = colorless ? 0 : 1;
         depth_reference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-        attachments[1].format = formatOf(depth);
-        attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
-        attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        const uint32_t depth_index = colorless ? 0 : 1;
+        attachments[depth_index].format = formatOf(depth);
+        attachments[depth_index].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[depth_index].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[depth_index].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[depth_index].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[depth_index].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[depth_index].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[depth_index].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
         subpass.pDepthStencilAttachment = &depth_reference;
-        attachment_count = 2;
+        attachment_count = colorless ? 1 : 2;
     }
 
     VkRenderPassCreateInfo pass{};
@@ -729,6 +1026,50 @@ ResonateStatus Context::submitAndRun(VkCommandBuffer command)
     }
     vkQueueWaitIdle(queue_);
     return RESONATE_OK;
+}
+
+VkBuffer Context::resolveBuffer(ResonateRenderBuffer handle) const
+{
+    const BufferSlot* slot =
+        buffers_.live(handleIndex(handle.value), handleGeneration(handle.value));
+    return slot != nullptr ? slot->buffer : VK_NULL_HANDLE;
+}
+
+void Context::writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size)
+{
+    VkDescriptorBufferInfo buffer_info{};
+    buffer_info.buffer = buffer;
+    buffer_info.offset = 0;
+    buffer_info.range = size;
+    VkWriteDescriptorSet writes[kStorageTableBindings]{};
+    for (uint32_t binding = 0; binding < kStorageTableBindings; ++binding)
+    {
+        writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[binding].dstSet = table_set_;
+        writes[binding].dstBinding = binding;
+        writes[binding].dstArrayElement = slot;
+        writes[binding].descriptorCount = 1;
+        writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[binding].pBufferInfo = &buffer_info;
+    }
+    vkUpdateDescriptorSets(device_, kStorageTableBindings, writes, 0, nullptr);
+}
+
+void Context::writeImageSlot(uint32_t slot, VkImageView view)
+{
+    VkDescriptorImageInfo image_info{};
+    image_info.sampler = table_sampler_;
+    image_info.imageView = view;
+    image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = table_set_;
+    write.dstBinding = kSampledTableBinding;
+    write.dstArrayElement = slot;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &image_info;
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
 }
 
 void Context::drainGraveyard(std::vector<Retired>& graveyard)
@@ -775,61 +1116,78 @@ void Context::drainGraveyard(std::vector<Retired>& graveyard)
     graveyard.clear();
 }
 
+ResonateStatus Context::beginFrame()
+{
+    if (swapchain_ == VK_NULL_HANDLE || frame_open_)
+    {
+        return RESONATE_E_STATE;
+    }
+    /* Recreate only when the canvas changed size; the swapchain's own extent
+       may differ (DPI scaling, clamping) without that meaning a resize. */
+    const uint32_t width = canvas_ != nullptr ? canvas_->width(canvas_->self) : canvas_width_;
+    const uint32_t height = canvas_ != nullptr ? canvas_->height(canvas_->self) : canvas_height_;
+    if (recreate_pending_ || width != canvas_width_ || height != canvas_height_)
+    {
+        canvas_width_ = width;
+        canvas_height_ = height;
+        recreate_pending_ = false;
+        recreateSwapchain();
+    }
+
+    Frame& frame = frames_[frame_ % kFramesInFlight];
+    vkWaitForFences(device_, 1, &frame.in_flight, VK_TRUE, UINT64_MAX);
+    drainGraveyard(frame.graveyard);
+
+    uint32_t image_index = 0;
+    VkResult acquired = vkAcquireNextImageKHR(device_, swapchain_, kAcquireTimeoutNs,
+                                              frame.image_available, VK_NULL_HANDLE, &image_index);
+    if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
+    {
+        recreateSwapchain();
+        acquired = vkAcquireNextImageKHR(device_, swapchain_, kAcquireTimeoutNs,
+                                         frame.image_available, VK_NULL_HANDLE, &image_index);
+    }
+    if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
+    {
+        note(surface_failed_, "image acquisition failed");
+        return RESONATE_E_STATE;
+    }
+    recreate_pending_ = acquired == VK_SUBOPTIMAL_KHR;
+    image_index_ = image_index;
+
+    vkResetFences(device_, 1, &frame.in_flight);
+    vkResetCommandBuffer(frame.command, 0);
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    vkBeginCommandBuffer(frame.command, &begin);
+
+    /* Every pipeline reads the resource table as set 0, so the frame binds it
+       once at each bind point. */
+    VkDescriptorSet set = table_set_;
+    vkCmdBindDescriptorSets(frame.command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0, 1,
+                            &set, 0, nullptr);
+    vkCmdBindDescriptorSets(frame.command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout_, 0, 1,
+                            &set, 0, nullptr);
+    frame_open_ = true;
+    return RESONATE_OK;
+}
+
 ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
 {
-    if (device_ == VK_NULL_HANDLE)
-    {
-        return RESONATE_E_STATE;
-    }
-    if (pass_open_)
+    if (!frame_open_ || pass_open_)
     {
         return RESONATE_E_STATE;
     }
 
-    const bool swapchain_target = desc.color.value == 0;
-    if (swapchain_target && swapchain_ == VK_NULL_HANDLE)
-    {
-        return RESONATE_E_STATE;
-    }
-
-    VkCommandBuffer command = VK_NULL_HANDLE;
+    const bool colorless =
+        desc.struct_size >= offsetof(ResonateRenderPassDesc, colorless) + sizeof(uint32_t) &&
+        desc.colorless != 0U;
     VkRenderPass pass = VK_NULL_HANDLE;
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
     VkExtent2D pass_extent{};
 
-    if (swapchain_target)
+    if (desc.color.value == 0 && !colorless)
     {
-        if (recreate_pending_ || extent_.width != canvas_width_ || extent_.height != canvas_height_)
-        {
-            recreate_pending_ = false;
-            recreateSwapchain();
-        }
-
-        Frame& frame = frames_[frame_ % kFramesInFlight];
-        vkWaitForFences(device_, 1, &frame.in_flight, VK_TRUE, UINT64_MAX);
-        drainGraveyard(frame.graveyard);
-
-        uint32_t image_index = 0;
-        VkResult acquired =
-            vkAcquireNextImageKHR(device_, swapchain_, kAcquireTimeoutNs, frame.image_available,
-                                  VK_NULL_HANDLE, &image_index);
-        if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
-        {
-            recreateSwapchain();
-            acquired = vkAcquireNextImageKHR(device_, swapchain_, kAcquireTimeoutNs,
-                                             frame.image_available, VK_NULL_HANDLE, &image_index);
-        }
-        if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
-        {
-            note(surface_failed_, "image acquisition failed");
-            return RESONATE_E_STATE;
-        }
-        recreate_pending_ = acquired == VK_SUBOPTIMAL_KHR;
-        image_index_ = image_index;
-
-        vkResetFences(device_, 1, &frame.in_flight);
-        vkResetCommandBuffer(frame.command, 0);
-        command = frame.command;
         if (renderPassFor(RESONATE_RENDER_FORMAT_UNKNOWN, RESONATE_RENDER_FORMAT_UNKNOWN, &pass) !=
             RESONATE_OK)
         {
@@ -838,27 +1196,25 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
         framebuffer = framebuffers_[image_index_];
         pass_extent = extent_;
     }
-    else
+    else if (colorless)
     {
-        /* Render-to-image passes run synchronously on the aux command buffer.
-           Depth targets are refused. */
-        if (desc.depth.value != 0)
+        /* Depth-only (a shadow pass): the depth image is the sole target. */
+        if (desc.depth.value == 0)
         {
-            return RESONATE_E_UNSUPPORTED;
+            return RESONATE_E_INVALID;
         }
-        ImageSlot* image =
-            images_.live(handleIndex(desc.color.value), handleGeneration(desc.color.value));
-        if (image == nullptr || image->depth)
+        ImageSlot* depth =
+            images_.live(handleIndex(desc.depth.value), handleGeneration(desc.depth.value));
+        if (depth == nullptr || !depth->depth)
         {
             return RESONATE_E_INVALID;
         }
 
-        if (renderPassFor(image->format_id, RESONATE_RENDER_FORMAT_UNKNOWN, &pass) != RESONATE_OK)
+        if (renderPassFor(RESONATE_RENDER_FORMAT_NONE, depth->format_id, &pass) != RESONATE_OK)
         {
             return RESONATE_E_INTERNAL;
         }
-        const uint64_t key =
-            (desc.color.value << 16) | (static_cast<uint64_t>(image->format_id) << 8);
+        const std::pair<uint64_t, uint64_t> key{0U, desc.depth.value};
         const auto found = framebuffer_cache_.find(key);
         if (found != framebuffer_cache_.end())
         {
@@ -870,7 +1226,63 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
             created.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             created.renderPass = pass;
             created.attachmentCount = 1;
-            created.pAttachments = &image->view;
+            created.pAttachments = &depth->view;
+            created.width = depth->width;
+            created.height = depth->height;
+            created.layers = 1;
+            VkFramebuffer handle = VK_NULL_HANDLE;
+            if (vkCreateFramebuffer(device_, &created, nullptr, &handle) != VK_SUCCESS)
+            {
+                note(device_failed_, "framebuffer creation failed");
+                return RESONATE_E_INTERNAL;
+            }
+            framebuffer_cache_.emplace(key, handle);
+            framebuffer = handle;
+        }
+        pass_extent = VkExtent2D{depth->width, depth->height};
+    }
+    else
+    {
+        /* Render-to-image passes run in the frame's command buffer like any
+           other; the depth image, when given, joins the framebuffer. */
+        ImageSlot* image =
+            images_.live(handleIndex(desc.color.value), handleGeneration(desc.color.value));
+        if (image == nullptr || image->depth)
+        {
+            return RESONATE_E_INVALID;
+        }
+        ImageSlot* depth = nullptr;
+        if (desc.depth.value != 0)
+        {
+            depth = images_.live(handleIndex(desc.depth.value), handleGeneration(desc.depth.value));
+            if (depth == nullptr || !depth->depth)
+            {
+                return RESONATE_E_INVALID;
+            }
+        }
+
+        const ResonateRenderFormat depth_format =
+            depth != nullptr ? depth->format_id : RESONATE_RENDER_FORMAT_UNKNOWN;
+        if (renderPassFor(image->format_id, depth_format, &pass) != RESONATE_OK)
+        {
+            return RESONATE_E_INTERNAL;
+        }
+
+        VkImageView attachments[2] = {image->view, depth != nullptr ? depth->view : VK_NULL_HANDLE};
+        const uint32_t attachment_count = depth != nullptr ? 2U : 1U;
+        const std::pair<uint64_t, uint64_t> key{desc.color.value, desc.depth.value};
+        const auto found = framebuffer_cache_.find(key);
+        if (found != framebuffer_cache_.end())
+        {
+            framebuffer = found->second;
+        }
+        else
+        {
+            VkFramebufferCreateInfo created{};
+            created.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            created.renderPass = pass;
+            created.attachmentCount = attachment_count;
+            created.pAttachments = attachments;
             created.width = image->width;
             created.height = image->height;
             created.layers = 1;
@@ -883,26 +1295,35 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
             framebuffer_cache_.emplace(key, handle);
             framebuffer = handle;
         }
-
-        vkResetCommandBuffer(aux_command_, 0);
-        command = aux_command_;
         pass_extent = VkExtent2D{image->width, image->height};
     }
 
-    VkCommandBufferBeginInfo begin{};
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    vkBeginCommandBuffer(command, &begin);
-
-    VkClearValue clear{};
-    clear.color = {
-        {desc.clear_color.x, desc.clear_color.y, desc.clear_color.z, desc.clear_color.w}};
+    VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
+    /* One clear value per cleared attachment: a depth-only pass's sole
+       attachment is the depth image, a color pass's second is depth. */
+    VkClearValue clears[2] = {};
+    uint32_t clear_count = 1U;
+    if (colorless)
+    {
+        clears[0].depthStencil = {1.0f, 0U};
+    }
+    else
+    {
+        clears[0].color = {
+            {desc.clear_color.x, desc.clear_color.y, desc.clear_color.z, desc.clear_color.w}};
+        if (desc.depth.value != 0)
+        {
+            clears[1].depthStencil = {1.0f, 0U};
+            clear_count = 2U;
+        }
+    }
     VkRenderPassBeginInfo pass_begin{};
     pass_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     pass_begin.renderPass = pass;
     pass_begin.framebuffer = framebuffer;
     pass_begin.renderArea.extent = pass_extent;
-    pass_begin.clearValueCount = 1;
-    pass_begin.pClearValues = &clear;
+    pass_begin.clearValueCount = clear_count;
+    pass_begin.pClearValues = clears;
     vkCmdBeginRenderPass(command, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
 
     VkViewport viewport{};
@@ -914,10 +1335,6 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
     vkCmdSetViewport(command, 0, 1, &viewport);
     vkCmdSetScissor(command, 0, 1, &scissor);
 
-    open_pass_ = pass;
-    open_framebuffer_ = framebuffer;
-    pass_on_swapchain_ = swapchain_target;
-    pass_color_ = desc.color;
     bound_pipeline_ = VK_NULL_HANDLE;
     bound_vertex_ = VK_NULL_HANDLE;
     bound_index_ = VK_NULL_HANDLE;
@@ -931,26 +1348,91 @@ ResonateStatus Context::endPass()
     {
         return RESONATE_E_STATE;
     }
-    const bool swapchain_target = pass_on_swapchain_;
-    VkCommandBuffer command =
-        swapchain_target ? frames_[frame_ % kFramesInFlight].command : aux_command_;
-    vkCmdEndRenderPass(command);
-    vkEndCommandBuffer(command);
-    open_pass_ = VK_NULL_HANDLE;
-    open_framebuffer_ = VK_NULL_HANDLE;
+    vkCmdEndRenderPass(frames_[frame_ % kFramesInFlight].command);
     pass_open_ = false;
+    return RESONATE_OK;
+}
 
-    if (!swapchain_target)
+ResonateStatus Context::barrier(const ResonateRenderBarrierDesc* desc)
+{
+    if (!frame_open_)
     {
-        if (submitAndRun(command) != RESONATE_OK)
+        return RESONATE_E_STATE;
+    }
+    if (desc == nullptr)
+    {
+        return RESONATE_E_INVALID;
+    }
+    VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
+
+    VkPipelineStageFlags before_stages = stagesToVulkan(desc->before_stages);
+    if (before_stages == 0)
+    {
+        before_stages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    }
+    VkPipelineStageFlags after_stages = stagesToVulkan(desc->after_stages);
+    if (after_stages == 0)
+    {
+        after_stages = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    }
+    const VkAccessFlags before_access = accessToVulkan(desc->before_access);
+    const VkAccessFlags after_access = accessToVulkan(desc->after_access);
+
+    if (desc->image.value != 0)
+    {
+        const ImageSlot* slot =
+            images_.live(handleIndex(desc->image.value), handleGeneration(desc->image.value));
+        if (slot == nullptr)
         {
-            return RESONATE_E_INTERNAL;
+            return RESONATE_E_INVALID;
         }
+        VkImageMemoryBarrier image_barrier{};
+        image_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        image_barrier.srcAccessMask = before_access;
+        image_barrier.dstAccessMask = after_access;
+        image_barrier.oldLayout = layoutToVulkan(desc->before_layout);
+        image_barrier.newLayout = layoutToVulkan(desc->after_layout);
+        image_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        image_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        image_barrier.image = slot->image;
+        /* The aspect belongs to the image, not to either layout: a shadow map
+           transitions from depth attachment to shader-read. */
+        image_barrier.subresourceRange.aspectMask =
+            slot->depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        image_barrier.subresourceRange.levelCount = 1;
+        image_barrier.subresourceRange.layerCount = 1;
+        vkCmdPipelineBarrier(command, before_stages, after_stages, 0, 0, nullptr, 0, nullptr, 1,
+                             &image_barrier);
         return RESONATE_OK;
     }
+    if (desc->buffer.value != 0)
+    {
+        VkBufferMemoryBarrier buffer_barrier{};
+        buffer_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        buffer_barrier.srcAccessMask = before_access;
+        buffer_barrier.dstAccessMask = after_access;
+        buffer_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        buffer_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        buffer_barrier.buffer = resolveBuffer(desc->buffer);
+        buffer_barrier.size = VK_WHOLE_SIZE;
+        vkCmdPipelineBarrier(command, before_stages, after_stages, 0, 0, nullptr, 1,
+                             &buffer_barrier, 0, nullptr);
+        return RESONATE_OK;
+    }
+    return RESONATE_E_INVALID;
+}
 
+ResonateStatus Context::present()
+{
+    if (!frame_open_ || swapchain_ == VK_NULL_HANDLE)
+    {
+        return RESONATE_E_STATE;
+    }
     Frame& frame = frames_[frame_ % kFramesInFlight];
+    vkEndCommandBuffer(frame.command);
+
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkSemaphore render_done = present_semaphores_[image_index_];
     VkSubmitInfo submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.waitSemaphoreCount = 1;
@@ -959,27 +1441,24 @@ ResonateStatus Context::endPass()
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &frame.command;
     submit.signalSemaphoreCount = 1;
-    submit.pSignalSemaphores = &frame.render_done;
-    if (vkQueueSubmit(queue_, 1, &submit, frame.in_flight) != VK_SUCCESS)
+    submit.pSignalSemaphores = &render_done;
+    const VkResult submitted = vkQueueSubmit(queue_, 1, &submit, frame.in_flight);
+    frame_open_ = false;
+    pass_open_ = false;
+    bound_pipeline_ = VK_NULL_HANDLE;
+    bound_vertex_ = VK_NULL_HANDLE;
+    bound_index_ = VK_NULL_HANDLE;
+    frame_++;
+    if (submitted != VK_SUCCESS)
     {
         note(surface_failed_, "command submission failed");
         return RESONATE_E_INTERNAL;
     }
-    last_render_done_ = frame.render_done;
-    frame_++;
-    return RESONATE_OK;
-}
 
-ResonateStatus Context::present()
-{
-    if (swapchain_ == VK_NULL_HANDLE || last_render_done_ == VK_NULL_HANDLE)
-    {
-        return RESONATE_E_STATE;
-    }
     VkPresentInfoKHR info{};
     info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     info.waitSemaphoreCount = 1;
-    info.pWaitSemaphores = &last_render_done_;
+    info.pWaitSemaphores = &render_done;
     info.swapchainCount = 1;
     info.pSwapchains = &swapchain_;
     info.pImageIndices = &image_index_;

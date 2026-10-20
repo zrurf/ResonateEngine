@@ -32,9 +32,13 @@ local function entryPointsOf(source)
     local entries = {}
     local stage = nil
     for line in source:gmatch("[^\r\n]+") do
-        if stage == nil then
-            stage = line:match('^%s*%[shader%s*%(%s*"(%w+)"%s*%)%s*%]')
-        elseif not line:match("^%s*//") then
+        if line:match('^%s*%[%a') then
+            -- Any attribute line: [shader(...)] starts looking, [numthreads...]
+            -- and friends never name an entry point.
+            if stage == nil then
+                stage = line:match('^%s*%[shader%s*%(%s*"(%w+)"%s*%)%s*%]')
+            end
+        elseif stage ~= nil and not line:match("^%s*//") then
             -- No underscore placeholders: the xmake lua sandbox breaks
             -- destructuring that names a local `_`.
             local _, name = line:match("^%s*(.-)(%w+)%s*%(")
@@ -54,10 +58,21 @@ end
 local slangc = find_slangc()
 os.mkdir(OUT_DIR)
 
+-- The engine's own renderer compiles from packages/renderer; backend modules
+-- keep theirs under packages/modules.
+local sources = {}
+for _, source in ipairs(os.files(path.join(MODULES_DIR, "*", "shaders", "*.slang"))) do
+    sources[#sources + 1] = source
+end
+for _, source in ipairs(os.files(path.join(PROJECT_DIR, "packages", "renderer", "shaders",
+                                             "*.slang"))) do
+    sources[#sources + 1] = source
+end
+
 local shaders = 0
 local compiled = 0
 local entries_total = 0
-for _, source in ipairs(os.files(path.join(MODULES_DIR, "*", "shaders", "*.slang"))) do
+for _, source in ipairs(sources) do
     shaders = shaders + 1
     local name = path.basename(source)
     local source_mtime = os.mtime(source)
@@ -75,8 +90,11 @@ for _, source in ipairs(os.files(path.join(MODULES_DIR, "*", "shaders", "*.slang
             goto continue
         end
 
-        local code = os.execv(slangc, {source, "-entry", entry.name, "-target", "spirv", "-o", spv,
-                                       "-reflection-json", reflection}, {try = true})
+        -- Row-major storage with column vectors matches the engine's matrices.
+        -- SPIR-V 1.3 is the newest Vulkan 1.1 accepts, the backend's floor.
+        local code = os.execv(slangc, {source, "-entry", entry.name, "-target", "spirv",
+                                       "-profile", "spirv_1_3", "-matrix-layout-row-major",
+                                       "-o", spv, "-reflection-json", reflection}, {try = true})
         if code ~= 0 then
             raise("slang: compiling %s (%s) failed (exit %s)", source, entry.name, tostring(code))
         end

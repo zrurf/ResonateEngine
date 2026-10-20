@@ -9,7 +9,7 @@ target("Resonate.Startup")
     add_files("src/**.cpp")
 
     add_deps("Resonate.Runtime", "Resonate.Window", "Resonate.Render",
-             "Resonate.Hierarchy")
+             "Resonate.Hierarchy", "Resonate.Renderer")
 
     -- tree.h includes the generated hierarchy components, so the schema output
     -- has to exist before this target compiles.
