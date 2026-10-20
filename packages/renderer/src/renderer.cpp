@@ -1,12 +1,18 @@
 #include <resonate/renderer/renderer.h>
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #include <resonate/core/math.h>
@@ -113,11 +119,16 @@ struct DrawInstance
     MeshId mesh;
 };
 
-struct ExtractedFrame
+/* One extracted frame, handed to the render thread. The producer fills a
+   scratch snapshot and publishes it into the double buffer; the render thread
+   executes the published one. */
+struct FrameSnapshot
 {
     ShaderFrameData frame_data{};
     std::vector<ShaderLight> lights;
     std::vector<DrawInstance> instances;
+    std::uint32_t target_width = 0U;
+    std::uint32_t target_height = 0U;
 };
 
 constexpr ResonateVec4 kClearColor{0.05F, 0.06F, 0.09F, 1.0F};
@@ -188,6 +199,9 @@ struct RenderSystem::Impl
     /* Resolved once the render module's device appears in the registry. */
     ResonateRenderDevice* device = nullptr;
     ResonateRenderCanvas* canvas = nullptr;
+    /* Target and device state. The render thread owns everything below the
+       handoff block; `device` and `canvas` are resolved before it starts and
+       only read afterwards. */
     bool surface_attached = false;
     bool surface_unavailable = false;
     bool windowed = false;
@@ -203,9 +217,9 @@ struct RenderSystem::Impl
     ecs::Query directional_lights;
     bool queries_ready = false;
 
-    /* The extraction scratch: the camera and light bodies fill the frame
-       data, the instance body appends. */
-    ExtractedFrame frame;
+    /* Producer state: the extract fills a scratch snapshot, then publishes it.
+       The camera and light fallbacks persist across frames. */
+    FrameSnapshot scratch;
     bool have_camera = false;
     Mat4 camera_world{};
     float fov_radians = 60.0F * 3.14159265F / 180.0F;
@@ -214,6 +228,26 @@ struct RenderSystem::Impl
     Vec3 directional_direction{0.35F, -1.0F, 0.25F};
     Vec3 directional_color{1.0F, 0.96F, 0.88F};
     float directional_intensity = 1.1F;
+
+    /* Handoff: two snapshots. The producer fills the one the render thread is
+       not reading and publishes it; when both are in the render thread's hands
+       it waits, which bounds the render lag at one frame. */
+    static constexpr std::uint32_t kSnapshotCount = 2U;
+    static constexpr std::uint32_t kNoSnapshot = kSnapshotCount;
+    std::array<FrameSnapshot, kSnapshotCount> snapshots;
+    std::uint32_t pending_snapshot = 0U;
+    std::uint32_t active_snapshot = kNoSnapshot;
+    bool snapshot_pending = false;
+    bool consumer_busy = false;
+    bool stop = false;
+    std::mutex handoff_mutex;
+    std::condition_variable handoff_wake;
+    std::condition_variable idle_wake;
+    std::thread render_thread;
+    bool render_thread_started = false;
+
+    /* The render thread's current snapshot; the pass callbacks read it. */
+    FrameSnapshot* active = nullptr;
 
     resonate::render::GraphPlan plan;
     ResourceId canvas_resource = 0;
@@ -247,7 +281,9 @@ struct RenderSystem::Impl
     bool pipelines_ready = false;
     bool pipelines_failed = false;
     bool ready_noted = false;
-    bool complained = false;
+    /* Set by whichever thread hits the first failure: the producer can refuse
+       queries while the render thread reports a pipeline. */
+    std::atomic<bool> complained{false};
 
     GpuMesh cube{};
     GpuMesh ground{};
@@ -267,9 +303,8 @@ struct RenderSystem::Impl
 
     void complain(const char* what)
     {
-        if (!complained)
+        if (!complained.exchange(true))
         {
-            complained = true;
             std::fprintf(stderr, "renderer: %s\n", what);
         }
     }
@@ -278,7 +313,11 @@ struct RenderSystem::Impl
     bool ensurePipelines();
     ResonateRenderBuffer uploadStorage(std::uint64_t size_bytes, bool host_visible);
     void bindQueries(ecs::World& world);
-    void extract(ecs::World& world);
+    void resolveCapabilities();
+    bool extract(ecs::World& world);
+    void publish();
+    void renderLoop();
+    void renderFrame(FrameSnapshot& snapshot);
     void prepareFrame(GraphExecuteContext& commands);
     void runClusters(GraphExecuteContext& commands, ResonateRenderPipeline pipeline);
     void runShadows(GraphExecuteContext& commands, std::uint32_t cascade);
@@ -832,15 +871,40 @@ void RenderSystem::Impl::bindQueries(ecs::World& world)
     }
 }
 
-void RenderSystem::Impl::extract(ecs::World& world)
+void RenderSystem::Impl::resolveCapabilities()
 {
-    bindQueries(world);
-    frame.instances.clear();
-    frame.lights.clear();
-    have_camera = false;
-    if (!queries_ready)
+    if (registry == nullptr)
     {
         return;
+    }
+    uint32_t version = 0;
+    void* instance = resonate_capability_find(
+        registry, resonate::detail::CapabilityTraits<ResonateRenderDevice>::id.value(), 1U,
+        &version);
+    if (instance != nullptr)
+    {
+        device = static_cast<ResonateRenderDevice*>(instance);
+    }
+    instance = resonate_capability_find(
+        registry, resonate::detail::CapabilityTraits<ResonateRenderCanvas>::id.value(), 1U,
+        &version);
+    if (instance != nullptr)
+    {
+        canvas = static_cast<ResonateRenderCanvas*>(instance);
+    }
+}
+
+bool RenderSystem::Impl::extract(ecs::World& world)
+{
+    bindQueries(world);
+    scratch.instances.clear();
+    scratch.lights.clear();
+    have_camera = false;
+    scratch.target_width = canvas != nullptr ? canvas->width(canvas->self) : 0U;
+    scratch.target_height = canvas != nullptr ? canvas->height(canvas->self) : 0U;
+    if (!queries_ready || scratch.target_width == 0U || scratch.target_height == 0U)
+    {
+        return false;
     }
 
     directional_lights.forEachChunk(
@@ -890,7 +954,7 @@ void RenderSystem::Impl::extract(ecs::World& world)
                 resonate::ecs::column<hierarchy::WorldTransform>(view);
             for (std::uint32_t row = 0; row < view.count; ++row)
             {
-                if (self->frame.lights.size() >= kMaxLights)
+                if (self->scratch.lights.size() >= kMaxLights)
                 {
                     break;
                 }
@@ -901,7 +965,7 @@ void RenderSystem::Impl::extract(ecs::World& world)
                 shader_light.color_intensity =
                     Vec4{light.data[row].color.x, light.data[row].color.y, light.data[row].color.z,
                          light.data[row].intensity};
-                self->frame.lights.push_back(shader_light);
+                self->scratch.lights.push_back(shader_light);
             }
         },
         this);
@@ -920,36 +984,29 @@ void RenderSystem::Impl::extract(ecs::World& world)
                 instance.model = transform.data[row].matrix;
                 instance.color = mesh.data[row].color;
                 instance.mesh = mesh.data[row].mesh == kMeshGround ? kMeshGround : kMeshCube;
-                self->frame.instances.push_back(instance);
+                self->scratch.instances.push_back(instance);
             }
         },
         this);
 
-    float aspect = 16.0F / 9.0F;
-    if (canvas != nullptr)
-    {
-        const uint32_t height = canvas->height(canvas->self);
-        if (height != 0U)
-        {
-            aspect = static_cast<float>(canvas->width(canvas->self)) / static_cast<float>(height);
-        }
-    }
+    const float aspect =
+        static_cast<float>(scratch.target_width) / static_cast<float>(scratch.target_height);
     const Mat4 view = have_camera ? rigidInverse(camera_world) : Mat4{};
     const Mat4 projection = perspectiveClip(fov_radians, aspect, near_z, far_z);
-    frame.frame_data.view_proj = projection * view;
-    frame.frame_data.camera_world = camera_world;
-    frame.frame_data.camera_and_near =
+    scratch.frame_data.view_proj = projection * view;
+    scratch.frame_data.camera_world = camera_world;
+    scratch.frame_data.camera_and_near =
         Vec4{camera_world.m[0][3], camera_world.m[1][3], camera_world.m[2][3], near_z};
-    frame.frame_data.direction_and_far =
+    scratch.frame_data.direction_and_far =
         Vec4{directional_direction.x, directional_direction.y, directional_direction.z, far_z};
-    frame.frame_data.directional_color_intensity =
+    scratch.frame_data.directional_color_intensity =
         Vec4{directional_color.x, directional_color.y, directional_color.z, directional_intensity};
     /* The cluster grid's pixel tile size travels with the frame data, so the
        fragment shader's lookup follows the target's extent. */
-    frame.frame_data.light_count_and_pad =
-        Vec4{static_cast<float>(frame.lights.size()),
-             static_cast<float>(target_width) / static_cast<float>(kClustersX),
-             static_cast<float>(target_height) / static_cast<float>(kClustersY), 0.0F};
+    scratch.frame_data.light_count_and_pad =
+        Vec4{static_cast<float>(scratch.lights.size()),
+             static_cast<float>(scratch.target_width) / static_cast<float>(kClustersX),
+             static_cast<float>(scratch.target_height) / static_cast<float>(kClustersY), 0.0F};
 
     /* CSM: three logarithmic splits, ascending, the last at 35% of the view
        distance — shadow range trades against texel density. Each cascade's
@@ -972,27 +1029,58 @@ void RenderSystem::Impl::extract(ecs::World& world)
         const float box_width = std::fmax(std::fmax(extents.x, extents.y), extents.z) * 2.0F;
         const Vec3 eye = center - light_forward * (far_z * 0.5F);
         const Mat4 light_view = lookAtLh(eye, light_forward, light_up);
-        frame.frame_data.light_view_proj[cascade] =
+        scratch.frame_data.light_view_proj[cascade] =
             orthographicClip(box_width, box_width, far_z * 0.5F - box_width,
                              far_z * 0.5F + box_width) *
             light_view;
         previous_split = split;
     }
-    frame.frame_data.split_distances =
+    scratch.frame_data.split_distances =
         Vec4{split_values[0], split_values[1], split_values[2], 0.0F};
+    return true;
+}
+
+void RenderSystem::Impl::publish()
+{
+    std::unique_lock<std::mutex> lock(handoff_mutex);
+    for (;;)
+    {
+        for (std::uint32_t slot = 0; slot < kSnapshotCount; ++slot)
+        {
+            if (slot == active_snapshot)
+            {
+                continue;
+            }
+            if (snapshot_pending && slot == pending_snapshot)
+            {
+                continue;
+            }
+            snapshots[slot] = std::move(scratch);
+            pending_snapshot = slot;
+            snapshot_pending = true;
+            lock.unlock();
+            handoff_wake.notify_one();
+            return;
+        }
+        handoff_wake.wait(lock);
+    }
 }
 
 void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
 {
+    if (active == nullptr)
+    {
+        return;
+    }
     /* Recorded into the open frame: the previous frames may still be reading
        the same buffers while the extract runs. */
     ResonateRenderDevice& frame_device = *commands.device;
-    frame_device.update_buffer(frame_device.self, frame_data.vertices, 0, &frame.frame_data,
+    frame_device.update_buffer(frame_device.self, frame_data.vertices, 0, &active->frame_data,
                                sizeof(ShaderFrameData));
-    if (!frame.lights.empty())
+    if (!active->lights.empty())
     {
-        frame_device.update_buffer(frame_device.self, light_list.vertices, 0, frame.lights.data(),
-                                   frame.lights.size() * sizeof(ShaderLight));
+        frame_device.update_buffer(frame_device.self, light_list.vertices, 0, active->lights.data(),
+                                   active->lights.size() * sizeof(ShaderLight));
     }
 
     /* The updates land through the transfer stage; the passes that read them
@@ -1007,7 +1095,7 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
     barrier.after_access = RESONATE_RENDER_ACCESS_SHADER_READ;
     barrier.buffer = frame_data.vertices;
     frame_device.barrier(frame_device.self, &barrier);
-    if (!frame.lights.empty())
+    if (!active->lights.empty())
     {
         barrier.buffer = light_list.vertices;
         frame_device.barrier(frame_device.self, &barrier);
@@ -1056,7 +1144,7 @@ void RenderSystem::Impl::runShadows(GraphExecuteContext& commands, std::uint32_t
     constants.slots2[1] = cascade;
     device.set_constants(device.self, &constants, sizeof(constants));
 
-    for (const DrawInstance& instance : frame.instances)
+    for (const DrawInstance& instance : active->instances)
     {
         const GpuMesh& mesh = instance.mesh == kMeshGround ? ground : cube;
         if (mesh.vertices.value == 0U || mesh.indices.value == 0U)
@@ -1107,7 +1195,7 @@ void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
         constants.slots2[1 + cascade] = commands.imageSlot(shadow_resource[cascade]);
     }
 
-    for (const DrawInstance& instance : frame.instances)
+    for (const DrawInstance& instance : active->instances)
     {
         const GpuMesh& mesh = instance.mesh == kMeshGround ? ground : cube;
         if (mesh.vertices.value == 0U || mesh.indices.value == 0U)
@@ -1274,11 +1362,27 @@ void RenderSystem::invoke(void* context, ecs::World& world, ecs::CommandBuffer&,
 
 void RenderSystem::release()
 {
-    /* The executor's destruction calls destroy_image/destroy_buffer, so it has
-       to happen while the device capability is still alive. The context frees
-       whatever else it owns. */
-    impl_->executor.reset();
-    impl_->released = true;
+    Impl& impl = *impl_;
+    impl.released = true;
+    {
+        std::lock_guard<std::mutex> lock(impl.handoff_mutex);
+        impl.stop = true;
+    }
+    impl.handoff_wake.notify_all();
+    if (impl.render_thread.joinable())
+    {
+        impl.render_thread.join();
+    }
+    /* The executor's destruction calls into the device; the render thread is
+       gone and the capability is still alive. */
+    impl.executor.reset();
+}
+
+void RenderSystem::waitIdle()
+{
+    Impl& impl = *impl_;
+    std::unique_lock<std::mutex> lock(impl.handoff_mutex);
+    impl.idle_wake.wait(lock, [&impl] { return !impl.snapshot_pending && !impl.consumer_busy; });
 }
 
 void RenderSystem::run(ecs::World& world)
@@ -1288,67 +1392,90 @@ void RenderSystem::run(ecs::World& world)
     {
         return;
     }
-    if (impl.device == nullptr && impl.registry != nullptr)
+    if (!impl.render_thread_started)
     {
-        uint32_t version = 0;
-        void* instance = resonate_capability_find(
-            impl.registry, resonate::detail::CapabilityTraits<ResonateRenderDevice>::id.value(), 1U,
-            &version);
-        if (instance != nullptr)
-        {
-            impl.device = static_cast<ResonateRenderDevice*>(instance);
-        }
-        instance = resonate_capability_find(
-            impl.registry, resonate::detail::CapabilityTraits<ResonateRenderCanvas>::id.value(), 1U,
-            &version);
-        if (instance != nullptr)
-        {
-            impl.canvas = static_cast<ResonateRenderCanvas*>(instance);
-        }
+        /* The pointers are resolved before the thread starts and only read
+           afterwards; the producer needs the canvas for the frame's aspect. */
+        impl.resolveCapabilities();
+        impl.render_thread = std::thread([&impl] { impl.renderLoop(); });
+        impl.render_thread_started = true;
     }
-    if (impl.device == nullptr)
+    if (!impl.extract(world))
     {
-        return; /* headless, or the render module is absent: nothing draws */
+        return;
     }
+    impl.publish();
+}
 
-    /* The target comes from the canvas: a window-backed one gets a surface, an
-       offscreen one gets device-owned images. A server run with no canvas never
-       gets here. */
-    if (!impl.surface_attached && !impl.surface_unavailable)
+void RenderSystem::Impl::renderLoop()
+{
+    for (;;)
     {
-        ResonateRenderCanvas* canvas = impl.canvas;
-        const uint32_t width = canvas->width(canvas->self);
-        const uint32_t height = canvas->height(canvas->self);
+        FrameSnapshot* snapshot = nullptr;
+        {
+            std::unique_lock<std::mutex> lock(handoff_mutex);
+            handoff_wake.wait(lock, [this] { return stop || snapshot_pending; });
+            if (stop)
+            {
+                break;
+            }
+            snapshot = &snapshots[pending_snapshot];
+            snapshot_pending = false;
+            active_snapshot = pending_snapshot;
+            consumer_busy = true;
+            active = snapshot;
+        }
+
+        if (device != nullptr && canvas != nullptr)
+        {
+            renderFrame(*snapshot);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(handoff_mutex);
+            active = nullptr;
+            consumer_busy = false;
+            active_snapshot = kNoSnapshot;
+            idle_wake.notify_all();
+            handoff_wake.notify_all();
+        }
+    }
+}
+
+void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
+{
+    if (!surface_attached && !surface_unavailable)
+    {
+        const uint32_t width = snapshot.target_width;
+        const uint32_t height = snapshot.target_height;
         if (width == 0U || height == 0U)
         {
-            impl.surface_unavailable = true;
             return;
         }
-
-        impl.windowed = canvas->is_window_backed(canvas->self) != 0U;
+        windowed = canvas->is_window_backed(canvas->self) != 0U;
         ResonateStatus attached = RESONATE_E_INVALID;
-        if (impl.windowed)
+        if (windowed)
         {
             const void* native = canvas->native_handle(canvas->self);
             if (native != nullptr)
             {
-                attached = impl.device->attach_surface(impl.device->self, native, width, height);
+                attached = device->attach_surface(device->self, native, width, height);
             }
         }
         else
         {
-            attached = impl.device->attach_offscreen(impl.device->self, width, height);
+            attached = device->attach_offscreen(device->self, width, height);
         }
         if (attached != RESONATE_OK)
         {
-            impl.surface_unavailable = true;
-            impl.complain(impl.windowed ? "the surface was not attached"
-                                        : "the offscreen target was not attached");
+            surface_unavailable = true;
+            complain(windowed ? "the surface was not attached"
+                              : "the offscreen target was not attached");
             return;
         }
-        impl.surface_attached = true;
+        surface_attached = true;
     }
-    if (!impl.surface_attached)
+    if (!surface_attached)
     {
         return;
     }
@@ -1356,47 +1483,46 @@ void RenderSystem::run(ecs::World& world)
     /* The scene and post targets follow the canvas extent; a resize waits out
        the frames in flight, rebuilds the plan and its executor, and keeps the
        format-keyed pipelines. */
-    const uint32_t width = impl.canvas->width(impl.canvas->self);
-    const uint32_t height = impl.canvas->height(impl.canvas->self);
-    if (!impl.initialized || width != impl.target_width || height != impl.target_height)
+    const uint32_t width = snapshot.target_width;
+    const uint32_t height = snapshot.target_height;
+    if (!initialized || width != target_width || height != target_height)
     {
         if (width == 0U || height == 0U)
         {
             return;
         }
-        impl.device->wait_idle(impl.device->self);
-        impl.executor.reset();
+        device->wait_idle(device->self);
+        executor.reset();
         /* An offscreen target is device-owned, so the renderer re-attaches it
            at the new extent; the first attach already used the current size.
            The swapchain resizes itself in begin_frame. */
-        if (impl.initialized && !impl.windowed &&
-            impl.device->attach_offscreen(impl.device->self, width, height) != RESONATE_OK)
+        if (initialized && !windowed &&
+            device->attach_offscreen(device->self, width, height) != RESONATE_OK)
         {
-            impl.surface_unavailable = true;
-            impl.complain("the offscreen target was not resized");
+            surface_unavailable = true;
+            complain("the offscreen target was not resized");
             return;
         }
-        impl.target_width = width;
-        impl.target_height = height;
-        impl.bloom_width = std::max(1U, width / kBloomDivisor);
-        impl.bloom_height = std::max(1U, height / kBloomDivisor);
-        if (!impl.initialize())
+        target_width = width;
+        target_height = height;
+        bloom_width = std::max(1U, width / kBloomDivisor);
+        bloom_height = std::max(1U, height / kBloomDivisor);
+        if (!initialize())
         {
-            impl.initialized = false;
+            initialized = false;
             return;
         }
-        impl.initialized = true;
+        initialized = true;
     }
-    if (!impl.ensurePipelines())
+    if (!ensurePipelines())
     {
         return;
     }
 
-    impl.extract(world);
     std::string error;
-    if (!impl.executor->execute(error, &Impl::prepareEntry, &impl) && !error.empty())
+    if (!executor->execute(error, &Impl::prepareEntry, this) && !error.empty())
     {
-        impl.complain(error.c_str());
+        complain(error.c_str());
     }
 }
 

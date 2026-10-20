@@ -76,8 +76,13 @@ class RenderSystem
     static void invoke(void* context, ecs::World& world, ecs::CommandBuffer& commands,
                        float delta_seconds);
 
-    /* One extract-and-draw pass; callable directly (tests, tools). */
+    /* Extracts the scene and publishes the frame to the render thread, which
+       owns the device calls. Callable directly (tests, tools). */
     void run(ecs::World& world);
+
+    /* Blocks until the render thread has drained every published frame; for
+       tests and tools that read the device state afterwards. */
+    void waitIdle();
 
     /* Releases the graph's device resources. The run calls it before the
        modules detach, while the device that created them is still alive; safe

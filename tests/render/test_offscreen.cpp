@@ -92,6 +92,9 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
     {
         render_system.run(world);
     }
+    /* The render thread owns the device calls; the readback is a main-thread
+       call, so the handoff has to be drained first. */
+    render_system.waitIdle();
 
     std::vector<std::uint8_t> pixels(320U * 240U * 4U);
     std::uint32_t width = 0;
