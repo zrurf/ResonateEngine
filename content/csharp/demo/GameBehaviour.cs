@@ -42,10 +42,12 @@ public static unsafe class GameBehaviour
         Resonate.Hierarchy.LocalTransform transform = default;
         transform.Position = new Resonate.CSharp.Math.Vec3
         {
-            X = -2.0F + (float)(frame->FrameIndex / kSpawnEveryFrames % 5U),
+            X = -6.0F + (float)(frame->FrameIndex / kSpawnEveryFrames % 9U) * 1.5F,
             Y = 0.5F,
-            Z = 4.0F,
+            Z = -2.0F,
         };
+        /* A C# struct defaults to a zero quaternion; the identity is w = 1. */
+        transform.Rotation.W = 1.0F;
         transform.Scale = new Resonate.CSharp.Math.Vec3
         {
             X = 1.0F,
@@ -72,11 +74,11 @@ public static unsafe class GameBehaviour
         Add(api, entity, Resonate.Render.MeshInstance.SchemaNameUtf8, &mesh);
     }
 
-    private static void Add(HostApi* api, ulong entity, ReadOnlySpan<byte> name, void* data)
+    private static int Add(HostApi* api, ulong entity, ReadOnlySpan<byte> name, void* data)
     {
         fixed (byte* component = name)
         {
-            api->AddComponent((IntPtr)api, entity, component, (IntPtr)data);
+            return api->AddComponent((IntPtr)api, entity, component, (IntPtr)data);
         }
     }
 }
