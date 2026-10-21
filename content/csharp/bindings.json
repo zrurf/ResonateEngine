@@ -1,5 +1,16 @@
 {
   "systems": [
     { "name": "tick", "id": 7 }
+  ],
+  "structs": [
+    {
+      "name": "FrameView",
+      "fields": [
+        { "name": "delta_seconds", "type": "f32" },
+        { "name": "frame_index", "type": "u64" },
+        { "name": "transform_data", "type": "f32_pointer" },
+        { "name": "transform_count", "type": "u64" }
+      ]
+    }
   ]
 }

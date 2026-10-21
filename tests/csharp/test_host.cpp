@@ -101,3 +101,30 @@ TEST_CASE("csharp: managed code registers an entry into the dispatch table", "[c
     CHECK(table.invoke(resonate::csharp::bindings::kSystemTick, &counter));
     CHECK(counter == 2);
 }
+
+TEST_CASE("csharp: a generated view struct reads as a span on the managed side", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::RuntimeHost host;
+    std::string error;
+    REQUIRE(host.initialize(fixture.config, error));
+
+    void* verify = host.load_function(fixture.assembly, kProbeType, "VerifyFrameViewLayout", error);
+    REQUIRE(verify != nullptr);
+    CHECK(reinterpret_cast<int (*)()>(verify)() == 0);
+
+    void* sum_function = host.load_function(fixture.assembly, kProbeType, "SumTransforms", error);
+    REQUIRE(sum_function != nullptr);
+
+    const float transforms[3] = {1.5F, 2.5F, 3.0F};
+    resonate::csharp::bindings::FrameView view{};
+    view.delta_seconds = 1.0F / 60.0F;
+    view.frame_index = 3U;
+    view.transform_data = transforms;
+    view.transform_count = 3U;
+
+    const auto sum = reinterpret_cast<float (*)(void*)>(sum_function);
+    CHECK(sum(&view) == 7.0F);
+}

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
 
@@ -15,13 +14,58 @@ internal sealed class SystemEntry
     public uint Id { get; set; }
 }
 
+/* A boundary struct. Field types come from the closed vocabulary below, which
+   is what lets both sides be generated with one layout. */
+internal sealed class FieldEntry
+{
+    public string? Name { get; set; }
+    public string? Type { get; set; }
+}
+
+internal sealed class StructEntry
+{
+    public string? Name { get; set; }
+    public List<FieldEntry>? Fields { get; set; }
+}
+
 internal sealed class Contract
 {
     public List<SystemEntry>? Systems { get; set; }
+    public List<StructEntry>? Structs { get; set; }
+}
+
+internal readonly record struct FieldType(string Cpp, string CSharp, int Size, int Alignment);
+
+internal sealed class FieldLayout
+{
+    public required FieldEntry Field { get; init; }
+    public required FieldType Type { get; init; }
+    public int Offset { get; init; }
+}
+
+internal sealed class StructLayout
+{
+    public required string Name { get; init; }
+    public required List<FieldLayout> Fields { get; init; }
+    public required int Size { get; init; }
 }
 
 internal static class Program
 {
+    /* The closed vocabulary the generator knows how to lay out on both sides.
+       A new type is added here and to the contract; nothing infers a layout
+       from a native signature. */
+    private static readonly Dictionary<string, FieldType> Types = new(StringComparer.Ordinal)
+    {
+        ["u32"] = new("std::uint32_t", "uint", 4, 4),
+        ["u64"] = new("std::uint64_t", "ulong", 8, 8),
+        ["i32"] = new("std::int32_t", "int", 4, 4),
+        ["f32"] = new("float", "float", 4, 4),
+        ["f32_pointer"] = new("const float*", "float*", 8, 8),
+        ["u8_pointer"] = new("const std::uint8_t*", "byte*", 8, 8),
+        ["void_pointer"] = new("void*", "IntPtr", 8, 8),
+    };
+
     private static int Main(string[] args)
     {
         string? input = null;
@@ -64,39 +108,109 @@ internal static class Program
             return 1;
         }
 
-        List<(string Name, uint Id)> systems = new();
+        if (!ValidateSystems(contract.Systems, out List<(string Name, uint Id)> systems))
+        {
+            return 1;
+        }
+        if (!ValidateStructs(contract.Structs, out List<StructLayout> layouts))
+        {
+            return 1;
+        }
+
+        Directory.CreateDirectory(Path.Combine(outDir, "resonate", "csharp"));
+        WriteIfChanged(Path.Combine(outDir, "resonate", "csharp", "bindings.h"),
+                       EmitHeader(input, systems, layouts));
+        WriteIfChanged(Path.Combine(outDir, "Resonate.CSharp.Bindings.g.cs"),
+                       EmitCSharp(input, systems, layouts));
+        return 0;
+    }
+
+    private static bool ValidateSystems(List<SystemEntry> entries, out List<(string, uint)> systems)
+    {
+        systems = new List<(string, uint)>();
         HashSet<string> names = new(StringComparer.Ordinal);
         HashSet<uint> ids = new();
-        foreach (SystemEntry entry in contract.Systems)
+        foreach (SystemEntry entry in entries)
         {
             if (string.IsNullOrEmpty(entry.Name) || entry.Id == 0)
             {
                 Console.Error.WriteLine("csbind: a system needs a name and a non-zero id");
-                return 1;
+                return false;
             }
             string name = PascalCase(entry.Name);
             if (!names.Add(name))
             {
                 Console.Error.WriteLine($"csbind: duplicate system '{entry.Name}'");
-                return 1;
+                return false;
             }
             if (!ids.Add(entry.Id))
             {
                 Console.Error.WriteLine($"csbind: duplicate id {entry.Id}");
-                return 1;
+                return false;
             }
             systems.Add((name, entry.Id));
         }
-
-        System.IO.Directory.CreateDirectory(Path.Combine(outDir, "resonate", "csharp"));
-        WriteIfChanged(Path.Combine(outDir, "resonate", "csharp", "bindings.h"),
-                       EmitHeader(input, systems));
-        WriteIfChanged(Path.Combine(outDir, "Resonate.CSharp.Bindings.g.cs"),
-                       EmitCSharp(input, systems));
-        return 0;
+        return true;
     }
 
-    /* tick_rate and tick-rate both become TickRate. */
+    private static bool ValidateStructs(List<StructEntry>? entries, out List<StructLayout> layouts)
+    {
+        layouts = new List<StructLayout>();
+        if (entries is null)
+        {
+            return true;
+        }
+
+        HashSet<string> struct_names = new(StringComparer.Ordinal);
+        foreach (StructEntry entry in entries)
+        {
+            if (string.IsNullOrEmpty(entry.Name) || entry.Fields is null || entry.Fields.Count == 0)
+            {
+                Console.Error.WriteLine("csbind: a struct needs a name and at least one field");
+                return false;
+            }
+            if (!struct_names.Add(entry.Name))
+            {
+                Console.Error.WriteLine($"csbind: duplicate struct '{entry.Name}'");
+                return false;
+            }
+
+            List<FieldLayout> fields = new();
+            HashSet<string> field_names = new(StringComparer.Ordinal);
+            int offset = 0;
+            int alignment = 1;
+            foreach (FieldEntry field in entry.Fields)
+            {
+                if (string.IsNullOrEmpty(field.Name) || field.Type is null ||
+                    !Types.TryGetValue(field.Type, out FieldType type))
+                {
+                    Console.Error.WriteLine(
+                        $"csbind: {entry.Name} has a field with a missing name or unknown type " +
+                        $"'{field.Type}'");
+                    return false;
+                }
+                if (!field_names.Add(field.Name))
+                {
+                    Console.Error.WriteLine($"csbind: {entry.Name} repeats field '{field.Name}'");
+                    return false;
+                }
+                offset = AlignUp(offset, type.Alignment);
+                fields.Add(new FieldLayout { Field = field, Type = type, Offset = offset });
+                offset += type.Size;
+                alignment = Math.Max(alignment, type.Alignment);
+            }
+            layouts.Add(new StructLayout
+            {
+                Name = entry.Name,
+                Fields = fields,
+                Size = AlignUp(offset, alignment),
+            });
+        }
+        return true;
+    }
+
+    /* tick_rate and tick-rate both become TickRate; the C++ side keeps the
+       contract's snake_case. */
     private static string PascalCase(string name)
     {
         StringBuilder builder = new(name.Length);
@@ -114,13 +228,20 @@ internal static class Program
         return builder.ToString();
     }
 
-    private static string EmitHeader(string input, List<(string Name, uint Id)> systems)
+    private static int AlignUp(int value, int alignment)
+    {
+        return (value + alignment - 1) / alignment * alignment;
+    }
+
+    private static string EmitHeader(string input, List<(string Name, uint Id)> systems,
+                                     List<StructLayout> layouts)
     {
         StringBuilder text = new();
         text.AppendLine($"// Generated by csbind from {input}. Do not edit.");
         text.AppendLine("#ifndef RESONATE_CSHARP_BINDINGS_H");
         text.AppendLine("#define RESONATE_CSHARP_BINDINGS_H");
         text.AppendLine();
+        text.AppendLine("#include <cstddef>");
         text.AppendLine("#include <cstdint>");
         text.AppendLine();
         text.AppendLine("namespace resonate::csharp::bindings");
@@ -131,6 +252,26 @@ internal static class Program
             text.AppendLine($"inline constexpr std::uint32_t kSystem{name} = {id}U;");
         }
         text.AppendLine($"inline constexpr std::uint32_t kSystemCount = {systems.Count}U;");
+
+        foreach (StructLayout layout in layouts)
+        {
+            text.AppendLine();
+            text.AppendLine($"struct {layout.Name}");
+            text.AppendLine("{");
+            foreach (FieldLayout field in layout.Fields)
+            {
+                text.AppendLine($"    {field.Type.Cpp} {field.Field.Name};");
+            }
+            text.AppendLine("};");
+            text.AppendLine();
+            foreach (FieldLayout field in layout.Fields)
+            {
+                text.AppendLine($"static_assert(offsetof({layout.Name}, {field.Field.Name}) == " +
+                                $"{field.Offset}U);");
+            }
+            text.AppendLine($"static_assert(sizeof({layout.Name}) == {layout.Size}U);");
+        }
+
         text.AppendLine();
         text.AppendLine("} // namespace resonate::csharp::bindings");
         text.AppendLine();
@@ -138,10 +279,14 @@ internal static class Program
         return text.ToString();
     }
 
-    private static string EmitCSharp(string input, List<(string Name, uint Id)> systems)
+    private static string EmitCSharp(string input, List<(string Name, uint Id)> systems,
+                                     List<StructLayout> layouts)
     {
         StringBuilder text = new();
         text.AppendLine($"// Generated by csbind from {input}. Do not edit.");
+        text.AppendLine();
+        text.AppendLine("using System;");
+        text.AppendLine("using System.Runtime.InteropServices;");
         text.AppendLine();
         text.AppendLine("namespace Resonate.CSharp.Bindings;");
         text.AppendLine();
@@ -153,6 +298,29 @@ internal static class Program
         }
         text.AppendLine($"    public const uint Count = {systems.Count}U;");
         text.AppendLine("}");
+
+        foreach (StructLayout layout in layouts)
+        {
+            text.AppendLine();
+            text.AppendLine("[StructLayout(LayoutKind.Sequential)]");
+            text.AppendLine($"public unsafe struct {layout.Name}");
+            text.AppendLine("{");
+            foreach (FieldLayout field in layout.Fields)
+            {
+                text.AppendLine($"    public {field.Type.CSharp} {PascalCase(field.Field.Name!)};");
+            }
+            text.AppendLine("}");
+            text.AppendLine();
+            text.AppendLine($"public static class {layout.Name}Layout");
+            text.AppendLine("{");
+            text.AppendLine($"    public const int Size = {layout.Size};");
+            foreach (FieldLayout field in layout.Fields)
+            {
+                text.AppendLine(
+                    $"    public const int {PascalCase(field.Field.Name!)}Offset = {field.Offset};");
+            }
+            text.AppendLine("}");
+        }
         return text.ToString();
     }
 
