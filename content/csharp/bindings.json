@@ -12,7 +12,9 @@
       "fields": [
         { "name": "delta_seconds", "type": "f32" },
         { "name": "frame_index", "type": "u64" },
-        { "name": "user", "type": "void_pointer" }
+        { "name": "user", "type": "void_pointer" },
+        { "name": "chunk_data", "type": "void_pointer" },
+        { "name": "chunk_count", "type": "u64" }
       ]
     },
     {

@@ -4,6 +4,7 @@
 #include <string>
 
 #include <resonate/core/allocator.h>
+#include <resonate/hierarchy/tree.h>
 #include <resonate/csharp/bindings.h>
 #include <resonate/csharp/dispatch.h>
 #include <resonate/csharp/host.hpp>
@@ -192,4 +193,35 @@ TEST_CASE("csharp: the frame loop calls a managed system through the table", "[c
     CHECK(counters[0] == 2);
     CHECK(counters[1] == 1);
     CHECK(systems.frames() == 2U);
+}
+
+TEST_CASE("csharp: a managed system reads a named component's chunk", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
+    systems.set_component("resonate.hierarchy.LocalTransform");
+
+    int counters[3] = {0, -1, 0};
+    systems.set_user(counters);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    const resonate::ecs::Entity first = world.create();
+    world.add(first, resonate::hierarchy::LocalTransform{
+                         resonate::Vec3{1.0F, 0.0F, 0.0F}, resonate::Quat{},
+                         resonate::Vec3{1.0F, 1.0F, 1.0F}});
+    const resonate::ecs::Entity second = world.create();
+    world.add(second, resonate::hierarchy::LocalTransform{
+                          resonate::Vec3{2.0F, 0.0F, 0.0F}, resonate::Quat{},
+                          resonate::Vec3{1.0F, 1.0F, 1.0F}});
+
+    resonate::ecs::CommandBuffer commands(world);
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    CHECK(counters[0] == 1);
+    CHECK(counters[1] == 0);
+    CHECK(counters[2] == 30);
 }

@@ -39,6 +39,11 @@ public:
     /* Native state the managed systems may reference through the context. */
     void set_user(void* user);
 
+    /* The component whose first non-empty chunk rides the context each frame
+       (its name as registered, e.g. "resonate.hierarchy.LocalTransform").
+       Empty leaves the chunk fields null. */
+    void set_component(const char* name);
+
     /* The engine system's run function; `context` is this object. */
     static void invoke(void* context, ecs::World& world, ecs::CommandBuffer& commands,
                        float delta_seconds);
@@ -55,6 +60,8 @@ private:
     bindings::SystemContext frame_{};
     std::uint64_t frames_ = 0U;
     void* registration_ = nullptr;
+    std::string component_name_;
+    ecs::ComponentIndex component_ = ecs::kInvalidComponent;
 };
 
 } // namespace resonate::csharp

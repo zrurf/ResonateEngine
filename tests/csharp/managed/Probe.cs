@@ -41,6 +41,20 @@ public static unsafe class Probe
         int* counters = (int*)frame->User;
         counters[0] += 1;
         counters[1] = (int)frame->FrameIndex;
+
+        if (frame->ChunkData == IntPtr.Zero || frame->ChunkCount == 0)
+        {
+            counters[2] = -1;
+            return;
+        }
+        ReadOnlySpan<Resonate.Hierarchy.LocalTransform> transforms =
+            new((Resonate.Hierarchy.LocalTransform*)frame->ChunkData, (int)frame->ChunkCount);
+        float sum = 0.0F;
+        for (int index = 0; index < transforms.Length; ++index)
+        {
+            sum += transforms[index].Position.X;
+        }
+        counters[2] = (int)(sum * 10.0F);
     }
 
     /* Reads a generated struct field by field: the engine lays the frame view

@@ -2,6 +2,8 @@
 
 #include <resonate/csharp/registration.h>
 
+#include <resonate/ecs/query.h>
+
 namespace resonate::csharp
 {
 namespace
@@ -58,6 +60,7 @@ void ManagedSystems::unload()
     table_.resize(64U);
     frames_ = 0U;
     frame_ = bindings::SystemContext{};
+    component_ = ecs::kInvalidComponent;
     host_.shutdown();
 }
 
@@ -66,7 +69,13 @@ void ManagedSystems::set_user(void* user)
     frame_.user = user;
 }
 
-void ManagedSystems::invoke(void* context, ecs::World&, ecs::CommandBuffer&,
+void ManagedSystems::set_component(const char* name)
+{
+    component_name_ = name != nullptr ? name : "";
+    component_ = ecs::kInvalidComponent;
+}
+
+void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer&,
                             float delta_seconds)
 {
     auto* self = static_cast<ManagedSystems*>(context);
@@ -74,8 +83,46 @@ void ManagedSystems::invoke(void* context, ecs::World&, ecs::CommandBuffer&,
     {
         return;
     }
-    /* The world and the command buffer reach managed code when the Behaviour
-       facade lands; the frame context is the whole surface for now. */
+    /* The command buffer reaches managed code when structural behaviour
+       lands. The read path is the named component's first non-empty chunk:
+       a dense array the managed side wraps in a Span without copying. */
+    self->frame_.chunk_data = nullptr;
+    self->frame_.chunk_count = 0U;
+    if (!self->component_name_.empty())
+    {
+        if (self->component_ == ecs::kInvalidComponent)
+        {
+            self->component_ = world.findComponent(self->component_name_.c_str());
+        }
+        if (self->component_ != ecs::kInvalidComponent)
+        {
+            const ecs::ComponentIndex all[] = {self->component_};
+            ecs::QueryDesc desc;
+            desc.all = resonate::Span<const ecs::ComponentIndex>(all, 1U);
+            ecs::Query query = world.createQuery(desc);
+            struct FirstChunk
+            {
+                ecs::ComponentIndex component;
+                void* data;
+                std::uint64_t count;
+            };
+            FirstChunk first{self->component_, nullptr, 0U};
+            query.forEachChunk(
+                [](void* chunk_context, ecs::ChunkView view)
+                {
+                    auto* out = static_cast<FirstChunk*>(chunk_context);
+                    if (out->data != nullptr)
+                    {
+                        return;
+                    }
+                    out->data = view.componentData(out->component);
+                    out->count = view.count;
+                },
+                &first);
+            self->frame_.chunk_data = first.data;
+            self->frame_.chunk_count = first.count;
+        }
+    }
     self->frame_.delta_seconds = delta_seconds;
     self->frame_.frame_index = self->frames_;
     self->table_.invoke(bindings::kSystemTick, &self->frame_);
