@@ -46,6 +46,7 @@ struct Push
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[7];
+[[vk::binding(6, 0)]] StructuredBuffer<FrameData> frame_block;
 [[vk::binding(1, 0)]] StructuredBuffer<Light> light_table[7];
 [[vk::binding(2, 0)]] RWStructuredBuffer<ClusterAABB> cluster_boxes[7];
 [[vk::binding(3, 0)]] RWStructuredBuffer<uint> light_indices[7];
@@ -63,7 +64,7 @@ static const uint MAX_LIGHTS_PER_CLUSTER = 128;
 // clusters stay thin.
 float sliceDepth(uint slice)
 {
-    FrameData frame = frame_table[push.slots.x].Load(0);
+    FrameData frame = frame_block.Load(0);
     float t = float(slice) / float(CLUSTERS_Z);
     return frame.camera_and_near.w *
            pow(frame.direction_and_far.w / frame.camera_and_near.w, t);
@@ -82,7 +83,7 @@ float3 viewToWorld(float3 view_point, FrameData frame)
 [numthreads(1, 1, 1)]
 void clusterBuild(uint3 tid : SV_DispatchThreadID)
 {
-    FrameData frame = frame_table[push.slots.x].Load(0);
+    FrameData frame = frame_block.Load(0);
     uint cluster = tid.x + tid.y * CLUSTERS_X + tid.z * CLUSTERS_X * CLUSTERS_Y;
 
     float2 tile_min = float2(float(tid.x) / float(CLUSTERS_X) * 2.0 - 1.0,
@@ -121,7 +122,7 @@ void clusterBuild(uint3 tid : SV_DispatchThreadID)
 void clusterCull(uint3 tid : SV_DispatchThreadID)
 {
     uint cluster = tid.x + tid.y * CLUSTERS_X + tid.z * CLUSTERS_X * CLUSTERS_Y;
-    FrameData frame = frame_table[push.slots.x].Load(0);
+    FrameData frame = frame_block.Load(0);
     ClusterAABB box = cluster_boxes[push.slots.y].Load(cluster);
 
     // Light index storage is shared by every cluster: each takes its slice up

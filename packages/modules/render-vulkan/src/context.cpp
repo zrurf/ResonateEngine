@@ -770,6 +770,14 @@ ResonateStatus Context::ensureDevice()
     table_bindings[kSampledTableBinding].stageFlags =
         VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
+    /* The frame block, outside the table so the vertex stage does not depend
+       on a storage-array read. */
+    table_bindings[kFrameBinding].binding = kFrameBinding;
+    table_bindings[kFrameBinding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    table_bindings[kFrameBinding].descriptorCount = 1;
+    table_bindings[kFrameBinding].stageFlags =
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+
     VkDescriptorBindingFlags binding_flags[kTableBindingCount] = {};
     for (VkDescriptorBindingFlags& flags : binding_flags)
     {
@@ -793,7 +801,7 @@ ResonateStatus Context::ensureDevice()
 
     VkDescriptorPoolSize table_pool_sizes[2] = {};
     table_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    table_pool_sizes[0].descriptorCount = kStorageTableBindings * kStorageTableSize;
+    table_pool_sizes[0].descriptorCount = kStorageTableBindings * kStorageTableSize + 1U;
     table_pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     table_pool_sizes[1].descriptorCount = kImageTableSize;
     VkDescriptorPoolCreateInfo table_pool{};
@@ -1614,6 +1622,21 @@ void Context::writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size)
         writes[binding].pBufferInfo = &buffer_info;
     }
     vkUpdateDescriptorSets(device_, kStorageTableBindings, writes, 0, nullptr);
+    if (slot == 0U)
+    {
+        /* Slot zero is the frame block by construction: the renderer creates it
+           before any other storage buffer, and the vertex stage reads it here
+           rather than through the table. */
+        VkWriteDescriptorSet frame{};
+        frame.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frame.dstSet = table_set_;
+        frame.dstBinding = kFrameBinding;
+        frame.dstArrayElement = 0;
+        frame.descriptorCount = 1;
+        frame.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        frame.pBufferInfo = &buffer_info;
+        vkUpdateDescriptorSets(device_, 1, &frame, 0, nullptr);
+    }
 }
 
 void Context::writeImageSlot(uint32_t slot, VkImageView view, bool nearest)

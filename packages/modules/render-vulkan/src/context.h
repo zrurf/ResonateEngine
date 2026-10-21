@@ -353,7 +353,11 @@ class Context
     static constexpr uint32_t kStorageTableSize = 7;
     static constexpr uint32_t kImageTableSize = 16;    static constexpr uint32_t kStorageTableBindings = 5;
     static constexpr uint32_t kSampledTableBinding = 5;
-    static constexpr uint32_t kTableBindingCount = kSampledTableBinding + 1;
+    /* The frame block at a fixed binding: some mobile drivers return zeros for
+       a storage-buffer array read through the table, and the vertex stage
+       cannot run without the view projection. */
+    static constexpr uint32_t kFrameBinding = 6;
+    static constexpr uint32_t kTableBindingCount = kFrameBinding + 1;
     void writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size);
     void writeImageSlot(uint32_t slot, VkImageView view, bool nearest);
     bool acquireTableSlot(std::vector<uint32_t>& free_slots, uint32_t& out_slot);
