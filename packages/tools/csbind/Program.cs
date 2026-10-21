@@ -14,6 +14,13 @@ internal sealed class SystemEntry
     public uint Id { get; set; }
 }
 
+/* A typed handle: an index in the low bits and a generation in the high bits.
+   The wrapper keeps a raw integer from being mistaken for any other id. */
+internal sealed class HandleEntry
+{
+    public string? Name { get; set; }
+}
+
 /* A boundary struct. Field types come from the closed vocabulary below, which
    is what lets both sides be generated with one layout. */
 internal sealed class FieldEntry
@@ -31,6 +38,7 @@ internal sealed class StructEntry
 internal sealed class Contract
 {
     public List<SystemEntry>? Systems { get; set; }
+    public List<HandleEntry>? Handles { get; set; }
     public List<StructEntry>? Structs { get; set; }
 }
 
@@ -54,7 +62,7 @@ internal static class Program
 {
     /* The closed vocabulary the generator knows how to lay out on both sides.
        A new type is added here and to the contract; nothing infers a layout
-       from a native signature. */
+       from a native signature. Handle types join this map per contract. */
     private static readonly Dictionary<string, FieldType> Types = new(StringComparer.Ordinal)
     {
         ["u32"] = new("std::uint32_t", "uint", 4, 4),
@@ -112,16 +120,29 @@ internal static class Program
         {
             return 1;
         }
-        if (!ValidateStructs(contract.Structs, out List<StructLayout> layouts))
+        if (!ValidateHandles(contract.Handles, out List<string> handles))
+        {
+            return 1;
+        }
+
+        Dictionary<string, FieldType> types = new(Types, StringComparer.Ordinal);
+        HashSet<string> type_names = new(StringComparer.Ordinal);
+        foreach (string handle in handles)
+        {
+            types[SnakeCase(handle) + "_handle"] =
+                new($"{handle}Handle", $"{handle}Handle", 8, 8);
+            type_names.Add($"{handle}Handle");
+        }
+        if (!ValidateStructs(contract.Structs, types, type_names, out List<StructLayout> layouts))
         {
             return 1;
         }
 
         Directory.CreateDirectory(Path.Combine(outDir, "resonate", "csharp"));
         WriteIfChanged(Path.Combine(outDir, "resonate", "csharp", "bindings.h"),
-                       EmitHeader(input, systems, layouts));
+                       EmitHeader(input, systems, handles, layouts));
         WriteIfChanged(Path.Combine(outDir, "Resonate.CSharp.Bindings.g.cs"),
-                       EmitCSharp(input, systems, layouts));
+                       EmitCSharp(input, systems, handles, layouts));
         return 0;
     }
 
@@ -153,7 +174,36 @@ internal static class Program
         return true;
     }
 
-    private static bool ValidateStructs(List<StructEntry>? entries, out List<StructLayout> layouts)
+    private static bool ValidateHandles(List<HandleEntry>? entries, out List<string> handles)
+    {
+        handles = new List<string>();
+        if (entries is null)
+        {
+            return true;
+        }
+        HashSet<string> names = new(StringComparer.Ordinal);
+        foreach (HandleEntry entry in entries)
+        {
+            if (string.IsNullOrEmpty(entry.Name))
+            {
+                Console.Error.WriteLine("csbind: a handle needs a name");
+                return false;
+            }
+            string name = PascalCase(entry.Name);
+            if (!names.Add(name))
+            {
+                Console.Error.WriteLine($"csbind: duplicate handle '{entry.Name}'");
+                return false;
+            }
+            handles.Add(name);
+        }
+        return true;
+    }
+
+    private static bool ValidateStructs(List<StructEntry>? entries,
+                                        Dictionary<string, FieldType> types,
+                                        HashSet<string> reserved_type_names,
+                                        out List<StructLayout> layouts)
     {
         layouts = new List<StructLayout>();
         if (entries is null)
@@ -169,9 +219,9 @@ internal static class Program
                 Console.Error.WriteLine("csbind: a struct needs a name and at least one field");
                 return false;
             }
-            if (!struct_names.Add(entry.Name))
+            if (!struct_names.Add(entry.Name) || !reserved_type_names.Add(entry.Name))
             {
-                Console.Error.WriteLine($"csbind: duplicate struct '{entry.Name}'");
+                Console.Error.WriteLine($"csbind: duplicate type name '{entry.Name}'");
                 return false;
             }
 
@@ -182,7 +232,7 @@ internal static class Program
             foreach (FieldEntry field in entry.Fields)
             {
                 if (string.IsNullOrEmpty(field.Name) || field.Type is null ||
-                    !Types.TryGetValue(field.Type, out FieldType type))
+                    !types.TryGetValue(field.Type, out FieldType type))
                 {
                     Console.Error.WriteLine(
                         $"csbind: {entry.Name} has a field with a missing name or unknown type " +
@@ -228,13 +278,29 @@ internal static class Program
         return builder.ToString();
     }
 
+    /* EntityHandle -> entity_handle, the field type name the contract uses. */
+    private static string SnakeCase(string name)
+    {
+        StringBuilder builder = new(name.Length + 4);
+        for (int index = 0; index < name.Length; ++index)
+        {
+            char character = name[index];
+            if (char.IsUpper(character) && index > 0)
+            {
+                builder.Append('_');
+            }
+            builder.Append(char.ToLowerInvariant(character));
+        }
+        return builder.ToString();
+    }
+
     private static int AlignUp(int value, int alignment)
     {
         return (value + alignment - 1) / alignment * alignment;
     }
 
     private static string EmitHeader(string input, List<(string Name, uint Id)> systems,
-                                     List<StructLayout> layouts)
+                                     List<string> handles, List<StructLayout> layouts)
     {
         StringBuilder text = new();
         text.AppendLine($"// Generated by csbind from {input}. Do not edit.");
@@ -252,6 +318,17 @@ internal static class Program
             text.AppendLine($"inline constexpr std::uint32_t kSystem{name} = {id}U;");
         }
         text.AppendLine($"inline constexpr std::uint32_t kSystemCount = {systems.Count}U;");
+
+        foreach (string handle in handles)
+        {
+            text.AppendLine();
+            text.AppendLine("/* Index in the low 32 bits, generation in the high 32. */");
+            text.AppendLine($"struct {handle}Handle");
+            text.AppendLine("{");
+            text.AppendLine("    std::uint64_t value;");
+            text.AppendLine("};");
+            text.AppendLine($"static_assert(sizeof({handle}Handle) == 8U);");
+        }
 
         foreach (StructLayout layout in layouts)
         {
@@ -280,7 +357,7 @@ internal static class Program
     }
 
     private static string EmitCSharp(string input, List<(string Name, uint Id)> systems,
-                                     List<StructLayout> layouts)
+                                     List<string> handles, List<StructLayout> layouts)
     {
         StringBuilder text = new();
         text.AppendLine($"// Generated by csbind from {input}. Do not edit.");
@@ -298,6 +375,22 @@ internal static class Program
         }
         text.AppendLine($"    public const uint Count = {systems.Count}U;");
         text.AppendLine("}");
+
+        foreach (string handle in handles)
+        {
+            text.AppendLine();
+            text.AppendLine("/* Index in the low 32 bits, generation in the high 32. */");
+            text.AppendLine("[StructLayout(LayoutKind.Sequential)]");
+            text.AppendLine($"public readonly struct {handle}Handle");
+            text.AppendLine("{");
+            text.AppendLine("    public readonly ulong Value;");
+            text.AppendLine();
+            text.AppendLine($"    public {handle}Handle(ulong value)");
+            text.AppendLine("    {");
+            text.AppendLine("        Value = value;");
+            text.AppendLine("    }");
+            text.AppendLine("}");
+        }
 
         foreach (StructLayout layout in layouts)
         {

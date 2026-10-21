@@ -55,12 +55,23 @@ public static unsafe class Probe
         return sum;
     }
 
+    /* Reads the typed handle wrapper; a raw integer would be indistinguishable
+       from any other id at the boundary. */
+    [UnmanagedCallersOnly]
+    public static ulong ReadHandle(IntPtr view)
+    {
+        FrameView* frame = (FrameView*)view;
+        return frame->Handle.Value;
+    }
+
     /* Runtime check that the two compilers agree with the generated layout; a
        mismatch means the boundary struct is unsafe to share. */
     [UnmanagedCallersOnly]
     public static int VerifyFrameViewLayout()
     {
         if (Marshal.SizeOf<FrameView>() != FrameViewLayout.Size ||
+            Marshal.OffsetOf<FrameView>(nameof(FrameView.Handle)) !=
+                FrameViewLayout.HandleOffset ||
             Marshal.OffsetOf<FrameView>(nameof(FrameView.DeltaSeconds)) !=
                 FrameViewLayout.DeltaSecondsOffset ||
             Marshal.OffsetOf<FrameView>(nameof(FrameView.FrameIndex)) !=

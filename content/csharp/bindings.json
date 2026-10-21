@@ -2,10 +2,14 @@
   "systems": [
     { "name": "tick", "id": 7 }
   ],
+  "handles": [
+    { "name": "entity" }
+  ],
   "structs": [
     {
       "name": "FrameView",
       "fields": [
+        { "name": "handle", "type": "entity_handle" },
         { "name": "delta_seconds", "type": "f32" },
         { "name": "frame_index", "type": "u64" },
         { "name": "transform_data", "type": "f32_pointer" },

@@ -118,8 +118,12 @@ TEST_CASE("csharp: a generated view struct reads as a span on the managed side",
     void* sum_function = host.load_function(fixture.assembly, kProbeType, "SumTransforms", error);
     REQUIRE(sum_function != nullptr);
 
+    void* read_handle = host.load_function(fixture.assembly, kProbeType, "ReadHandle", error);
+    REQUIRE(read_handle != nullptr);
+
     const float transforms[3] = {1.5F, 2.5F, 3.0F};
     resonate::csharp::bindings::FrameView view{};
+    view.handle.value = 0x0000000200000001ULL;
     view.delta_seconds = 1.0F / 60.0F;
     view.frame_index = 3U;
     view.transform_data = transforms;
@@ -127,4 +131,7 @@ TEST_CASE("csharp: a generated view struct reads as a span on the managed side",
 
     const auto sum = reinterpret_cast<float (*)(void*)>(sum_function);
     CHECK(sum(&view) == 7.0F);
+
+    const auto handle = reinterpret_cast<std::uint64_t (*)(void*)>(read_handle);
+    CHECK(handle(&view) == 0x0000000200000001ULL);
 }
