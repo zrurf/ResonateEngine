@@ -1,0 +1,12 @@
+<Project>
+
+  <!-- Machine output belongs in the build tree: a C# project's obj/ and bin/
+       would otherwise land in the source directory, which is where git and the
+       code formatter look. Mirrors packages/Directory.Build.props; the publish
+       target names build/tools/csharp-test (see scripts/csharp_test.lua). -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)../build/tools/$(MSBuildProjectName)/obj/</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)../build/tools/$(MSBuildProjectName)/bin/</BaseOutputPath>
+  </PropertyGroup>
+
+</Project>

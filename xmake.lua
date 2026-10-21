@@ -309,6 +309,7 @@ if is_plat("android") then
     includes("packages/host/android")
 end
 if not get_config("engine_only") then
+    includes("packages/csharp")
     includes("packages/tools/texcook")
     includes("packages/editor")
     includes("packages/launcher")

@@ -65,7 +65,7 @@ target("Resonate.Tests")
 
     add_files("main.cpp", "render/**.cpp", "core/**.cpp", "module/**.cpp", "pal/**.cpp",
               "runtime/**.cpp", "window/**.cpp", "ecs/**.cpp", "gameplay/**.cpp",
-              "hierarchy/**.cpp", "schema/**.cpp")
+              "hierarchy/**.cpp", "schema/**.cpp", "csharp/**.cpp")
     add_tests("default")
 
     -- The schema rule builds and runs the compiler before this target compiles,
@@ -93,7 +93,18 @@ target("Resonate.Tests")
              "Resonate.UI.Abi", "Resonate.PAL", "Resonate.Runtime",
              "Resonate.Core.Container", "Resonate.Core.Math", "Resonate.Core.Job",
              "Resonate.ECS", "Resonate.Gameplay", "Resonate.Hierarchy",
-             "Resonate.Renderer")
+             "Resonate.Renderer", "Resonate.CSharp")
+
+    -- The C# host test loads a managed fixture; publishing it is a build step,
+    -- so a stale or missing assembly fails the build instead of a test that
+    -- quietly skips the only coverage of the managed path.
+    before_build(function (target)
+        local script = path.join(os.projectdir(), "scripts", "csharp_test.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script})
+        if output ~= nil then
+            print(output)
+        end
+    end)
 
     -- The plugins, order-only: their directory is what the end-to-end tests load,
     -- and a `xmake test` that did not build them once reported a green suite whose
