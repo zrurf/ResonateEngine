@@ -63,6 +63,10 @@ bool GraphExecutor::materialize(std::string& out_error)
             desc.width = plan_resource.width;
             desc.height = plan_resource.height;
             desc.usage = plan_resource.usage;
+            /* A depth sample is not filterable everywhere, and a shadow lookup
+               never wants linear filtering: nearest is the portable choice. */
+            desc.nearest =
+                (plan_resource.usage & RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT) != 0U ? 1U : 0U;
             if (device_.create_image(device_.self, &desc, &images_[resource]) != RESONATE_OK)
             {
                 out_error = std::string("image '") + plan_resource.name + "' was not created";

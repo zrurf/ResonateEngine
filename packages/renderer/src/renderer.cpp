@@ -385,6 +385,7 @@ struct RenderSystem::Impl
     bool initialize();
     bool ensurePipelines();
     ResonateRenderBuffer uploadStorage(std::uint64_t size_bytes, bool host_visible);
+    ResonateRenderBuffer uploadUniform(std::uint64_t size_bytes);
     std::uint32_t slotOf(ResonateRenderBuffer handle) const;
     std::uint32_t slotOf(ResonateRenderImage handle) const;
     void bindQueries(ecs::World& world);
@@ -706,6 +707,22 @@ ResonateRenderBuffer RenderSystem::Impl::uploadStorage(std::uint64_t size_bytes,
     return buffer;
 }
 
+ResonateRenderBuffer RenderSystem::Impl::uploadUniform(std::uint64_t size_bytes)
+{
+    ResonateRenderBufferDesc desc{};
+    desc.struct_size = sizeof(desc);
+    desc.size_bytes = size_bytes;
+    desc.usage = RESONATE_RENDER_BUFFER_UNIFORM;
+    desc.host_visible = 0U;
+    ResonateRenderBuffer buffer{};
+    if (device->create_buffer(device->self, &desc, &buffer) != RESONATE_OK)
+    {
+        complain("a uniform buffer was refused");
+        return ResonateRenderBuffer{};
+    }
+    return buffer;
+}
+
 std::uint32_t RenderSystem::Impl::slotOf(ResonateRenderBuffer handle) const
 {
     if (device != nullptr && device->buffer_slot != nullptr)
@@ -967,7 +984,7 @@ bool RenderSystem::Impl::ensurePipelines()
     ground = buildGround(*device, 12.0F);
     /* Device-local: the extract writes them through update_buffer, recorded
        into the frame that reads them. */
-    frame_data = GpuMesh{uploadStorage(sizeof(ShaderFrameData), false), ResonateRenderBuffer{}, 0U};
+    frame_data = GpuMesh{uploadUniform(sizeof(ShaderFrameData)), ResonateRenderBuffer{}, 0U};
     light_list =
         GpuMesh{uploadStorage(kMaxLights * sizeof(ShaderLight), false), ResonateRenderBuffer{}, 0U};
     if (cube.vertices.value == 0U || ground.vertices.value == 0U ||

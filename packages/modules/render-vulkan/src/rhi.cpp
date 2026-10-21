@@ -154,6 +154,22 @@ ResonateStatus Context::createBuffer(const ResonateRenderBufferDesc& desc,
     {
         writeBufferSlot(slot->table_slot, slot->buffer, desc.size_bytes);
     }
+    if ((desc.usage & RESONATE_RENDER_BUFFER_UNIFORM) != 0U)
+    {
+        /* The frame block at its fixed binding: one uniform buffer per run. */
+        VkDescriptorBufferInfo frame_info{};
+        frame_info.buffer = slot->buffer;
+        frame_info.offset = 0;
+        frame_info.range = desc.size_bytes;
+        VkWriteDescriptorSet frame{};
+        frame.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frame.dstSet = table_set_;
+        frame.dstBinding = kFrameBinding;
+        frame.descriptorCount = 1;
+        frame.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        frame.pBufferInfo = &frame_info;
+        vkUpdateDescriptorSets(device_, 1, &frame, 0, nullptr);
+    }
     *out = ResonateRenderBuffer{handle};
     return RESONATE_OK;
 }

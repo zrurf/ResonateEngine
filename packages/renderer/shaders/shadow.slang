@@ -22,7 +22,7 @@ struct Push
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[7];
-[[vk::binding(6, 0)]] StructuredBuffer<FrameData> frame_block;
+[[vk::binding(6, 0)]] ConstantBuffer<FrameData> frame_block;
 
 [[vk::push_constant]] Push push;
 
@@ -36,7 +36,7 @@ struct VertexInput
 [shader("vertex")]
 float4 shadowVertex(VertexInput input) : SV_Position
 {
-    FrameData frame = frame_block.Load(0);
+    FrameData frame = frame_block;
     float4 world = mul(push.model, float4(input.position, 1.0));
     return mul(frame.light_view_proj[push.slots2.y], world);
 }

@@ -45,7 +45,7 @@ struct Push
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[7];
-[[vk::binding(6, 0)]] StructuredBuffer<FrameData> frame_block;
+[[vk::binding(6, 0)]] ConstantBuffer<FrameData> frame_block;
 [[vk::binding(1, 0)]] StructuredBuffer<Light> light_table[7];
 [[vk::binding(2, 0)]] StructuredBuffer<uint> light_indices[7];
 [[vk::binding(3, 0)]] StructuredBuffer<ClusterLights> cluster_lights[7];
@@ -79,8 +79,8 @@ struct VertexOutput
 VertexOutput sceneVertex(VertexInput input)
 {
     VertexOutput output;
-    FrameData frame = frame_block.Load(0);
-    float4 world = mul(push.model, float4(input.position, 1.0));
+    FrameData frame = frame_block;
+    output.position = mul(frame.view_proj, world);
     output.position = mul(frame.view_proj, world);
     // The cofactor matrix is the inverse transpose up to the determinant, which
     // the normalize removes: normals stay perpendicular under non-uniform scale.
@@ -258,7 +258,7 @@ float4 shadeScene(VertexOutput input, FrameData frame, float shadow)
 [shader("fragment")]
 float4 sceneFragment(VertexOutput input) : SV_Target
 {
-    FrameData frame = frame_block.Load(0);
+    FrameData frame = frame_block;
     return shadeScene(input, frame,
                       shadowFactor(input.world_position, input.view_depth, frame));
 }
@@ -266,7 +266,7 @@ float4 sceneFragment(VertexOutput input) : SV_Target
 [shader("fragment")]
 float4 sceneFragmentCompat(VertexOutput input) : SV_Target
 {
-    FrameData frame = frame_block.Load(0);
+    FrameData frame = frame_block;
     return shadeScene(input, frame,
                       shadowFactorCompat(input.world_position, input.view_depth, frame));
 }
