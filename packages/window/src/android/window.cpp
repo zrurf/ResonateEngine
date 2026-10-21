@@ -4,6 +4,8 @@
 #include <android/native_window.h>
 #include <android_native_app_glue.h>
 
+#include <cstdio>
+
 #include <resonate/window/android.hpp>
 #include <resonate/window/host.hpp>
 
@@ -34,8 +36,16 @@ void resizeWindow()
         g_state.height = 0;
         return;
     }
-    g_state.width = static_cast<uint32_t>(ANativeWindow_getWidth(g_state.window));
-    g_state.height = static_cast<uint32_t>(ANativeWindow_getHeight(g_state.window));
+
+    /* A window that exists but has not been laid out yet reports zero; keep the
+       previous size rather than read that as the window being gone. */
+    const int32_t width = ANativeWindow_getWidth(g_state.window);
+    const int32_t height = ANativeWindow_getHeight(g_state.window);
+    if (width > 0 && height > 0)
+    {
+        g_state.width = static_cast<uint32_t>(width);
+        g_state.height = static_cast<uint32_t>(height);
+    }
 }
 
 void adoptWindow(ANativeWindow* window)
@@ -55,6 +65,10 @@ void onAppCmd(android_app* app, int32_t command)
     {
         case APP_CMD_INIT_WINDOW:
             adoptWindow(app->window);
+            if (g_state.window != nullptr)
+            {
+                std::fprintf(stderr, "window: %ux%u\n", g_state.width, g_state.height);
+            }
             break;
         case APP_CMD_WINDOW_RESIZED:
             resizeWindow();
@@ -64,8 +78,16 @@ void onAppCmd(android_app* app, int32_t command)
             {
                 ANativeWindow_release(g_state.window);
                 g_state.window = nullptr;
-                resizeWindow();
+                /* The activity hands a new window back after a rotation or a
+                   return from the background, so the last size stays and the
+                   run keeps going until APP_CMD_DESTROY. */
+                std::fprintf(stderr, "window: detached\n");
             }
+            break;
+        case APP_CMD_DESTROY:
+            g_state.width = 0;
+            g_state.height = 0;
+            std::fprintf(stderr, "window: destroyed\n");
             break;
         default:
             break;
@@ -145,9 +167,14 @@ ResonateStatus create(void*, const char* title, uint32_t width, uint32_t height)
     }
 
     /* INIT_WINDOW arrives on the app's looper, sometimes after android_main
-       starts; the device needs a target before it can attach, so wait for it. */
-    constexpr int kWindowWaitMs = 5000;
-    for (int waited = 0; g_state.window == nullptr && waited < kWindowWaitMs; waited += 100)
+       starts; the device needs a target before it can attach, so wait for it
+       and for the first layout. A zero-sized window would otherwise read as a
+       gone window on the first frame and end the run. */
+    constexpr int kWindowWaitMs = 10000;
+    for (int waited = 0;
+         (g_state.window == nullptr || g_state.width == 0U || g_state.height == 0U) &&
+         waited < kWindowWaitMs;
+         waited += 100)
     {
         pollEvents(100);
         if (g_state.app->destroyRequested != 0)
@@ -155,7 +182,8 @@ ResonateStatus create(void*, const char* title, uint32_t width, uint32_t height)
             break;
         }
     }
-    return g_state.window != nullptr ? RESONATE_OK : RESONATE_E_UNSUPPORTED;
+    return g_state.window != nullptr && g_state.width > 0U ? RESONATE_OK
+                                                           : RESONATE_E_UNSUPPORTED;
 }
 
 void destroy(void*)

@@ -167,7 +167,11 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
         {
             return RESONATE_E_INVALID;
         }
-        propagation.jobs = host.jobs();
+        /* The level slices live on this system's stack. The parallel path has
+           been seen running a slice after its wait returned on Android, so the
+           levels are computed inline until the job system's parallel-context
+           lifetime is settled. */
+        propagation.jobs = nullptr;
         render_system.setRegistry(host.capabilities());
         if (addEngineSystem(host, propagation_desc) != RESONATE_OK ||
             addEngineSystem(host, render_desc) != RESONATE_OK)

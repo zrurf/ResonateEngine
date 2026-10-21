@@ -565,7 +565,11 @@ ResonateStatus Context::ensureDevice()
                                properties.apiVersion >= VK_API_VERSION_1_2;
     if (!core_indexing && !hasExtension(extensions, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME))
     {
-        note(device_failed_, "device has no descriptor indexing support");
+        const std::string detail =
+            "device has no descriptor indexing support (" + std::string(properties.deviceName) +
+            ", Vulkan " + std::to_string(VK_VERSION_MAJOR(properties.apiVersion)) + "." +
+            std::to_string(VK_VERSION_MINOR(properties.apiVersion)) + ")";
+        note(device_failed_, detail.c_str());
         return RESONATE_E_UNSUPPORTED;
     }
 
@@ -868,6 +872,19 @@ ResonateStatus Context::attachSurface(const void* native_surface, uint32_t width
         return status;
     }
 
+    if (surface_ != VK_NULL_HANDLE && attached_surface_ != native_surface)
+    {
+        /* The platform replaced the window (Android does this on rotation); the
+           surface and everything built from it belong to the old one. */
+        if (device_ != VK_NULL_HANDLE)
+        {
+            vkDeviceWaitIdle(device_);
+        }
+        destroySwapchainObjects();
+        vkDestroySurfaceKHR(instance_, surface_, nullptr);
+        surface_ = VK_NULL_HANDLE;
+    }
+
     if (surface_ == VK_NULL_HANDLE)
     {
 #ifdef RESONATE_PLATFORM_WINDOWS
@@ -894,6 +911,7 @@ ResonateStatus Context::attachSurface(const void* native_surface, uint32_t width
         return RESONATE_E_UNSUPPORTED;
 #endif
     }
+    attached_surface_ = native_surface;
 
     if (ResonateStatus status = ensureDevice(); status != RESONATE_OK)
     {

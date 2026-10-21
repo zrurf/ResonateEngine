@@ -34,6 +34,10 @@ void* resonate_pal_library_symbol(const ResonateLibrary* library, const char* na
    "dylib". Plugin discovery scans a directory for it. */
 const char* resonate_pal_library_extension(void);
 
+/* Why the last load failed, in the platform loader's own words; empty after a
+   successful load. The host reports it beside the path. */
+const char* resonate_pal_library_error(void);
+
 #ifdef __cplusplus
 }
 #endif

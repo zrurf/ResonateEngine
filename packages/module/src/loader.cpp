@@ -1029,7 +1029,8 @@ ResonateStatus ModuleHost::discover(const std::string& plugin_directory,
         ResonateLibrary library = {};
         if (resonate_pal_library_load(&library, path.c_str()) != RESONATE_PAL_OK)
         {
-            impl->write(RESONATE_LOG_ERROR, "cannot load " + path);
+            impl->write(RESONATE_LOG_ERROR,
+                        "cannot load " + path + ": " + resonate_pal_library_error());
             continue;
         }
 

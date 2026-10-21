@@ -53,6 +53,9 @@ if is_plat("android") then
     -- The app is one shared library around static archives, so every object
     -- has to be position independent.
     add_cxflags("-fPIC")
+    -- Crash reports walk the frame chain; without frame pointers a device run
+    -- can only name the faulting function, not its callers.
+    add_cxflags("-fno-omit-frame-pointer")
     -- Bionic keeps pthread and dl in libc; there are no separate libs.
 end
 
@@ -111,6 +114,10 @@ end
 
 target("Resonate.Vulkan")
     set_kind("headeronly")
+    -- VMA calls Vulkan 1.3 entry points directly when the SDK headers are newer
+    -- than the API the app targets; an older loader then refuses the library at
+    -- load time. Pin it to the 1.1 baseline this renderer asks for.
+    add_defines("VMA_VULKAN_VERSION=1001000", {public = true})
     if is_plat("android") then
         -- libvulkan.so comes from the NDK sysroot; the SDK include carries the
         -- same Khronos headers and VMA beside them.

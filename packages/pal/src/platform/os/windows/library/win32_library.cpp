@@ -12,6 +12,8 @@ namespace
 
 constexpr size_t PATH_CAPACITY = 1024;
 
+std::string g_error;
+
 bool toWide(const char* utf8, wchar_t* out, size_t capacity)
 {
     if (utf8 == nullptr)
@@ -43,9 +45,11 @@ ResonatePalStatus resonate_pal_library_load(ResonateLibrary* out, const char* pa
     const HMODULE module = LoadLibraryW(wide);
     if (module == nullptr)
     {
+        g_error = "LoadLibrary failed with error " + std::to_string(GetLastError());
         return resonate::pal::windows::statusFromLastError();
     }
 
+    g_error.clear();
     out->handle = module;
     return RESONATE_PAL_OK;
 }
@@ -72,6 +76,11 @@ void* resonate_pal_library_symbol(const ResonateLibrary* library, const char* na
 const char* resonate_pal_library_extension(void)
 {
     return "dll";
+}
+
+const char* resonate_pal_library_error(void)
+{
+    return g_error.c_str();
 }
 
 } // extern "C"

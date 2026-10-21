@@ -7,11 +7,15 @@
 #include <android_native_app_glue.h>
 
 #include <cstdio>
+#include <cstdint>
 #include <string>
 #include <vector>
 
+#include <dlfcn.h>
 #include <pthread.h>
+#include <signal.h>
 #include <sys/stat.h>
+#include <ucontext.h>
 #include <unistd.h>
 
 #include <resonate/startup/startup.hpp>
@@ -19,6 +23,65 @@
 
 namespace
 {
+
+void logFrame(const char* kind, int index, void* address)
+{
+    Dl_info info{};
+    if (dladdr(address, &info) != 0 && info.dli_fbase != nullptr)
+    {
+        const auto base = reinterpret_cast<std::uintptr_t>(info.dli_fbase);
+        const auto offset = reinterpret_cast<std::uintptr_t>(address) - base;
+        __android_log_print(ANDROID_LOG_FATAL, "resonate", "%s %02d 0x%llx %s", kind, index,
+                            static_cast<unsigned long long>(offset),
+                            info.dli_fname != nullptr ? info.dli_fname : "?");
+    }
+    else
+    {
+        __android_log_print(ANDROID_LOG_FATAL, "resonate", "%s %02d %p", kind, index, address);
+    }
+}
+
+/* debuggerd mis-unwinds this build's release frames, so the handler reports the
+   fault and walks the frame chain itself before the process goes. */
+void crashHandler(int number, siginfo_t* info, void* context)
+{
+    __android_log_print(ANDROID_LOG_FATAL, "resonate", "fatal signal %d at %p", number,
+                        info != nullptr ? info->si_addr : nullptr);
+
+    auto* state = static_cast<ucontext_t*>(context);
+    logFrame("pc", 0, reinterpret_cast<void*>(state->uc_mcontext.pc));
+
+#if defined(__aarch64__)
+    uintptr_t frame = state->uc_mcontext.regs[29];
+    for (int index = 0; index < 32 && frame != 0U; ++index)
+    {
+        const auto* words = reinterpret_cast<const uintptr_t*>(frame);
+        const uintptr_t next = words[0];
+        const uintptr_t return_address = words[1];
+        logFrame("fp", index, reinterpret_cast<void*>(return_address));
+        if (next <= frame || (next % 16U) != 0U)
+        {
+            break;
+        }
+        frame = next;
+    }
+#endif
+
+    _exit(1);
+}
+
+void installCrashHandler()
+{
+    struct sigaction action = {};
+    action.sa_sigaction = &crashHandler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_RESTART | SA_SIGINFO;
+    sigaction(SIGSEGV, &action, nullptr);
+    sigaction(SIGABRT, &action, nullptr);
+    sigaction(SIGBUS, &action, nullptr);
+    sigaction(SIGILL, &action, nullptr);
+    sigaction(SIGFPE, &action, nullptr);
+}
 
 /* A NativeActivity has no console, and the engine's reports go to stderr. The
    pipe forwards complete lines to logcat, so a device run leaves the same trail
@@ -188,6 +251,7 @@ std::string stageAssets(android_app* app, const char* asset_directory)
 
 void android_main(android_app* app)
 {
+    installCrashHandler();
     redirectStdioToLogcat();
     resonate::window::attachAndroidApp(app);
 

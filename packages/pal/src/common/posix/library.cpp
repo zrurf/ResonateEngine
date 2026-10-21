@@ -2,9 +2,18 @@
 
 #include <dlfcn.h>
 
+#include <string>
+
 #include <resonate/pal/io.h>
 
 #include "status.h"
+
+namespace
+{
+
+std::string g_error;
+
+} // namespace
 
 extern "C"
 {
@@ -22,9 +31,12 @@ ResonatePalStatus resonate_pal_library_load(ResonateLibrary* out, const char* pa
     {
         /* dlerror reports its own vocabulary, so the errno mapping does not
            apply; a missing file is the case a caller branches on. */
+        const char* reason = dlerror();
+        g_error = reason != nullptr ? reason : "dlopen failed";
         return resonate_pal_io_exists(path) != 0U ? RESONATE_PAL_IO : RESONATE_PAL_NOT_FOUND;
     }
 
+    g_error.clear();
     out->handle = handle;
     return RESONATE_PAL_OK;
 }
@@ -56,6 +68,11 @@ const char* resonate_pal_library_extension(void)
 #else
     return "so";
 #endif
+}
+
+const char* resonate_pal_library_error(void)
+{
+    return g_error.c_str();
 }
 
 } // extern "C"

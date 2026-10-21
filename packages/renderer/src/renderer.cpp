@@ -270,6 +270,9 @@ struct RenderSystem::Impl
     bool surface_attached = false;
     bool surface_unavailable = false;
     bool windowed = false;
+    /* The native target the surface was attached from; a platform that replaces
+       its window needs the surface rebuilt. */
+    const void* attached_native = nullptr;
     bool initialized = false;
     bool released = false;
 
@@ -1643,27 +1646,42 @@ bool RenderSystem::Impl::prepareTargets(uint32_t width, uint32_t height)
     if (!surface_attached && !surface_unavailable)
     {
         windowed = canvas->is_window_backed(canvas->self) != 0U;
-        ResonateStatus attached = RESONATE_E_INVALID;
+    }
+    if (!surface_unavailable)
+    {
         if (windowed)
         {
+            /* A platform can take its window away and hand back a new one
+               (Android does on rotation); frames wait for the new target. */
             const void* native = canvas->native_handle(canvas->self);
-            if (native != nullptr)
+            if (native == nullptr)
             {
-                attached = device->attach_surface(device->self, native, width, height);
+                return false;
+            }
+            if (!surface_attached || native != attached_native)
+            {
+                const ResonateStatus attached =
+                    device->attach_surface(device->self, native, width, height);
+                if (attached != RESONATE_OK)
+                {
+                    surface_unavailable = true;
+                    complain("the surface was not attached");
+                    return false;
+                }
+                attached_native = native;
+                surface_attached = true;
             }
         }
-        else
+        else if (!surface_attached)
         {
-            attached = device->attach_offscreen(device->self, width, height);
+            if (device->attach_offscreen(device->self, width, height) != RESONATE_OK)
+            {
+                surface_unavailable = true;
+                complain("the offscreen target was not attached");
+                return false;
+            }
+            surface_attached = true;
         }
-        if (attached != RESONATE_OK)
-        {
-            surface_unavailable = true;
-            complain(windowed ? "the surface was not attached"
-                              : "the offscreen target was not attached");
-            return false;
-        }
-        surface_attached = true;
     }
     if (!surface_attached)
     {

@@ -60,7 +60,7 @@ struct CommandBuffer::Impl
        when it opens, a fresh inline segment when direct recording follows an
        opened section — so playback keeps the order recording made. */
     std::vector<std::unique_ptr<Segment>> segments;
-    std::mutex segment_mutex; /* the vector's shape and the open-section count */
+    mutable std::mutex segment_mutex; /* the vector's shape and the open-section count */
     std::uint32_t section_sequence = 0;
     std::uint32_t open_sections = 0;
 
@@ -220,6 +220,9 @@ struct CommandBuffer::Impl
        sequence. Direct commands bracket the runs the way recording made them. */
     std::vector<Segment*> mergeOrder(Channel playing)
     {
+        /* Handlers open sections on worker threads, so the vector's shape can
+           change while a sync point merges it. */
+        std::lock_guard<std::mutex> lock(segment_mutex);
         std::vector<Segment*> order;
         std::vector<Segment*> run;
 
@@ -266,15 +269,20 @@ struct CommandBuffer::Impl
        entities are alive, after a discard they give their reservations back. */
     void releaseChannel(Channel playing, bool played)
     {
-        std::vector<std::unique_ptr<Segment>> kept;
-        for (std::unique_ptr<Segment>& segment : segments)
         {
-            if (segment->channel != playing)
+            /* Recording threads append sections to the same vector; the swap
+               has to hold the lock they take. */
+            std::lock_guard<std::mutex> lock(segment_mutex);
+            std::vector<std::unique_ptr<Segment>> kept;
+            for (std::unique_ptr<Segment>& segment : segments)
             {
-                kept.push_back(std::move(segment));
+                if (segment->channel != playing)
+                {
+                    kept.push_back(std::move(segment));
+                }
             }
+            segments = std::move(kept);
         }
-        segments = std::move(kept);
 
         std::lock_guard<std::mutex> lock(hold_mutex);
         std::vector<Hold> kept_holds;
@@ -426,6 +434,7 @@ World& CommandBuffer::world() noexcept
 
 std::uint32_t CommandBuffer::commandCount() const noexcept
 {
+    std::lock_guard<std::mutex> lock(impl_->segment_mutex);
     std::uint32_t count = 0;
     for (const std::unique_ptr<Segment>& segment : impl_->segments)
     {
@@ -436,6 +445,7 @@ std::uint32_t CommandBuffer::commandCount() const noexcept
 
 std::uint32_t CommandBuffer::commandCount(Channel channel) const noexcept
 {
+    std::lock_guard<std::mutex> lock(impl_->segment_mutex);
     std::uint32_t count = 0;
     for (const std::unique_ptr<Segment>& segment : impl_->segments)
     {

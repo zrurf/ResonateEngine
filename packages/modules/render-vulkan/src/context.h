@@ -286,6 +286,10 @@ class Context
     VmaAllocator_T* allocator_ = nullptr;
 
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
+    /* The native window the surface was created from; a platform can replace it
+       — Android recreates the window on rotation — and the old surface then has
+       to go. */
+    const void* attached_surface_ = nullptr;
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     VkSurfaceFormatKHR surface_format_{};
     VkExtent2D extent_{};
