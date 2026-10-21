@@ -1,7 +1,5 @@
 #include <resonate/csharp/managed_systems.hpp>
 
-#include <resonate/csharp/registration.h>
-
 #include <resonate/ecs/query.h>
 
 namespace resonate::csharp
@@ -117,7 +115,7 @@ bool ManagedSystems::load(const std::string& runtime_config, const std::string& 
 
     table_.resize(64U);
     const auto register_fn = reinterpret_cast<int (*)(void*)>(registration_);
-    ResonateCSharpRegistration registration{&table_, &managedSystemsRegisterEntry};
+    bindings::Registration registration{&table_, &managedSystemsRegisterEntry};
     if (register_fn(&registration) != 0)
     {
         error = "the managed assembly refused to register its systems";
@@ -180,7 +178,7 @@ bool ManagedSystems::load_patch(const std::string& bootstrap_assembly,
     /* The frame exists before Install: the patch's Register runs inside it and
        records what it displaces. */
     patch_frames_.push_back(PatchFrame{});
-    ResonateCSharpRegistration registration{this, &patchEntry};
+    bindings::Registration registration{this, &patchEntry};
     PatchRequest request{patch_assembly.c_str(), entry_type.c_str(), &registration, nullptr};
     const int status = reinterpret_cast<int (*)(void*)>(install)(&request);
     if (status != 0 || request.context == nullptr)

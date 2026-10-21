@@ -15,6 +15,19 @@
   ],
   "structs": [
     {
+      "name": "Registration",
+      "fields": [
+        {
+          "name": "context",
+          "type": "void_pointer"
+        },
+        {
+          "name": "register_entry",
+          "fn": "register_entry"
+        }
+      ]
+    },
+    {
       "name": "HostApi",
       "fields": [
         {
@@ -137,6 +150,15 @@
         "void_pointer",
         "u64",
         "utf8_pointer",
+        "void_pointer"
+      ]
+    },
+    {
+      "name": "register_entry",
+      "ret": "i32",
+      "params": [
+        "void_pointer",
+        "u32",
         "void_pointer"
       ]
     }

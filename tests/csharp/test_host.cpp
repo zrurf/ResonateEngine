@@ -9,7 +9,6 @@
 #include <resonate/csharp/dispatch.h>
 #include <resonate/csharp/host.hpp>
 #include <resonate/csharp/managed_systems.hpp>
-#include <resonate/csharp/registration.h>
 
 #include "resonate.render/components.gen.h"
 
@@ -137,7 +136,7 @@ TEST_CASE("csharp: managed code registers an entry into the dispatch table", "[c
     const auto register_probe = reinterpret_cast<RegisterFn>(function);
 
     resonate::csharp::DispatchTable table(16U);
-    ResonateCSharpRegistration registration{&table, &registerEntry};
+    resonate::csharp::bindings::Registration registration{&table, &registerEntry};
     REQUIRE(register_probe(&registration) == 0);
 
     int counters[6] = {0, -1, 0, 0, -1, 0};
@@ -404,7 +403,7 @@ TEST_CASE("csharp: a collectible ALC patch replaces a dispatch slot", "[csharp]"
 
     /* The patch assembly loads into its own collectible context and registers
        through replace; the engine keeps only the function pointer. */
-    ResonateCSharpRegistration registration{&table, &replaceEntry};
+    resonate::csharp::bindings::Registration registration{&table, &replaceEntry};
     InstallRequest request{fixture.patch.c_str(), "Resonate.Tests.Patch.PatchBehaviour",
                            &registration, nullptr};
     CHECK(reinterpret_cast<int (*)(void*)>(install)(&request) == 0);

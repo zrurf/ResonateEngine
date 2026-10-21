@@ -4,15 +4,6 @@ using Resonate.CSharp.Bindings;
 
 namespace Resonate.Tests.Managed;
 
-/* The native side hands this struct to Register; it mirrors
-   packages/csharp/include/resonate/csharp/registration.h field for field. */
-[StructLayout(LayoutKind.Sequential)]
-public unsafe struct Registration
-{
-    public IntPtr Context;
-    public delegate* unmanaged<IntPtr, uint, IntPtr, int> RegisterEntry;
-}
-
 /* The native host test reaches these through their unmanaged entry points. */
 public static unsafe class Probe
 {

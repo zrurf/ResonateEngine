@@ -9,14 +9,6 @@ namespace Resonate.Tests.Patch;
    handed, so the same code serves the native loader and an ALC swap. */
 public static unsafe class PatchBehaviour
 {
-    /* Mirrors registration.h, the shape the loader passes in. */
-    [StructLayout(LayoutKind.Sequential)]
-    public struct Registration
-    {
-        public IntPtr Context;
-        public delegate* unmanaged<IntPtr, uint, IntPtr, int> RegisterEntry;
-    }
-
     public static int Register(IntPtr api)
     {
         Registration* registration = (Registration*)api;
