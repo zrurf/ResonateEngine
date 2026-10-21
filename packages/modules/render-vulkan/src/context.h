@@ -131,6 +131,13 @@ class Context
     /* True once a swapchain exists to draw into. */
     bool hasSurface() const;
 
+    /* RESONATE_RENDER_FEATURE_* of the created device. */
+    uint32_t featureBits() const;
+
+    /* The table slot a shader names, or 0 for a resource outside the table. */
+    uint32_t bufferSlot(ResonateRenderBuffer buffer) const;
+    uint32_t imageSlot(ResonateRenderImage image) const;
+
     /* --- RHI surface --- */
 
     ResonateStatus createBuffer(const ResonateRenderBufferDesc& desc, ResonateRenderBuffer* out);
@@ -180,6 +187,8 @@ class Context
         void* mapped = nullptr; /* host-visible only */
         uint64_t size = 0;
         uint32_t generation = 1;
+        uint32_t table_slot = 0;
+        bool in_table = false;
         bool alive = false;
     };
 
@@ -193,6 +202,8 @@ class Context
         uint32_t bytes_per_pixel = 4;
         uint32_t width = 0;
         uint32_t height = 0;
+        uint32_t table_slot = 0;
+        bool in_table = false;
         bool depth = false;
         uint32_t generation = 1;
         bool alive = false;
@@ -326,19 +337,23 @@ class Context
        recreated image must not find the framebuffer of its predecessor. */
     std::map<std::pair<uint64_t, uint64_t>, VkFramebuffer> framebuffer_cache_;
 
-    /* The resource tables: set 0, bindings 0-4 = 64 storage buffers each,
-       binding 5 = 64 combined image samplers, all indexed by handle slot. A
-       storage buffer's slot is written to every storage binding, so any typed
-       array declaration can name it. Dummies fill every storage slot at device
-       creation, so an unwritten index reads defined zeros; the sampled slots
-       are partially bound, so an unwritten one is never accessed. Sampled
-       images share one device-owned linear-clamp sampler. */
-    static constexpr uint32_t kTableSize = 64;
-    static constexpr uint32_t kStorageTableBindings = 5;
+    /* The resource tables: set 0, bindings 0-4 = kStorageTableSize storage
+       buffers each, binding 5 = kImageTableSize combined image samplers, all
+       indexed by handle slot. A storage buffer's slot is written to every
+       storage binding, so any typed array declaration can name it. The storage
+       slots are dummy-filled at creation; on a device without descriptor
+       indexing the image slots are too, and destroyed bindings return to the
+       dummy. On one with it the image slots stay partially bound. */
+    static constexpr uint32_t kStorageTableSize = 7;
+    static constexpr uint32_t kImageTableSize = 16;    static constexpr uint32_t kStorageTableBindings = 5;
     static constexpr uint32_t kSampledTableBinding = 5;
     static constexpr uint32_t kTableBindingCount = kSampledTableBinding + 1;
     void writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size);
     void writeImageSlot(uint32_t slot, VkImageView view, bool nearest);
+    bool acquireTableSlot(std::vector<uint32_t>& free_slots, uint32_t& out_slot);
+    void releaseTableSlot(std::vector<uint32_t>& free_slots, uint32_t slot);
+    std::vector<uint32_t> free_storage_slots_;
+    std::vector<uint32_t> free_image_slots_;
     VkDescriptorSetLayout table_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool table_pool_ = VK_NULL_HANDLE;
     VkDescriptorSet table_set_ = VK_NULL_HANDLE;
@@ -346,6 +361,15 @@ class Context
     VmaAllocation_T* table_dummy_allocation_ = nullptr;
     VkSampler table_sampler_linear_ = VK_NULL_HANDLE;
     VkSampler table_sampler_nearest_ = VK_NULL_HANDLE;
+
+    /* A device without descriptor indexing has no partially bound table, so
+       every image slot starts on a 1x1 dummy and destroyed images go back to
+       it. The storage slots are filled with table_dummy_ the same way. */
+    bool bindless_ = true;
+    VkImage table_dummy_image_ = VK_NULL_HANDLE;
+    VmaAllocation_T* table_dummy_image_allocation_ = nullptr;
+    VkImageView table_dummy_view_ = VK_NULL_HANDLE;
+    ResonateStatus createTableImageDummy();
 
     /* The open frame and pass, and the state their commands use. One command
        buffer per frame: begin_frame opens it, present closes and submits it. */

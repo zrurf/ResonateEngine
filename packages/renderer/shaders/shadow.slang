@@ -21,7 +21,7 @@ struct Push
     uint4 slots2; // light list, cascade index in y
 };
 
-[[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[64];
+[[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[7];
 
 [[vk::push_constant]] Push push;
 

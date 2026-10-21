@@ -1,6 +1,7 @@
 #include "context.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -257,6 +258,14 @@ Context::~Context()
         if (table_dummy_ != VK_NULL_HANDLE)
         {
             vmaDestroyBuffer(allocator_, table_dummy_, table_dummy_allocation_);
+        }
+        if (table_dummy_view_ != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(device_, table_dummy_view_, nullptr);
+        }
+        if (table_dummy_image_ != VK_NULL_HANDLE)
+        {
+            vmaDestroyImage(allocator_, table_dummy_image_, table_dummy_image_allocation_);
         }
         if (table_sampler_linear_ != VK_NULL_HANDLE)
         {
@@ -563,21 +572,13 @@ ResonateStatus Context::ensureDevice()
     vkGetPhysicalDeviceProperties(physical_, &properties);
     const bool core_indexing = instance_api_version_ >= VK_API_VERSION_1_2 &&
                                properties.apiVersion >= VK_API_VERSION_1_2;
-    if (!core_indexing && !hasExtension(extensions, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME))
-    {
-        const std::string detail =
-            "device has no descriptor indexing support (" + std::string(properties.deviceName) +
-            ", Vulkan " + std::to_string(VK_VERSION_MAJOR(properties.apiVersion)) + "." +
-            std::to_string(VK_VERSION_MINOR(properties.apiVersion)) + ")";
-        note(device_failed_, detail.c_str());
-        return RESONATE_E_UNSUPPORTED;
-    }
+    const bool extension_indexing =
+        hasExtension(extensions, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
 
-    /* The resource table needs partially bound arrays, and the scene shader
-       picks a shadow map with a per-pixel index (a non-uniform sampled-image
-       lookup). Slang's vertex-id path also reads a base-vertex builtin, so
-       shaderDrawParameters is required. Both live in core 1.2; an older device
-       reaches them through the extension instead. */
+    /* The table shader indexes descriptor arrays with push-constant slots, a
+       dynamically uniform index the base features cover. Descriptor indexing
+       adds partially bound slots and the per-pixel shadow lookup; a device
+       without it runs the compat scene shader instead, with every slot bound. */
     VkPhysicalDeviceVulkan11Features vulkan11{};
     vulkan11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
     VkPhysicalDeviceVulkan12Features vulkan12{};
@@ -591,47 +592,79 @@ ResonateStatus Context::ensureDevice()
         vulkan12.pNext = &vulkan11;
         features.pNext = &vulkan12;
     }
-    else
+    else if (extension_indexing)
     {
         indexing.pNext = &vulkan11;
         features.pNext = &indexing;
     }
+    else
+    {
+        features.pNext = &vulkan11;
+    }
     vkGetPhysicalDeviceFeatures2(physical_, &features);
 
-    const bool partially_bound = core_indexing ? vulkan12.descriptorBindingPartiallyBound
-                                               : indexing.descriptorBindingPartiallyBound;
-    const bool non_uniform =
-        core_indexing ? vulkan12.shaderSampledImageArrayNonUniformIndexing
-                      : indexing.shaderSampledImageArrayNonUniformIndexing;
-    if (!non_uniform || !partially_bound || !vulkan11.shaderDrawParameters)
+    bool partially_bound = false;
+    bool non_uniform = false;
+    if (core_indexing)
     {
-        note(device_failed_, "device lacks the resource-table features");
+        partially_bound = vulkan12.descriptorBindingPartiallyBound;
+        non_uniform = vulkan12.shaderSampledImageArrayNonUniformIndexing;
+    }
+    else if (extension_indexing)
+    {
+        partially_bound = indexing.descriptorBindingPartiallyBound;
+        non_uniform = indexing.shaderSampledImageArrayNonUniformIndexing;
+    }
+    /* RESONATE_FORCE_COMPAT exercises the compat shaders on a capable device. */
+    bindless_ = partially_bound && non_uniform &&
+                std::getenv("RESONATE_FORCE_COMPAT") == nullptr;
+
+    const bool dynamic_buffers = features.features.shaderStorageBufferArrayDynamicIndexing;
+    const bool dynamic_images = features.features.shaderSampledImageArrayDynamicIndexing;
+    if (!dynamic_buffers || !dynamic_images)
+    {
+        const std::string detail =
+            "device lacks the table features (" + std::string(properties.deviceName) +
+            ", Vulkan " + std::to_string(VK_VERSION_MAJOR(properties.apiVersion)) + "." +
+            std::to_string(VK_VERSION_MINOR(properties.apiVersion)) +
+            ", dynamicBuffers=" + std::to_string(dynamic_buffers != 0U) +
+            ", dynamicImages=" + std::to_string(dynamic_images != 0U) + ")";
+        note(device_failed_, detail.c_str());
         return RESONATE_E_UNSUPPORTED;
     }
 
     VkPhysicalDeviceVulkan11Features enabled11{};
     enabled11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
-    enabled11.shaderDrawParameters = VK_TRUE;
+    /* No shader reads the base-vertex builtin since the fullscreen triangle
+       moved to a vertex buffer, but enable it where the driver has it. */
+    enabled11.shaderDrawParameters =
+        vulkan11.shaderDrawParameters != 0U ? VK_TRUE : VK_FALSE;
 
     VkPhysicalDeviceVulkan12Features enabled12{};
     enabled12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     VkPhysicalDeviceDescriptorIndexingFeatures enabled_indexing{};
     enabled_indexing.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
-    const void* feature_chain = nullptr;
-    if (core_indexing)
+    void* interface_chain = &enabled11;
+    if (bindless_ && core_indexing)
     {
         enabled12.descriptorBindingPartiallyBound = VK_TRUE;
         enabled12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
         enabled12.pNext = &enabled11;
-        feature_chain = &enabled12;
+        interface_chain = &enabled12;
     }
-    else
+    else if (bindless_)
     {
         enabled_indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
         enabled_indexing.descriptorBindingPartiallyBound = VK_TRUE;
         enabled_indexing.pNext = &enabled11;
-        feature_chain = &enabled_indexing;
+        interface_chain = &enabled_indexing;
     }
+
+    VkPhysicalDeviceFeatures2 enabled_features{};
+    enabled_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    enabled_features.features.shaderStorageBufferArrayDynamicIndexing = VK_TRUE;
+    enabled_features.features.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
+    enabled_features.pNext = interface_chain;
 
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo queue{};
@@ -646,13 +679,13 @@ ResonateStatus Context::ensureDevice()
     {
         device_extensions[device_extension_count++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     }
-    if (!core_indexing)
+    if (bindless_ && !core_indexing)
     {
         device_extensions[device_extension_count++] = VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME;
     }
     VkDeviceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    info.pNext = feature_chain;
+    info.pNext = &enabled_features;
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = &queue;
     info.enabledExtensionCount = device_extension_count;
@@ -664,6 +697,25 @@ ResonateStatus Context::ensureDevice()
     }
 
     vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
+
+    /* The table's per-stage size is what decides whether the shaders can be
+       compiled at all; a mobile driver with small limits refuses the pipeline
+       rather than the layout. */
+    VkFormatProperties color_props{};
+    vkGetPhysicalDeviceFormatProperties(physical_, VK_FORMAT_R16G16B16A16_SFLOAT, &color_props);
+    VkFormatProperties depth_props{};
+    vkGetPhysicalDeviceFormatProperties(physical_, VK_FORMAT_D32_SFLOAT, &depth_props);
+    std::fprintf(stderr,
+                 "render-vulkan: %s, Vulkan %u.%u, %s table, samplers/stage=%u, "
+                 "storage/stage=%u, resources/stage=%u, rgba16f color=%u, d32 depth=%u\n",
+                 properties.deviceName, VK_VERSION_MAJOR(properties.apiVersion),
+                 VK_VERSION_MINOR(properties.apiVersion), bindless_ ? "bindless" : "compat",
+                 properties.limits.maxPerStageDescriptorSamplers,
+                 properties.limits.maxPerStageDescriptorStorageBuffers,
+                 properties.limits.maxPerStageResources,
+                 (color_props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0U,
+                 (depth_props.optimalTilingFeatures &
+                  VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0U);
 
     /* The pipeline cache is per machine, not per run: it is what keeps a
        second launch from recompiling every pipeline. */
@@ -679,31 +731,45 @@ ResonateStatus Context::ensureDevice()
         return RESONATE_E_INTERNAL;
     }
 
-    /* The resource tables: set 0, bindings 0-4 = kTableSize storage buffers
-       each, binding 5 = kTableSize combined image samplers. Every binding is
-       partially bound, so a slot nobody created may be absent from the array.
-       Dummies fill the storage slots at creation, so an index nobody wrote
-       reads defined zeros. */
+    /* Table slots start low and are handed out in creation order; the handle's
+       pool index is independent, so vertex and index buffers do not consume
+       them. */
+    free_storage_slots_.clear();
+    for (uint32_t slot = kStorageTableSize; slot-- > 0U;)
+    {
+        free_storage_slots_.push_back(slot);
+    }
+    free_image_slots_.clear();
+    for (uint32_t slot = kImageTableSize; slot-- > 0U;)
+    {
+        free_image_slots_.push_back(slot);
+    }
+
+    /* The resource tables: set 0, bindings 0-4 = kStorageTableSize storage
+       buffers each, binding 5 = kImageTableSize combined image samplers. The
+       storage slots are dummy-filled, so an index nobody wrote reads defined
+       zeros; the image slots are partially bound when the device supports it
+       and dummy-filled otherwise. */
     VkDescriptorSetLayoutBinding table_bindings[kTableBindingCount] = {};
     for (uint32_t binding = 0; binding < kStorageTableBindings; ++binding)
     {
         table_bindings[binding].binding = binding;
         table_bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        table_bindings[binding].descriptorCount = kTableSize;
+        table_bindings[binding].descriptorCount = kStorageTableSize;
         table_bindings[binding].stageFlags =
             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
         table_bindings[binding].pImmutableSamplers = nullptr;
     }
     table_bindings[kSampledTableBinding].binding = kSampledTableBinding;
     table_bindings[kSampledTableBinding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    table_bindings[kSampledTableBinding].descriptorCount = kTableSize;
+    table_bindings[kSampledTableBinding].descriptorCount = kImageTableSize;
     table_bindings[kSampledTableBinding].stageFlags =
         VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorBindingFlags binding_flags[kTableBindingCount] = {};
     for (VkDescriptorBindingFlags& flags : binding_flags)
     {
-        flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+        flags = bindless_ ? VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT : 0U;
     }
     VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{};
     binding_flags_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
@@ -712,7 +778,7 @@ ResonateStatus Context::ensureDevice()
 
     VkDescriptorSetLayoutCreateInfo table_layout{};
     table_layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    table_layout.pNext = &binding_flags_info;
+    table_layout.pNext = bindless_ ? &binding_flags_info : nullptr;
     table_layout.bindingCount = kTableBindingCount;
     table_layout.pBindings = table_bindings;
     if (vkCreateDescriptorSetLayout(device_, &table_layout, nullptr, &table_layout_) != VK_SUCCESS)
@@ -723,9 +789,9 @@ ResonateStatus Context::ensureDevice()
 
     VkDescriptorPoolSize table_pool_sizes[2] = {};
     table_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    table_pool_sizes[0].descriptorCount = kStorageTableBindings * kTableSize;
+    table_pool_sizes[0].descriptorCount = kStorageTableBindings * kStorageTableSize;
     table_pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    table_pool_sizes[1].descriptorCount = kTableSize;
+    table_pool_sizes[1].descriptorCount = kImageTableSize;
     VkDescriptorPoolCreateInfo table_pool{};
     table_pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     table_pool.maxSets = 1;
@@ -765,7 +831,7 @@ ResonateStatus Context::ensureDevice()
     dummy_buffer_info.buffer = table_dummy_;
     dummy_buffer_info.offset = 0;
     dummy_buffer_info.range = 256U;
-    for (uint32_t slot = 0; slot < kTableSize; ++slot)
+    for (uint32_t slot = 0; slot < kStorageTableSize; ++slot)
     {
         VkWriteDescriptorSet writes[kStorageTableBindings]{};
         for (uint32_t binding = 0; binding < kStorageTableBindings; ++binding)
@@ -858,6 +924,109 @@ ResonateStatus Context::ensureDevice()
         note(device_failed_, "command buffer allocation failed");
         return RESONATE_E_INTERNAL;
     }
+
+    if (!bindless_)
+    {
+        if (ResonateStatus status = createTableImageDummy(); status != RESONATE_OK)
+        {
+            return status;
+        }
+    }
+    return RESONATE_OK;
+}
+
+ResonateStatus Context::createTableImageDummy()
+{
+    VkImageCreateInfo image{};
+    image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image.imageType = VK_IMAGE_TYPE_2D;
+    image.format = VK_FORMAT_R8G8B8A8_UNORM;
+    image.extent = VkExtent3D{1U, 1U, 1U};
+    image.mipLevels = 1;
+    image.arrayLayers = 1;
+    image.samples = VK_SAMPLE_COUNT_1_BIT;
+    image.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo allocation{};
+    allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+    if (vmaCreateImage(allocator_, &image, &allocation, &table_dummy_image_,
+                       &table_dummy_image_allocation_, nullptr) != VK_SUCCESS)
+    {
+        note(device_failed_, "table dummy image creation failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    VkImageViewCreateInfo view{};
+    view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view.image = table_dummy_image_;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = VK_FORMAT_R8G8B8A8_UNORM;
+    view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    view.subresourceRange.levelCount = 1;
+    view.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(device_, &view, nullptr, &table_dummy_view_) != VK_SUCCESS)
+    {
+        vmaDestroyImage(allocator_, table_dummy_image_, table_dummy_image_allocation_);
+        table_dummy_image_ = VK_NULL_HANDLE;
+        note(device_failed_, "table dummy image view creation failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    /* One transition, so the binding is legal from the first frame; nothing
+       ever reads the dummy's texels. */
+    VkCommandBufferAllocateInfo command{};
+    command.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    command.commandPool = command_pool_;
+    command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    command.commandBufferCount = 1;
+    VkCommandBuffer buffer = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(device_, &command, &buffer) != VK_SUCCESS)
+    {
+        note(device_failed_, "table dummy image transition failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(buffer, &begin);
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = table_dummy_image_;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         0U, 0U, nullptr, 0U, nullptr, 1U, &barrier);
+    vkEndCommandBuffer(buffer);
+
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &buffer;
+    const VkResult submitted = vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(queue_);
+    vkFreeCommandBuffers(device_, command_pool_, 1, &buffer);
+    if (submitted != VK_SUCCESS)
+    {
+        note(device_failed_, "table dummy image transition failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    for (uint32_t slot = 0; slot < kImageTableSize; ++slot)
+    {
+        writeImageSlot(slot, table_dummy_view_, false);
+    }
     return RESONATE_OK;
 }
 
@@ -927,6 +1096,11 @@ ResonateStatus Context::attachSurface(const void* native_surface, uint32_t width
 bool Context::hasSurface() const
 {
     return swapchain_ != VK_NULL_HANDLE || offscreen_;
+}
+
+uint32_t Context::featureBits() const
+{
+    return bindless_ ? RESONATE_RENDER_FEATURE_DESCRIPTOR_INDEXING : 0U;
 }
 
 ResonateStatus Context::attachOffscreen(uint32_t width, uint32_t height)
@@ -1290,6 +1464,9 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
     VkAttachmentReference color_reference{};
     color_reference.attachment = 0;
     color_reference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    /* Outside the conditional: the subpass points at it until the render pass
+       is created. */
+    VkAttachmentReference depth_reference{};
 
     if (!colorless)
     {
@@ -1321,7 +1498,6 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
 
     if (depth != RESONATE_RENDER_FORMAT_UNKNOWN)
     {
-        VkAttachmentReference depth_reference{};
         depth_reference.attachment = colorless ? 0 : 1;
         depth_reference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
@@ -1346,8 +1522,12 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
     pass.subpassCount = 1;
     pass.pSubpasses = &subpass;
     VkRenderPass handle = VK_NULL_HANDLE;
-    if (vkCreateRenderPass(device_, &pass, nullptr, &handle) != VK_SUCCESS)
+    const VkResult created = vkCreateRenderPass(device_, &pass, nullptr, &handle);
+    if (created != VK_SUCCESS)
     {
+        std::fprintf(stderr, "render-vulkan: render pass creation failed (%d, color %d, depth %d)\n",
+                     static_cast<int>(created), static_cast<int>(color),
+                     static_cast<int>(depth));
         return RESONATE_E_INTERNAL;
     }
     pass_cache_.emplace(key, handle);
@@ -1375,6 +1555,39 @@ VkBuffer Context::resolveBuffer(ResonateRenderBuffer handle) const
     const BufferSlot* slot =
         buffers_.live(handleIndex(handle.value), handleGeneration(handle.value));
     return slot != nullptr ? slot->buffer : VK_NULL_HANDLE;
+}
+
+bool Context::acquireTableSlot(std::vector<uint32_t>& free_slots, uint32_t& out_slot)
+{
+    if (free_slots.empty())
+    {
+        return false;
+    }
+    out_slot = free_slots.back();
+    free_slots.pop_back();
+    return true;
+}
+
+void Context::releaseTableSlot(std::vector<uint32_t>& free_slots, uint32_t slot)
+{
+    free_slots.push_back(slot);
+}
+
+uint32_t Context::bufferSlot(ResonateRenderBuffer handle) const
+{
+    const BufferSlot* slot =
+        handle.value != 0
+            ? buffers_.live(handleIndex(handle.value), handleGeneration(handle.value))
+            : nullptr;
+    return slot != nullptr && slot->in_table ? slot->table_slot : 0U;
+}
+
+uint32_t Context::imageSlot(ResonateRenderImage handle) const
+{
+    const ImageSlot* slot =
+        handle.value != 0 ? images_.live(handleIndex(handle.value), handleGeneration(handle.value))
+                          : nullptr;
+    return slot != nullptr && slot->in_table ? slot->table_slot : 0U;
 }
 
 void Context::writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size)

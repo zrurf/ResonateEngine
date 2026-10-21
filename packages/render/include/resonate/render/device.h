@@ -12,17 +12,17 @@
  * failing the run. Switching backends is a configuration change applied at
  * startup; a mid-run device swap is not an RHI operation.
  *
- * Handles are opaque 64-bit ids, {0} being null. The index half names the
- * resource's slot in the device's resource table: shaders reach resources
- * through indexed arrays and a draw names them by handle, which is why draw
- * calls carry no binding calls. The table is set 0: bindings 0-4 are 64-slot
- * storage-buffer arrays and binding 5 is a 64-slot combined-image-sampler
- * array. A buffer created with the STORAGE usage, or an image with the SAMPLED
- * usage, is written into its slot (a buffer into every storage binding) at
- * creation, so any of those shader declarations can name it by slot:
- * `[[vk::binding(0, 0)]] StructuredBuffer<T> table[64];` on a Vulkan backend.
- * Because the write is the creation, resources must exist before the frame
- * that reads them.
+ * Handles are opaque 64-bit ids, {0} being null. Shaders reach resources
+ * through indexed arrays, and a resource created with the STORAGE usage (a
+ * buffer) or the SAMPLED usage (an image) lands in the device's table at a
+ * slot the device assigns; buffer_slot/image_slot report it. The slot is not
+ * the handle's pool index, because vertex and index buffers share the pool
+ * without taking table slots. The table is set 0: bindings 0-4 are storage
+ * buffer arrays and binding 5 is a combined-image-sampler array. A storage
+ * buffer is written into its slot in every storage binding at creation, so any
+ * of those shader declarations can name it by slot; the sizes are the backend's
+ * (a mobile floor keeps them small). Because the write is the creation,
+ * resources must exist before the frame that reads them.
  *
  * Calls are serialised by the stage schedule (THREAD_ANY). Uploads are
  * synchronous.
@@ -350,7 +350,23 @@ typedef struct ResonateRenderDevice
 
     /* Provider state; the host never interprets it. */
     void* self;
+
+    /* Tail: RESONATE_RENDER_FEATURE_* bits of the device that was created. An
+       older writer's struct stops before this and means the descriptor-indexing
+       table. The renderer picks its shader variant from these. */
+    uint32_t (*feature_bits)(void* self);
+
+    /* Tail: the table slot a shader names for a resource, which is not the
+       handle's pool index — vertex and index buffers share the pool without
+       taking table slots. An older writer means the handle's low half. */
+    uint32_t (*buffer_slot)(void* self, ResonateRenderBuffer buffer);
+    uint32_t (*image_slot)(void* self, ResonateRenderImage image);
 } ResonateRenderDevice;
+
+/* The resource table is partially bound and sampled-image indices may differ
+   per pixel. Without it, every slot needs a binding and the shaders index the
+   image table with push-constant slots only. */
+#define RESONATE_RENDER_FEATURE_DESCRIPTOR_INDEXING (1u << 0)
 
 #ifdef __cplusplus
 } // extern "C"

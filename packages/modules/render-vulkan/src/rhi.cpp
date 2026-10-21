@@ -101,13 +101,19 @@ ResonateStatus Context::createBuffer(const ResonateRenderBufferDesc& desc,
     *slot = BufferSlot{};
     slot->size = desc.size_bytes;
 
-    /* The slot is the handle index, and the table has kTableSize slots: a
-       storage buffer past them could never be named by a shader. */
-    if ((desc.usage & RESONATE_RENDER_BUFFER_STORAGE) != 0U && index >= kTableSize)
+    /* A storage buffer takes a table slot; its handle keeps the pool index.
+       Without one it could never be named by a shader. */
+    if ((desc.usage & RESONATE_RENDER_BUFFER_STORAGE) != 0U)
     {
-        buffers_.retire(index);
-        note(device_failed_, "the resource table is full");
-        return RESONATE_E_INVALID;
+        uint32_t table_slot = 0;
+        if (!acquireTableSlot(free_storage_slots_, table_slot))
+        {
+            buffers_.retire(index);
+            note(device_failed_, "the storage table is full");
+            return RESONATE_E_INVALID;
+        }
+        slot->table_slot = table_slot;
+        slot->in_table = true;
     }
 
     VkBufferCreateInfo buffer{};
@@ -132,6 +138,10 @@ ResonateStatus Context::createBuffer(const ResonateRenderBufferDesc& desc,
     if (vmaCreateBuffer(allocator_, &buffer, &allocation, &slot->buffer, &slot->allocation,
                         &allocation_info) != VK_SUCCESS)
     {
+        if (slot->in_table)
+        {
+            releaseTableSlot(free_storage_slots_, slot->table_slot);
+        }
         buffers_.retire(index);
         std::fprintf(stderr, "render-vulkan: buffer creation failed (%llu bytes, usage %x)\n",
                      static_cast<unsigned long long>(desc.size_bytes), desc.usage);
@@ -140,9 +150,9 @@ ResonateStatus Context::createBuffer(const ResonateRenderBufferDesc& desc,
     slot->mapped = allocation_info.pMappedData;
     slot->alive = true;
     const uint64_t handle = handleValue(slot->generation, index);
-    if ((desc.usage & RESONATE_RENDER_BUFFER_STORAGE) != 0U)
+    if (slot->in_table)
     {
-        writeBufferSlot(index, slot->buffer, desc.size_bytes);
+        writeBufferSlot(slot->table_slot, slot->buffer, desc.size_bytes);
     }
     *out = ResonateRenderBuffer{handle};
     return RESONATE_OK;
@@ -161,6 +171,13 @@ void Context::destroyBuffer(ResonateRenderBuffer handle)
     }
     frames_[frame_ % kFramesInFlight].graveyard.push_back(
         Retired{kRetiredBuffer, static_cast<void*>(slot->buffer), slot->allocation});
+    if (slot->in_table)
+    {
+        /* The slot is reused by the next storage buffer, which writes its own
+           binding; nothing samples a retired one. */
+        releaseTableSlot(free_storage_slots_, slot->table_slot);
+        slot->in_table = false;
+    }
     buffers_.retire(handleIndex(handle.value));
 }
 
@@ -179,11 +196,17 @@ ResonateStatus Context::createImage(const ResonateRenderImageDesc& desc, Resonat
     ImageSlot* slot = nullptr;
     const uint32_t index = images_.acquire(&slot);
     *slot = ImageSlot{};
-    if ((desc.usage & RESONATE_RENDER_IMAGE_SAMPLED) != 0U && index >= kTableSize)
+    if ((desc.usage & RESONATE_RENDER_IMAGE_SAMPLED) != 0U)
     {
-        images_.retire(index);
-        note(device_failed_, "the resource table is full");
-        return RESONATE_E_INVALID;
+        uint32_t table_slot = 0;
+        if (!acquireTableSlot(free_image_slots_, table_slot))
+        {
+            images_.retire(index);
+            note(device_failed_, "the image table is full");
+            return RESONATE_E_INVALID;
+        }
+        slot->table_slot = table_slot;
+        slot->in_table = true;
     }
     slot->format = formatOf(desc.format);
     slot->format_id = desc.format;
@@ -211,6 +234,10 @@ ResonateStatus Context::createImage(const ResonateRenderImageDesc& desc, Resonat
     if (vmaCreateImage(allocator_, &image, &allocation, &slot->image, &slot->allocation, nullptr) !=
         VK_SUCCESS)
     {
+        if (slot->in_table)
+        {
+            releaseTableSlot(free_image_slots_, slot->table_slot);
+        }
         images_.retire(index);
         note(device_failed_, "image creation failed");
         return RESONATE_E_INTERNAL;
@@ -228,19 +255,23 @@ ResonateStatus Context::createImage(const ResonateRenderImageDesc& desc, Resonat
     if (vkCreateImageView(device_, &view, nullptr, &slot->view) != VK_SUCCESS)
     {
         vmaDestroyImage(allocator_, slot->image, slot->allocation);
+        if (slot->in_table)
+        {
+            releaseTableSlot(free_image_slots_, slot->table_slot);
+        }
         images_.retire(index);
         note(device_failed_, "image view creation failed");
         return RESONATE_E_INTERNAL;
     }
     slot->alive = true;
-    if ((desc.usage & RESONATE_RENDER_IMAGE_SAMPLED) != 0U)
+    if (slot->in_table)
     {
         /* The field is a tail addition; an older writer's struct stops short
            of it and means linear. */
         const bool nearest =
             desc.struct_size >= offsetof(ResonateRenderImageDesc, nearest) + sizeof(uint32_t) &&
             desc.nearest != 0U;
-        writeImageSlot(index, slot->view, nearest);
+        writeImageSlot(slot->table_slot, slot->view, nearest);
     }
     *out = ResonateRenderImage{handleValue(slot->generation, index)};
     return RESONATE_OK;
@@ -276,6 +307,12 @@ void Context::destroyImage(ResonateRenderImage handle)
     frame.graveyard.push_back(Retired{kRetiredImageView, static_cast<void*>(slot->view), nullptr});
     frame.graveyard.push_back(
         Retired{kRetiredImage, static_cast<void*>(slot->image), slot->allocation});
+    if (slot->in_table)
+    {
+        /* Reused by the next sampled image, which writes its own binding. */
+        releaseTableSlot(free_image_slots_, slot->table_slot);
+        slot->in_table = false;
+    }
     images_.retire(handleIndex(handle.value));
 }
 
@@ -427,9 +464,11 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
         layout.pSetLayouts = &table_layout_;
         layout.pushConstantRangeCount = 1;
         layout.pPushConstantRanges = &range;
-        if (vkCreatePipelineLayout(device_, &layout, nullptr, &pipeline_layout_) != VK_SUCCESS)
+        const VkResult created = vkCreatePipelineLayout(device_, &layout, nullptr, &pipeline_layout_);
+        if (created != VK_SUCCESS)
         {
-            note(device_failed_, "pipeline layout creation failed");
+            std::fprintf(stderr, "render-vulkan: pipeline layout creation failed (%d)\n",
+                         static_cast<int>(created));
             return RESONATE_E_INTERNAL;
         }
     }
@@ -546,11 +585,13 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
     PipelineSlot* slot = nullptr;
     const uint32_t index = pipelines_.acquire(&slot);
     *slot = PipelineSlot{};
-    if (vkCreateGraphicsPipelines(device_, pipeline_cache_, 1, &pipeline, nullptr,
-                                  &slot->pipeline) != VK_SUCCESS)
+    const VkResult created =
+        vkCreateGraphicsPipelines(device_, pipeline_cache_, 1, &pipeline, nullptr, &slot->pipeline);
+    if (created != VK_SUCCESS)
     {
         pipelines_.retire(index);
-        note(device_failed_, "pipeline creation failed");
+        std::fprintf(stderr, "render-vulkan: graphics pipeline creation failed (%d)\n",
+                     static_cast<int>(created));
         return RESONATE_E_INTERNAL;
     }
     slot->alive = true;

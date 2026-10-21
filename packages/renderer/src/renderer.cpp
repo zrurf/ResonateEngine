@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -199,17 +200,6 @@ std::string contentTexturesDirectory()
     return {};
 }
 
-/* A handle's index half is its resource-table slot (device.h). */
-constexpr std::uint32_t slotOf(ResonateRenderBuffer handle)
-{
-    return static_cast<std::uint32_t>(handle.value & 0xFFFFFFFFU);
-}
-
-constexpr std::uint32_t slotOf(ResonateRenderImage handle)
-{
-    return static_cast<std::uint32_t>(handle.value & 0xFFFFFFFFU);
-}
-
 /* A tightly packed RGBA8 texture in the sampled-image table. */
 bool createSampledTexture(ResonateRenderDevice& device, std::uint32_t width, std::uint32_t height,
                           ResonateRenderFormat format, const std::vector<std::uint8_t>& pixels,
@@ -357,6 +347,9 @@ struct RenderSystem::Impl
     GpuMesh cube{};
     GpuMesh ground{};
     MeshId bound_mesh = kMeshNone;
+    /* The fullscreen triangle of the post chain; a vertex buffer keeps the
+       vertex stage free of the base-vertex builtin. */
+    ResonateRenderBuffer post_vertex_buffer{};
 
     /* The two albedo textures v1 ships: a white 1x1 (material id 0) and an
        8x8 checker (id 1). Created once; their table slots ride the push
@@ -392,6 +385,8 @@ struct RenderSystem::Impl
     bool initialize();
     bool ensurePipelines();
     ResonateRenderBuffer uploadStorage(std::uint64_t size_bytes, bool host_visible);
+    std::uint32_t slotOf(ResonateRenderBuffer handle) const;
+    std::uint32_t slotOf(ResonateRenderImage handle) const;
     void bindQueries(ecs::World& world);
     void resolveCapabilities();
     void ensureThread();
@@ -711,6 +706,24 @@ ResonateRenderBuffer RenderSystem::Impl::uploadStorage(std::uint64_t size_bytes,
     return buffer;
 }
 
+std::uint32_t RenderSystem::Impl::slotOf(ResonateRenderBuffer handle) const
+{
+    if (device != nullptr && device->buffer_slot != nullptr)
+    {
+        return device->buffer_slot(device->self, handle);
+    }
+    return static_cast<std::uint32_t>(handle.value & 0xFFFFFFFFU);
+}
+
+std::uint32_t RenderSystem::Impl::slotOf(ResonateRenderImage handle) const
+{
+    if (device != nullptr && device->image_slot != nullptr)
+    {
+        return device->image_slot(device->self, handle);
+    }
+    return static_cast<std::uint32_t>(handle.value & 0xFFFFFFFFU);
+}
+
 bool RenderSystem::Impl::ensurePipelines()
 {
     if (pipelines_ready)
@@ -729,10 +742,20 @@ bool RenderSystem::Impl::ensurePipelines()
         pipelines_failed = true;
         return false;
     }
+
+    /* A device without descriptor indexing gets the shadow shader that samples
+       the three cascades through push-constant slots and selects, instead of
+       indexing the image table per pixel. */
+    const bool compat_shadows =
+        device->header.struct_size >=
+            offsetof(ResonateRenderDevice, feature_bits) + sizeof(device->feature_bits) &&
+        device->feature_bits != nullptr &&
+        (device->feature_bits(device->self) & RESONATE_RENDER_FEATURE_DESCRIPTOR_INDEXING) == 0U;
     const std::vector<char> vertex_spirv =
         readFile(std::filesystem::path(directory) / "scene.sceneVertex.spv");
-    const std::vector<char> fragment_spirv =
-        readFile(std::filesystem::path(directory) / "scene.sceneFragment.spv");
+    const std::vector<char> fragment_spirv = readFile(
+        std::filesystem::path(directory) /
+        (compat_shadows ? "scene.sceneFragmentCompat.spv" : "scene.sceneFragment.spv"));
     const std::vector<char> shadow_vertex_spirv =
         readFile(std::filesystem::path(directory) / "shadow.shadowVertex.spv");
     const std::vector<char> shadow_fragment_spirv =
@@ -882,13 +905,54 @@ bool RenderSystem::Impl::ensurePipelines()
     ResonateRenderShader* post_fragments[4] = {&bright, &blur, &composite, &fxaa};
     ResonateRenderPipeline* post_pipelines[4] = {&bright_pipeline, &blur_pipeline,
                                                  &composite_pipeline, &fxaa_pipeline};
+
+    /* The fullscreen triangle carries its positions and UVs in a vertex buffer,
+       so the vertex stage needs no base-vertex builtin (shaderDrawParameters is
+       optional on some Vulkan 1.1 mobile drivers). */
+    struct PostVertex
+    {
+        float position[2];
+        float uv[2];
+    };
+    const PostVertex vertices[3] = {
+        {{-1.0F, -1.0F}, {0.0F, 0.0F}},
+        {{3.0F, -1.0F}, {2.0F, 0.0F}},
+        {{-1.0F, 3.0F}, {0.0F, 2.0F}},
+    };
+    ResonateRenderBufferDesc post_buffer{};
+    post_buffer.struct_size = sizeof(post_buffer);
+    post_buffer.size_bytes = sizeof(vertices);
+    post_buffer.usage = RESONATE_RENDER_BUFFER_VERTEX;
+    post_buffer.host_visible = 1U;
+    if (device->create_buffer(device->self, &post_buffer, &post_vertex_buffer) != RESONATE_OK ||
+        device->upload_buffer(device->self, post_vertex_buffer, 0U, vertices, sizeof(vertices)) !=
+            RESONATE_OK)
+    {
+        complain("the post vertex buffer was not created");
+        pipelines_failed = true;
+        return false;
+    }
+
+    ResonateRenderVertexAttribute post_attributes[2] = {};
+    post_attributes[0].location = 0U;
+    post_attributes[0].format = RESONATE_RENDER_FORMAT_R32G32_SFLOAT;
+    post_attributes[0].offset_bytes = 0U;
+    post_attributes[1].location = 1U;
+    post_attributes[1].format = RESONATE_RENDER_FORMAT_R32G32_SFLOAT;
+    post_attributes[1].offset_bytes = 8U;
+    ResonateRenderVertexStream post_stream{};
+    post_stream.stride_bytes = sizeof(PostVertex);
+    post_stream.attribute_count = 2U;
+    post_stream.attributes = post_attributes;
+
     for (std::uint32_t i = 0; i < 4U; ++i)
     {
         ResonateRenderGraphicsPipelineDesc post_desc{};
         post_desc.struct_size = sizeof(post_desc);
         post_desc.vertex_shader = post_vertex;
         post_desc.fragment_shader = *post_fragments[i];
-        post_desc.stream_count = 0U;
+        post_desc.stream_count = 1U;
+        post_desc.streams = &post_stream;
         post_desc.color_format = post_targets[i];
         post_desc.depth_format = RESONATE_RENDER_FORMAT_UNKNOWN;
         if (device->create_pipeline(device->self, &post_desc, post_pipelines[i]) != RESONATE_OK)
@@ -970,7 +1034,7 @@ bool RenderSystem::Impl::ensurePipelines()
     white_texture_slot = slotOf(white_texture);
     checker_texture_slot = slotOf(checker_texture);
 
-    /* A handle's low half is its table slot; the push constants carry them. */
+    /* The table slots the push constants carry. */
     frame_data_slot = slotOf(frame_data.vertices);
     light_list_slot = slotOf(light_list.vertices);
 
@@ -978,7 +1042,7 @@ bool RenderSystem::Impl::ensurePipelines()
     if (!ready_noted)
     {
         ready_noted = true;
-        std::fprintf(stderr, "renderer: scene pipeline ready\n");
+        std::fprintf(stderr, "renderer: pipelines ready\n");
     }
     return true;
 }
@@ -1350,7 +1414,6 @@ void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
     {
         constants.slots2[1 + cascade] = commands.imageSlot(shadow_resource[cascade]);
     }
-
     for (const DrawInstance& instance : active->instances)
     {
         const GpuMesh& mesh = instance.mesh == kMeshGround ? ground : cube;
@@ -1402,6 +1465,7 @@ void RenderSystem::Impl::runPost(GraphExecuteContext& commands, ResourceId targe
     post_constants.slots[1] = bloom_slot;
     post_constants.params = params;
     device.set_constants(device.self, &post_constants, sizeof(post_constants));
+    device.bind_vertex_buffer(device.self, post_vertex_buffer, 0U);
     device.draw(device.self, 3U, 1U);
     device.end_pass(device.self);
 }

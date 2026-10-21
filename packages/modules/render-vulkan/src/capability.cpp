@@ -279,6 +279,24 @@ ResonateStatus readbackCanvas(void* self, void* data, uint64_t size_bytes, uint3
     return state->context->readbackCanvas(data, size_bytes, out_width, out_height);
 }
 
+uint32_t featureBits(void* self)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr ? state->context->featureBits() : 0U;
+}
+
+uint32_t bufferSlot(void* self, ResonateRenderBuffer buffer)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr ? state->context->bufferSlot(buffer) : 0U;
+}
+
+uint32_t imageSlot(void* self, ResonateRenderImage image)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr ? state->context->imageSlot(image) : 0U;
+}
+
 ResonateRenderDevice g_device = {
     RESONATE_CAPABILITY_HEADER_INIT(ResonateRenderDevice, RESONATE_THREAD_ANY),
     &attachSurface,
@@ -312,6 +330,9 @@ ResonateRenderDevice g_device = {
     &attachOffscreen,
     &readbackCanvas,
     nullptr,
+    &featureBits,
+    &bufferSlot,
+    &imageSlot,
 };
 
 } // namespace

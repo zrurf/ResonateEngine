@@ -1,7 +1,7 @@
 // The scene pass: Blinn-Phong shading against the frame's clusters, the
 // directional light shadowed by CSM, and depth fog. Renders into the HDR
 // target; the post chain tonemaps.
-// Entries: sceneVertex, sceneFragment.
+// Entries: sceneVertex, sceneFragment, sceneFragmentCompat.
 //
 // Resource-table convention (device.h): set 0 holds the storage arrays at
 // bindings 0-4 and the sampled-image array at binding 5; slots arrive in the
@@ -44,11 +44,11 @@ struct Push
     float metallic;
 };
 
-[[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[64];
-[[vk::binding(1, 0)]] StructuredBuffer<Light> light_table[64];
-[[vk::binding(2, 0)]] StructuredBuffer<uint> light_indices[64];
-[[vk::binding(3, 0)]] StructuredBuffer<ClusterLights> cluster_lights[64];
-[[vk::binding(5, 0)]] Sampler2D image_table[64];
+[[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[7];
+[[vk::binding(1, 0)]] StructuredBuffer<Light> light_table[7];
+[[vk::binding(2, 0)]] StructuredBuffer<uint> light_indices[7];
+[[vk::binding(3, 0)]] StructuredBuffer<ClusterLights> cluster_lights[7];
+[[vk::binding(5, 0)]] Sampler2D image_table[16];
 
 [[vk::push_constant]] Push push;
 
@@ -119,8 +119,21 @@ uint cascadeOf(float view_depth, FrameData frame)
     return 2;
 }
 
-// Four-tap PCF against the cascade's shadow map; the map was rendered from the
+// Four-tap PCF against one cascade's shadow map; the map was rendered from the
 // light's view, so the shadow coordinates come from the same matrix.
+float pcfOf(uint slot, float2 uv, float receiver, float texel)
+{
+    float sum = 0.0;
+    const float2 TAPS[4] = {float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5),
+                            float2(0.5, 0.5)};
+    for (uint tap = 0; tap < 4; ++tap)
+    {
+        float depth = image_table[slot].Sample(uv + TAPS[tap] * texel).r;
+        sum += receiver - 0.003 > depth ? 0.0 : 1.0;
+    }
+    return sum * 0.25;
+}
+
 float shadowFactor(float3 world_position, float view_depth, FrameData frame)
 {
     uint cascade = cascadeOf(view_depth, frame);
@@ -136,15 +149,29 @@ float shadowFactor(float3 world_position, float view_depth, FrameData frame)
 
     // The cascade differs per pixel, so the table lookup does too.
     uint shadow_slot = NonUniformResourceIndex(push.slots2[cascade + 1]);
-    float sum = 0.0;
-    const float2 TAPS[4] = {float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5),
-                            float2(0.5, 0.5)};
-    for (uint tap = 0; tap < 4; ++tap)
+    return pcfOf(shadow_slot, uv, receiver, texel);
+}
+
+// A device without descriptor indexing cannot index the table per pixel. The
+// three cascade slots are push constants, so each lookup is dynamically
+// uniform; sample all three and select the one the pixel's cascade names.
+float shadowFactorCompat(float3 world_position, float view_depth, FrameData frame)
+{
+    uint cascade = cascadeOf(view_depth, frame);
+    float4 shadow_position = mul(frame.light_view_proj[cascade], float4(world_position, 1.0));
+    float3 shadow_ndc = shadow_position.xyz / shadow_position.w;
+    if (shadow_ndc.x < -1.0 || shadow_ndc.x > 1.0 || shadow_ndc.y < -1.0 || shadow_ndc.y > 1.0)
     {
-        float depth = image_table[shadow_slot].Sample(uv + TAPS[tap] * texel).r;
-        sum += receiver - 0.003 > depth ? 0.0 : 1.0;
+        return 1.0;
     }
-    return sum * 0.25;
+    float2 uv = float2(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * 0.5 + 0.5);
+    float receiver = shadow_ndc.z;
+    float texel = 1.0 / 2048.0;
+
+    float cascades0 = pcfOf(push.slots2[1], uv, receiver, texel);
+    float cascades1 = pcfOf(push.slots2[2], uv, receiver, texel);
+    float cascades2 = pcfOf(push.slots2[3], uv, receiver, texel);
+    return cascade == 0 ? cascades0 : (cascade == 1 ? cascades1 : cascades2);
 }
 
 static const float PI = 3.14159265;
@@ -191,8 +218,7 @@ float3 shade(float3 albedo, float3 normal, float3 view_direction, float3 light_d
     return (diffuse + specular) * radiance * n_dot_l;
 }
 
-[shader("fragment")]
-float4 sceneFragment(VertexOutput input) : SV_Target
+float4 shadeScene(VertexOutput input, bool compat)
 {
     FrameData frame = frame_table[push.slots.x].Load(0);
     ClusterLights lights = cluster_lights[push.slots.z].Load(
@@ -206,7 +232,8 @@ float4 sceneFragment(VertexOutput input) : SV_Target
     float3 color = albedo * 0.12; // ambient floor
     float3 directional_color = frame.directional_color_intensity.rgb *
                                frame.directional_color_intensity.a;
-    float shadow = shadowFactor(input.world_position, input.view_depth, frame);
+    float shadow = compat ? shadowFactorCompat(input.world_position, input.view_depth, frame)
+                          : shadowFactor(input.world_position, input.view_depth, frame);
     const float roughness = clamp(push.roughness, 0.04, 1.0);
     color += shade(albedo, normal, view_direction, -frame.direction_and_far.xyz,
                    directional_color * shadow, roughness, push.metallic);
@@ -228,4 +255,16 @@ float4 sceneFragment(VertexOutput input) : SV_Target
     color = lerp(color, float3(0.05, 0.06, 0.09), fog);
 
     return float4(color, 1.0);
+}
+
+[shader("fragment")]
+float4 sceneFragment(VertexOutput input) : SV_Target
+{
+    return shadeScene(input, false);
+}
+
+[shader("fragment")]
+float4 sceneFragmentCompat(VertexOutput input) : SV_Target
+{
+    return shadeScene(input, true);
 }

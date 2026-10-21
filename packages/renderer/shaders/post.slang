@@ -10,7 +10,7 @@ struct PostPush
     float4 params; // bright: threshold in x; blur: texel step in x/y
 };
 
-[[vk::binding(5, 0)]] Sampler2D image_table[64];
+[[vk::binding(5, 0)]] Sampler2D image_table[16];
 
 [[vk::push_constant]] PostPush push;
 
@@ -20,16 +20,20 @@ struct VertexOutput
     float2 uv;
 };
 
+struct PostVertexInput
+{
+    float2 position : POSITION;
+    float2 uv : TEXCOORD0;
+};
+
 [shader("vertex")]
-VertexOutput postVertex(uint vertex_id : SV_VertexID)
+VertexOutput postVertex(PostVertexInput input)
 {
     // A triangle larger than the clip volume covers the frame; UVs follow.
     // NDC y = -1 is the framebuffer's top row, where v = 0 samples.
-    float2 positions[3] = {float2(-1.0, -1.0), float2(3.0, -1.0), float2(-1.0, 3.0)};
-    float2 uvs[3] = {float2(0.0, 0.0), float2(2.0, 0.0), float2(0.0, 2.0)};
     VertexOutput output;
-    output.position = float4(positions[vertex_id], 0.0, 1.0);
-    output.uv = uvs[vertex_id];
+    output.position = float4(input.position, 0.0, 1.0);
+    output.uv = input.uv;
     return output;
 }
 

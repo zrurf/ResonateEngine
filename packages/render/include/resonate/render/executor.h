@@ -15,6 +15,7 @@
 
 #include <resonate/render/graph.h>
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -37,14 +38,40 @@ struct GraphExecuteContext
     {
         return buffers[resource];
     }
-    /* A handle's low half is its resource-table slot (device.h). */
+    /* The table slot the device assigned to the resource. The handle's low
+       half is its pool index — vertex and index buffers have one without a
+       table slot — so the device answers when it can. */
     [[nodiscard]] std::uint32_t imageSlot(ResourceId resource) const
     {
-        return static_cast<std::uint32_t>(images[resource].value & 0xFFFFFFFFU);
+        const ResonateRenderImage handle = images[resource];
+        if (handle.value == 0U)
+        {
+            return 0U;
+        }
+        if (device != nullptr &&
+            device->header.struct_size >=
+                offsetof(ResonateRenderDevice, image_slot) + sizeof(device->image_slot) &&
+            device->image_slot != nullptr)
+        {
+            return device->image_slot(device->self, handle);
+        }
+        return static_cast<std::uint32_t>(handle.value & 0xFFFFFFFFU);
     }
     [[nodiscard]] std::uint32_t bufferSlot(ResourceId resource) const
     {
-        return static_cast<std::uint32_t>(buffers[resource].value & 0xFFFFFFFFU);
+        const ResonateRenderBuffer handle = buffers[resource];
+        if (handle.value == 0U)
+        {
+            return 0U;
+        }
+        if (device != nullptr &&
+            device->header.struct_size >=
+                offsetof(ResonateRenderDevice, buffer_slot) + sizeof(device->buffer_slot) &&
+            device->buffer_slot != nullptr)
+        {
+            return device->buffer_slot(device->self, handle);
+        }
+        return static_cast<std::uint32_t>(handle.value & 0xFFFFFFFFU);
     }
 };
 

@@ -45,11 +45,11 @@ struct Push
     uint4 slots2; // light list
 };
 
-[[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[64];
-[[vk::binding(1, 0)]] StructuredBuffer<Light> light_table[64];
-[[vk::binding(2, 0)]] RWStructuredBuffer<ClusterAABB> cluster_boxes[64];
-[[vk::binding(3, 0)]] RWStructuredBuffer<uint> light_indices[64];
-[[vk::binding(4, 0)]] RWStructuredBuffer<ClusterLights> cluster_lights[64];
+[[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[7];
+[[vk::binding(1, 0)]] StructuredBuffer<Light> light_table[7];
+[[vk::binding(2, 0)]] RWStructuredBuffer<ClusterAABB> cluster_boxes[7];
+[[vk::binding(3, 0)]] RWStructuredBuffer<uint> light_indices[7];
+[[vk::binding(4, 0)]] RWStructuredBuffer<ClusterLights> cluster_lights[7];
 
 [[vk::push_constant]] Push push;
 
