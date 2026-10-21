@@ -7,6 +7,7 @@
 #include <resonate/application/application.h>
 #include <resonate/application/systems.h>
 #include <resonate/core/allocator.h>
+#include <resonate/csharp/managed_systems.hpp>
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/system.h>
@@ -569,4 +570,61 @@ TEST_CASE("a tree planted in UPDATE is transformed by the same frame's LATE", "[
         REQUIRE(child_world->matrix.m[1][3] == 3.0F);
         REQUIRE(child_world->matrix.m[2][3] == 3.0F);
     }
+}
+
+TEST_CASE("a headless run calls a managed system every fixed step", "[runtime][frame][csharp]")
+{
+    const std::string fixture = resonate::test::findBuildDirectory("tools/csharp-test");
+    INFO("scripts/csharp_test.lua publishes the fixture before this target builds");
+    REQUIRE_FALSE(fixture.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture + "/Resonate.Tests.Managed.runtimeconfig.json",
+                         fixture + "/Resonate.Tests.Managed.dll",
+                         "Resonate.Tests.Managed.Probe, Resonate.Tests.Managed", error));
+
+    int counters[2] = {0, -1};
+    systems.set_user(counters);
+
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    resonate::Application::Config config;
+    config.plugin_directory = plugin_directory;
+
+    /* The render module requires a canvas, so the run publishes the offscreen
+       one even though this case only counts ticks. */
+    config.publish = [](ResonateCapabilityRegistry* registry)
+    { return resonate::render::publishOffscreen(registry, 320U, 200U); };
+
+    /* The schedule reads the descriptor's run function and context every
+       frame, so it outlives the registration lambda. */
+    const resonate::EngineSystemDesc managed_desc{"test.managed", RESONATE_STAGE_UPDATE,
+                                                  &resonate::csharp::ManagedSystems::invoke,
+                                                  &systems};
+    config.systems = [&managed_desc](resonate::ModuleHost& host, World&)
+    {
+        return resonate::addEngineSystem(host, managed_desc) == RESONATE_OK ? RESONATE_OK
+                                                                            : RESONATE_E_INTERNAL;
+    };
+
+    constexpr int kFrames = 3;
+    int frames = 0;
+    config.tick = [&frames]
+    {
+        if (frames >= kFrames)
+        {
+            return false;
+        }
+        ++frames;
+        return true;
+    };
+    config.frame_elapsed = [] { return 0.017F; };
+
+    REQUIRE(resonate::Application::run(config) == EXIT_SUCCESS);
+
+    CHECK(counters[0] == kFrames);
+    CHECK(counters[1] == kFrames - 1);
+    CHECK(systems.frames() == static_cast<std::uint64_t>(kFrames));
 }

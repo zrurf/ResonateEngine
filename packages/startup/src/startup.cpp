@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 
 #ifdef RESONATE_PLATFORM_WINDOWS
@@ -11,6 +12,8 @@
 #endif
 
 #include <resonate/application/application.h>
+#include <resonate/csharp/managed_systems.hpp>
+#include <resonate/pal/io.h>
 #include <resonate/application/systems.h>
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/system.h>
@@ -47,6 +50,25 @@ std::string titleFor(const DisplayOptions& display, const char* default_title)
         return display.title;
     }
     return default_title != nullptr ? default_title : "Resonate";
+}
+
+/* A relative path is taken beside the executable first, which is where a
+   packaged content tree lives; otherwise it is left as given. */
+std::string resolveManagedPath(const std::string& path)
+{
+    const std::filesystem::path candidate(path);
+    if (candidate.is_absolute())
+    {
+        return path;
+    }
+    const std::string directory = resonate_pal_io_executable_directory();
+    const std::filesystem::path beside = std::filesystem::path(directory) / candidate;
+    std::error_code error;
+    if (std::filesystem::is_regular_file(beside, error))
+    {
+        return beside.string();
+    }
+    return path;
 }
 
 } // namespace
@@ -157,10 +179,49 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     }
     render_system.setFeatures(features);
 
+    /* An optional managed assembly: its systems register alongside the C++
+       ones and run through the dispatch table, so the frame never touches a
+       delegate. A configured but broken assembly ends the run with the
+       reason. */
+    csharp::ManagedSystems managed;
+    bool managed_configured = false;
+    {
+        const std::string configured =
+            config.settings.value("resonate.csharp", "assembly").value_or("");
+        if (!configured.empty())
+        {
+            managed_configured = true;
+            const std::string assembly = resolveManagedPath(configured);
+            std::string runtime_config =
+                config.settings.value("resonate.csharp", "runtime-config").value_or("");
+            if (runtime_config.empty())
+            {
+                runtime_config = std::filesystem::path(assembly)
+                                     .replace_extension(".runtimeconfig.json")
+                                     .string();
+            }
+            const std::string entry_type =
+                config.settings.value("resonate.csharp", "entry-type").value_or("");
+            if (entry_type.empty())
+            {
+                std::fprintf(stderr, "resonate: [resonate.csharp] entry-type is required\n");
+                return EXIT_FAILURE;
+            }
+            std::string error;
+            if (!managed.load(resolveManagedPath(runtime_config), assembly, entry_type, error))
+            {
+                std::fprintf(stderr, "resonate: managed assembly: %s\n", error.c_str());
+                return EXIT_FAILURE;
+            }
+        }
+    }
+
     const EngineSystemDesc render_desc{"renderer.frame", RESONATE_STAGE_RENDER,
                                        &renderer::RenderSystem::invoke, &render_system};
-    config.systems = [&propagation, &propagation_desc, &render_system,
-                      &render_desc](ModuleHost& host, ecs::World& world)
+    const EngineSystemDesc managed_desc{"csharp.tick", RESONATE_STAGE_UPDATE,
+                                        &csharp::ManagedSystems::invoke, &managed};
+    config.systems = [&propagation, &propagation_desc, &render_system, &render_desc, &managed_desc,
+                      managed_configured](ModuleHost& host, ecs::World& world)
     {
         if (!hierarchy::registerComponents(world) ||
             !renderer::RenderSystem::registerComponents(world))
@@ -178,6 +239,10 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
         {
             return RESONATE_E_INVALID;
         }
+        if (managed_configured && addEngineSystem(host, managed_desc) != RESONATE_OK)
+        {
+            return RESONATE_E_INVALID;
+        }
         /* The demo scene is what the window shows until scenes load from disk;
            it is plain ECS entities, created before the frame loop starts. */
         renderer::composeDemoScene(world);
@@ -189,8 +254,13 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     config.startup = [&render_system] { render_system.warmup(); };
 
     /* The renderer's device resources go while the device module is alive;
-       after the run the host detaches and the capability dies with it. */
-    config.shutdown = [&render_system] { render_system.release(); };
+       after the run the host detaches and the capability dies with it. The
+       managed context closes after the frame loop has stopped. */
+    config.shutdown = [&render_system, &managed]
+    {
+        render_system.release();
+        managed.unload();
+    };
 
     if (display.headless)
     {
