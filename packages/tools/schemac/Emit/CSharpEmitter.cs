@@ -21,7 +21,8 @@ internal static class CSharpEmitter
         }
         text.Append("; do not edit.\n\n");
         text.Append("using System;\n");
-        text.Append("using System.Runtime.InteropServices;\n\n");
+        text.Append("using System.Runtime.InteropServices;\n");
+        text.Append("using Resonate.CSharp;\n\n");
         text.Append("namespace ").Append(NamespaceOf(module.Id)).Append(";\n");
 
         List<TypeDecl> storage = [];
@@ -35,7 +36,9 @@ internal static class CSharpEmitter
 
         foreach (TypeDecl type in storage)
         {
-            text.Append("\n[StructLayout(LayoutKind.Sequential)]\n");
+            text.Append("\n/* A view borrows the chunk it describes; the analyzer keeps it "
+                        + "out of fields. */\n");
+            text.Append("[ResonateView]\n[StructLayout(LayoutKind.Sequential)]\n");
             text.Append("public struct ").Append(type.Name).Append("\n{\n");
             foreach (FieldDecl field in type.Fields)
             {

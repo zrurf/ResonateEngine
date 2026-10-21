@@ -23,4 +23,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)../../../build/gen/csharp/**/*.g.cs" />
   </ItemGroup>
 
+
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../../packages/tools/analyzers/Resonate.CSharp.Attributes/Resonate.CSharp.Attributes.csproj" />
+  </ItemGroup>
+
 </Project>

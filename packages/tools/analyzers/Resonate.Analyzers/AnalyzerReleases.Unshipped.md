@@ -6,3 +6,4 @@
 Rule ID | Category | Severity | Notes
 --------|----------|----------|-------
 RESONATE0001 | Resonate | Warning | Behaviour state belongs to the engine
+RESONATE0006 | Resonate | Warning | Component views are not cached
