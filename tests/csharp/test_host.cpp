@@ -28,16 +28,31 @@ struct Fixture
     std::string directory;
     std::string config;
     std::string assembly;
+    std::string bootstrap;
+    std::string patch;
 
     Fixture()
     {
         directory = resonate::test::findBuildDirectory("tools/csharp-test");
         config = directory + "/Resonate.Tests.Managed.runtimeconfig.json";
         assembly = directory + "/Resonate.Tests.Managed.dll";
+        const std::string bootstrap_dir =
+            resonate::test::findBuildDirectory("tools/csharp-bootstrap");
+        if (!bootstrap_dir.empty())
+        {
+            bootstrap = bootstrap_dir + "/Resonate.Tests.Bootstrap.dll";
+        }
+        const std::string patch_dir = resonate::test::findBuildDirectory("tools/csharp-patch");
+        if (!patch_dir.empty())
+        {
+            patch = patch_dir + "/Resonate.Tests.Patch.dll";
+        }
     }
 };
 
 constexpr const char* kProbeType = "Resonate.Tests.Managed.Probe, Resonate.Tests.Managed";
+constexpr const char* kBootstrapType =
+    "Resonate.Tests.Bootstrap.PatchHost, Resonate.Tests.Bootstrap";
 
 } // namespace
 
@@ -50,6 +65,32 @@ extern "C" std::int32_t registerEntry(void* context, std::uint32_t id, void* ent
     const auto function = reinterpret_cast<resonate::csharp::DispatchEntry>(entry);
     return table->set(id, function) ? 0 : 1;
 }
+
+/* The patch path registers through replace: the slot is already taken. */
+extern "C" std::int32_t replaceEntry(void* context, std::uint32_t id, void* entry)
+{
+    auto* table = static_cast<resonate::csharp::DispatchTable*>(context);
+    const auto function = reinterpret_cast<resonate::csharp::DispatchEntry>(entry);
+    return table->replace(id, function) ? 0 : 1;
+}
+
+/* The pre-patch entry, so the swap is observable. */
+void v1Tick(void* context)
+{
+    auto* frame = static_cast<resonate::csharp::bindings::SystemContext*>(context);
+    auto* counters = static_cast<int*>(frame->user);
+    counters[0] += 1;
+    counters[1] = 1;
+}
+
+/* Mirrors the bootstrap's InstallRequest. */
+struct InstallRequest
+{
+    const char* path;
+    const char* entry_type;
+    void* registration;
+    void* context;
+};
 
 TEST_CASE("csharp: hostfxr starts the runtime and calls a managed method", "[csharp]")
 {
@@ -336,4 +377,47 @@ TEST_CASE("csharp: a managed spawn plays through the command buffer", "[csharp]"
         },
         &found);
     CHECK(found);
+}
+
+TEST_CASE("csharp: a collectible ALC patch replaces a dispatch slot", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+    REQUIRE(!fixture.bootstrap.empty());
+    REQUIRE(!fixture.patch.empty());
+
+    resonate::csharp::RuntimeHost host;
+    std::string error;
+    REQUIRE(host.initialize(fixture.config, error));
+
+    resonate::csharp::DispatchTable table(64U);
+    REQUIRE(table.set(resonate::csharp::bindings::kSystemTick, &v1Tick));
+
+    resonate::csharp::bindings::SystemContext context{};
+    int before[6] = {0, 0};
+    context.user = before;
+    REQUIRE(table.invoke(resonate::csharp::bindings::kSystemTick, &context));
+    CHECK(before[1] == 1);
+
+    void* install = host.load_function(fixture.bootstrap, kBootstrapType, "Install", error);
+    REQUIRE(install != nullptr);
+
+    /* The patch assembly loads into its own collectible context and registers
+       through replace; the engine keeps only the function pointer. */
+    ResonateCSharpRegistration registration{&table, &replaceEntry};
+    InstallRequest request{fixture.patch.c_str(), "Resonate.Tests.Patch.PatchBehaviour",
+                           &registration, nullptr};
+    CHECK(reinterpret_cast<int (*)(void*)>(install)(&request) == 0);
+    CHECK(request.context != nullptr);
+
+    int after[6] = {0, 0};
+    context.user = after;
+    REQUIRE(table.invoke(resonate::csharp::bindings::kSystemTick, &context));
+    CHECK(after[1] == 2);
+
+    /* The slot is never called again after this: it pointed into the context
+       the unload frees. */
+    void* unload = host.load_function(fixture.bootstrap, kBootstrapType, "Unload", error);
+    REQUIRE(unload != nullptr);
+    CHECK(reinterpret_cast<int (*)(void*)>(unload)(request.context) == 0);
 }

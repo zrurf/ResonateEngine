@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <AssemblyName>Resonate.Tests.Patch</AssemblyName>
+    <RootNamespace>Resonate.Tests.Patch</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Tick writes through the native context pointer. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!-- The generated ids and context shape, produced by csbind before publish. -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)../../../build/gen/csharp/**/*.g.cs" />
+  </ItemGroup>
+
+</Project>

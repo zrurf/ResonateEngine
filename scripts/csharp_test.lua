@@ -1,20 +1,18 @@
--- Publishes the managed fixture the C# host test loads. Called from the test
--- target's before_build (see the resonate.csharp_test rule) and runnable by
--- hand with `xmake lua scripts/csharp_test.lua`.
+-- Publishes the managed assets the C# host tests load: the fixture, the patch
+-- host bootstrap, and a patch assembly. Called from the test target's
+-- before_build (see the resonate.csharp_test rule) and runnable by hand with
+-- `xmake lua scripts/csharp_test.lua`.
 --
 -- The fixture is a component, not a tool: `EnableDynamicLoading` makes the
--- publish drop the runtimeconfig.json hostfxr reads.
+-- publish drop the runtimeconfig.json hostfxr reads. The bootstrap and the
+-- patch are plain libraries with no dependencies outside the framework.
 
 local PROJECT_DIR = os.projectdir()
-local FIXTURE_DIR = path.join(PROJECT_DIR, "tests", "csharp", "managed")
-local PROJECT = path.join(FIXTURE_DIR, "Resonate.Tests.Managed.csproj")
-local OUT_DIR = path.join(PROJECT_DIR, "build", "tools", "csharp-test")
-local ASSEMBLY = path.join(OUT_DIR, "Resonate.Tests.Managed.dll")
-local GENERATED = path.join(PROJECT_DIR, "build", "gen", "csharp",
-                            "Resonate.CSharp.Bindings.g.cs")
+local SCRIPT = path.join(PROJECT_DIR, "scripts", "csharp_test.lua")
+local GENERATED_DIR = path.join(PROJECT_DIR, "build", "gen", "csharp")
 
--- The fixture compiles the generated ids and the schema's component views, so
--- both exist before the publish. The schema script runs here too, whatever
+-- The assets compile the generated ids and the schema's component views, so
+-- both exist before the publishes. The schema script runs here too, whatever
 -- order xmake runs the rule hooks in.
 local schema = os.execv(os.programfile(),
                         {"lua", path.join(PROJECT_DIR, "scripts", "schema.lua")}, {try = true})
@@ -25,27 +23,6 @@ local generated = os.execv(os.programfile(), {"lua", path.join(PROJECT_DIR, "scr
                            {try = true})
 if generated ~= 0 then
     raise("csharp test: generating the binding ids failed")
-end
-
-local function publish_is_stale()
-    if not os.isfile(ASSEMBLY) then
-        return true
-    end
-    local built_at = os.mtime(ASSEMBLY)
-    -- The command line below is part of the output: a change to it (say, adding
-    -- ReadyToRun) must republish even when the fixture sources did not move.
-    if os.mtime(path.join(PROJECT_DIR, "scripts", "csharp_test.lua")) >= built_at then
-        return true
-    end
-    if os.isfile(GENERATED) and os.mtime(GENERATED) >= built_at then
-        return true
-    end
-    for _, file in ipairs(os.files(path.join(FIXTURE_DIR, "**"))) do
-        if os.mtime(file) >= built_at then
-            return true
-        end
-    end
-    return false
 end
 
 -- The design's base is ReadyToRun: native code shipped in the assembly, the
@@ -61,26 +38,85 @@ local function runtime_identifier()
     return "linux-" .. arch
 end
 
-if publish_is_stale() then
-    local publish = {"publish", PROJECT, "-c", "Debug", "-o", OUT_DIR,
-                     "-r", runtime_identifier(), "--self-contained", "false",
-                     "-p:PublishReadyToRun=true", "--nologo", "-v", "quiet"}
-    local code = os.execv("dotnet", publish, {try = true})
+local function generated_is_newer(built_at)
+    for _, file in ipairs(os.files(path.join(GENERATED_DIR, "**", "*.g.cs"))) do
+        if os.mtime(file) >= built_at then
+            return true
+        end
+    end
+    return false
+end
+
+local function publish_is_stale(project_dir, output, uses_generated)
+    if not os.isfile(output) then
+        return true
+    end
+    local built_at = os.mtime(output)
+    -- The command line is part of the output: a change to it (say, adding
+    -- ReadyToRun) must republish even when the sources did not move.
+    if os.mtime(SCRIPT) >= built_at then
+        return true
+    end
+    if uses_generated and generated_is_newer(built_at) then
+        return true
+    end
+    for _, file in ipairs(os.files(path.join(project_dir, "**"))) do
+        if os.mtime(file) >= built_at then
+            return true
+        end
+    end
+    return false
+end
+
+local function publish(name, project, project_dir, out_dir, output, ready_to_run, uses_generated)
+    if not publish_is_stale(project_dir, output, uses_generated) then
+        return
+    end
+    local args = {"publish", project, "-c", "Debug", "-o", out_dir, "--nologo", "-v", "quiet"}
+    if ready_to_run then
+        for _, extra in ipairs({"-r", runtime_identifier(), "--self-contained", "false",
+                                "-p:PublishReadyToRun=true"}) do
+            table.insert(args, extra)
+        end
+    end
+    local code = os.execv("dotnet", args, {try = true})
     if code ~= 0 then
         -- Two builds can publish the same output at once; a retry finds the
         -- winner's assembly in place.
         os.sleep(1000)
-        code = os.execv("dotnet", publish, {try = true})
+        code = os.execv("dotnet", args, {try = true})
     end
     -- A failed publish must fail the build even when an older assembly is
     -- still on disk: the silent fallback once hid a compile error for a whole
     -- test run. A concurrent publish that won the race has a fresh assembly,
     -- so the staleness check is what decides.
-    if publish_is_stale() then
-        raise("csharp test: publishing the managed fixture failed (dotnet publish exited " ..
+    if publish_is_stale(project_dir, output, uses_generated) then
+        raise("csharp test: publishing " .. name .. " failed (dotnet publish exited " ..
                   tostring(code) .. "); the .NET SDK is required for the C# host tests")
     end
 end
+
+publish("the fixture", path.join(PROJECT_DIR, "tests", "csharp", "managed",
+                                 "Resonate.Tests.Managed.csproj"),
+        path.join(PROJECT_DIR, "tests", "csharp", "managed"),
+        path.join(PROJECT_DIR, "build", "tools", "csharp-test"),
+        path.join(PROJECT_DIR, "build", "tools", "csharp-test", "Resonate.Tests.Managed.dll"),
+        true, true)
+
+publish("the patch host", path.join(PROJECT_DIR, "tests", "csharp", "bootstrap",
+                                    "Resonate.Tests.Bootstrap.csproj"),
+        path.join(PROJECT_DIR, "tests", "csharp", "bootstrap"),
+        path.join(PROJECT_DIR, "build", "tools", "csharp-bootstrap"),
+        path.join(PROJECT_DIR, "build", "tools", "csharp-bootstrap",
+                  "Resonate.Tests.Bootstrap.dll"),
+        false, false)
+
+publish("the patch", path.join(PROJECT_DIR, "tests", "csharp", "patch",
+                               "Resonate.Tests.Patch.csproj"),
+        path.join(PROJECT_DIR, "tests", "csharp", "patch"),
+        path.join(PROJECT_DIR, "build", "tools", "csharp-patch"),
+        path.join(PROJECT_DIR, "build", "tools", "csharp-patch", "Resonate.Tests.Patch.dll"),
+        false, true)
 
 -- The laws are build-time contracts; their checks belong to the suite.
 local analyzers = path.join(PROJECT_DIR, "scripts", "analyzers.lua")
