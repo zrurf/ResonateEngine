@@ -3,9 +3,11 @@
 #include <cstdint>
 #include <string>
 
+#include <resonate/core/allocator.h>
 #include <resonate/csharp/bindings.h>
 #include <resonate/csharp/dispatch.h>
 #include <resonate/csharp/host.hpp>
+#include <resonate/csharp/managed_systems.hpp>
 #include <resonate/csharp/registration.h>
 
 #include "resonate.render/components.gen.h"
@@ -96,12 +98,16 @@ TEST_CASE("csharp: managed code registers an entry into the dispatch table", "[c
     ResonateCSharpRegistration registration{&table, &registerEntry};
     REQUIRE(register_probe(&registration) == 0);
 
-    int counter = 0;
+    int counters[2] = {0, -1};
+    resonate::csharp::bindings::SystemContext context{};
+    context.user = counters;
+    context.frame_index = 5U;
     REQUIRE(table.get(resonate::csharp::bindings::kSystemTick) != nullptr);
-    CHECK(table.invoke(resonate::csharp::bindings::kSystemTick, &counter));
-    CHECK(counter == 1);
-    CHECK(table.invoke(resonate::csharp::bindings::kSystemTick, &counter));
-    CHECK(counter == 2);
+    CHECK(table.invoke(resonate::csharp::bindings::kSystemTick, &context));
+    CHECK(counters[0] == 1);
+    CHECK(counters[1] == 5);
+    CHECK(table.invoke(resonate::csharp::bindings::kSystemTick, &context));
+    CHECK(counters[0] == 2);
 }
 
 TEST_CASE("csharp: a generated view struct reads as a span on the managed side", "[csharp]")
@@ -161,4 +167,29 @@ TEST_CASE("csharp: schema-generated component views read native chunks", "[cshar
 
     const auto sum = reinterpret_cast<float (*)(void*, int)>(sum_function);
     CHECK(sum(cameras, 2) == 350.0F);
+}
+
+TEST_CASE("csharp: the frame loop calls a managed system through the table", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
+
+    int counters[2] = {0, -1};
+    systems.set_user(counters);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    resonate::ecs::CommandBuffer commands(world);
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.25F);
+    CHECK(counters[0] == 1);
+    CHECK(counters[1] == 0);
+    CHECK(systems.frames() == 1U);
+
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.25F);
+    CHECK(counters[0] == 2);
+    CHECK(counters[1] == 1);
+    CHECK(systems.frames() == 2U);
 }

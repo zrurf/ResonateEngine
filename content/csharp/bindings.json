@@ -8,6 +8,14 @@
   ],
   "structs": [
     {
+      "name": "SystemContext",
+      "fields": [
+        { "name": "delta_seconds", "type": "f32" },
+        { "name": "frame_index", "type": "u64" },
+        { "name": "user", "type": "void_pointer" }
+      ]
+    },
+    {
       "name": "FrameView",
       "fields": [
         { "name": "handle", "type": "entity_handle" },

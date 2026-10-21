@@ -29,15 +29,18 @@ public static unsafe class Probe
     {
         Registration* registration = (Registration*)api;
         return registration->RegisterEntry(registration->Context, Systems.Tick,
-                                           (IntPtr)(delegate* unmanaged<IntPtr, void>)&Tick);
+                                           (IntPtr)(delegate* unmanaged<IntPtr, void>)&TickFrame);
     }
 
-    /* The registered entry: it writes through the native context pointer, the
-       zero-marshal shape the frame path uses. */
+    /* The registered entry: the generated frame context arrives as a pointer,
+       and the native state hangs off its user field. */
     [UnmanagedCallersOnly]
-    public static void Tick(IntPtr context)
+    public static void TickFrame(IntPtr context)
     {
-        *(int*)context += 1;
+        SystemContext* frame = (SystemContext*)context;
+        int* counters = (int*)frame->User;
+        counters[0] += 1;
+        counters[1] = (int)frame->FrameIndex;
     }
 
     /* Reads a generated struct field by field: the engine lays the frame view
