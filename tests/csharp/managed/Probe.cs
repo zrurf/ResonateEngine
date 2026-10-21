@@ -54,7 +54,10 @@ public static unsafe class Probe
         {
             sum += transforms[index].Position.X;
         }
-        counters[2] = (int)(sum * 10.0F);
+        counters[2] += (int)(sum * 10.0F);
+        counters[3] += (int)frame->ChunkCount;
+        EntityHandle* entities = (EntityHandle*)frame->EntityData;
+        counters[4] = (int)entities[0].Index;
     }
 
     /* Reads a generated struct field by field: the engine lays the frame view

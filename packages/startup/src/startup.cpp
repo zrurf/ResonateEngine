@@ -213,6 +213,12 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
                 std::fprintf(stderr, "resonate: managed assembly: %s\n", error.c_str());
                 return EXIT_FAILURE;
             }
+            const std::string component =
+                config.settings.value("resonate.csharp", "component").value_or("");
+            if (!component.empty())
+            {
+                managed.set_component(component.c_str());
+            }
         }
     }
 

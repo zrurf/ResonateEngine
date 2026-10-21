@@ -584,7 +584,7 @@ TEST_CASE("a headless run calls a managed system every fixed step", "[runtime][f
                          fixture + "/Resonate.Tests.Managed.dll",
                          "Resonate.Tests.Managed.Probe, Resonate.Tests.Managed", error));
 
-    int counters[2] = {0, -1};
+    int counters[6] = {0, -1, 0, 0, -1, 0};
     systems.set_user(counters);
 
     const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");

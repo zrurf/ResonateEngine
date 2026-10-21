@@ -62,6 +62,8 @@ private:
     void* registration_ = nullptr;
     std::string component_name_;
     ecs::ComponentIndex component_ = ecs::kInvalidComponent;
+    ecs::Query query_;
+    bool query_ready_ = false;
 };
 
 } // namespace resonate::csharp

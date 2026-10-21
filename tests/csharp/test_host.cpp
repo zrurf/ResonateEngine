@@ -99,7 +99,7 @@ TEST_CASE("csharp: managed code registers an entry into the dispatch table", "[c
     ResonateCSharpRegistration registration{&table, &registerEntry};
     REQUIRE(register_probe(&registration) == 0);
 
-    int counters[2] = {0, -1};
+    int counters[6] = {0, -1, 0, 0, -1, 0};
     resonate::csharp::bindings::SystemContext context{};
     context.user = counters;
     context.frame_index = 5U;
@@ -179,7 +179,7 @@ TEST_CASE("csharp: the frame loop calls a managed system through the table", "[c
     std::string error;
     REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
 
-    int counters[2] = {0, -1};
+    int counters[6] = {0, -1, 0, 0, -1, 0};
     systems.set_user(counters);
 
     resonate::ecs::World world(resonate::systemAllocator());
@@ -205,7 +205,7 @@ TEST_CASE("csharp: a managed system reads a named component's chunk", "[csharp]"
     REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
     systems.set_component("resonate.hierarchy.LocalTransform");
 
-    int counters[3] = {0, -1, 0};
+    int counters[6] = {0, -1, 0, 0, -1, 0};
     systems.set_user(counters);
 
     resonate::ecs::World world(resonate::systemAllocator());
@@ -224,4 +224,41 @@ TEST_CASE("csharp: a managed system reads a named component's chunk", "[csharp]"
     CHECK(counters[0] == 1);
     CHECK(counters[1] == 0);
     CHECK(counters[2] == 30);
+    CHECK(counters[3] == 2);
+    CHECK(counters[4] == static_cast<int>(first.index));
+    CHECK(systems.frames() == 1U);
+}
+
+TEST_CASE("csharp: a large chunk set reaches managed code in one frame", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
+    systems.set_component("resonate.hierarchy.LocalTransform");
+
+    int counters[6] = {0, -1, 0, 0, -1, 0};
+    systems.set_user(counters);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    constexpr int kEntities = 100000;
+    for (int index = 0; index < kEntities; ++index)
+    {
+        const resonate::ecs::Entity entity = world.create();
+        world.add(entity, resonate::hierarchy::LocalTransform{
+                              resonate::Vec3{1.0F, 0.0F, 0.0F}, resonate::Quat{},
+                              resonate::Vec3{1.0F, 1.0F, 1.0F}});
+    }
+
+    resonate::ecs::CommandBuffer commands(world);
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+
+    CHECK(counters[1] == 0);
+    CHECK(counters[3] == kEntities);
+    CHECK(counters[2] == kEntities * 10);
+    CHECK(counters[0] > 1);
+    CHECK(systems.frames() == 1U);
 }

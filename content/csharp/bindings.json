@@ -14,7 +14,8 @@
         { "name": "frame_index", "type": "u64" },
         { "name": "user", "type": "void_pointer" },
         { "name": "chunk_data", "type": "void_pointer" },
-        { "name": "chunk_count", "type": "u64" }
+        { "name": "chunk_count", "type": "u64" },
+        { "name": "entity_data", "type": "void_pointer" }
       ]
     },
     {
