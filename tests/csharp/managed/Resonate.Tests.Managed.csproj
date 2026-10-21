@@ -17,10 +17,10 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
 
-  <!-- csbind generates the stable ids into build/gen/csharp before the publish
-       (scripts/csharp_test.lua runs it first). -->
+  <!-- The build generates the binding ids (csbind) and the component views
+       (schemac) into build/gen/csharp before the publish; both are sources. -->
   <ItemGroup>
-    <Compile Include="$(MSBuildThisFileDirectory)../../../build/gen/csharp/Resonate.CSharp.Bindings.g.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../../build/gen/csharp/**/*.g.cs" />
   </ItemGroup>
 
 </Project>

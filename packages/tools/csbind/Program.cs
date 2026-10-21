@@ -322,12 +322,17 @@ internal static class Program
         foreach (string handle in handles)
         {
             text.AppendLine();
-            text.AppendLine("/* Index in the low 32 bits, generation in the high 32. */");
+            /* Two 32-bit halves, so the wrapper keeps the same 4-byte
+               alignment as resonate::ecs::Entity and nests in a chunk without
+               shifting later fields. */
+            text.AppendLine("/* Index and generation, matching resonate::ecs::Entity. */");
             text.AppendLine($"struct {handle}Handle");
             text.AppendLine("{");
-            text.AppendLine("    std::uint64_t value;");
+            text.AppendLine("    std::uint32_t index;");
+            text.AppendLine("    std::uint32_t generation;");
             text.AppendLine("};");
             text.AppendLine($"static_assert(sizeof({handle}Handle) == 8U);");
+            text.AppendLine($"static_assert(alignof({handle}Handle) == 4U);");
         }
 
         foreach (StructLayout layout in layouts)
@@ -379,15 +384,17 @@ internal static class Program
         foreach (string handle in handles)
         {
             text.AppendLine();
-            text.AppendLine("/* Index in the low 32 bits, generation in the high 32. */");
+            text.AppendLine("/* Index and generation, matching resonate::ecs::Entity. */");
             text.AppendLine("[StructLayout(LayoutKind.Sequential)]");
             text.AppendLine($"public readonly struct {handle}Handle");
             text.AppendLine("{");
-            text.AppendLine("    public readonly ulong Value;");
+            text.AppendLine("    public readonly uint Index;");
+            text.AppendLine("    public readonly uint Generation;");
             text.AppendLine();
-            text.AppendLine($"    public {handle}Handle(ulong value)");
+            text.AppendLine($"    public {handle}Handle(uint index, uint generation)");
             text.AppendLine("    {");
-            text.AppendLine("        Value = value;");
+            text.AppendLine("        Index = index;");
+            text.AppendLine("        Generation = generation;");
             text.AppendLine("    }");
             text.AppendLine("}");
         }

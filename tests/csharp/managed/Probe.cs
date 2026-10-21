@@ -61,7 +61,7 @@ public static unsafe class Probe
     public static ulong ReadHandle(IntPtr view)
     {
         FrameView* frame = (FrameView*)view;
-        return frame->Handle.Value;
+        return ((ulong)frame->Handle.Generation << 32) | frame->Handle.Index;
     }
 
     /* Runtime check that the two compilers agree with the generated layout; a
@@ -84,5 +84,30 @@ public static unsafe class Probe
             return 1;
         }
         return 0;
+    }
+
+    /* The schema-generated component views: the managed side reads the same
+       chunk layout the C++ side writes. */
+    [UnmanagedCallersOnly]
+    public static int VerifySchemaLayouts()
+    {
+        return Resonate.Render.LayoutChecks.Verify() &&
+               Resonate.Gameplay.LayoutChecks.Verify() &&
+               Resonate.Hierarchy.LayoutChecks.Verify()
+            ? 0
+            : 1;
+    }
+
+    [UnmanagedCallersOnly]
+    public static float SumFarZ(IntPtr cameras, int count)
+    {
+        ReadOnlySpan<Resonate.Render.Camera> view =
+            new((Resonate.Render.Camera*)cameras, count);
+        float sum = 0.0F;
+        for (int index = 0; index < view.Length; ++index)
+        {
+            sum += view[index].FarZ;
+        }
+        return sum;
     }
 }

@@ -3,7 +3,8 @@
     { "name": "tick", "id": 7 }
   ],
   "handles": [
-    { "name": "entity" }
+    { "name": "entity" },
+    { "name": "blob" }
   ],
   "structs": [
     {

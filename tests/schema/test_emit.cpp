@@ -90,7 +90,7 @@ TEST_CASE("the generated header carries the types, traits, versions and frozen l
     const ToolRun run = testCase.compile();
     INFO(run.output);
     REQUIRE(run.exitCode == 0);
-    REQUIRE(run.output.find("1 module(s), 5 type(s) from 1 schema file(s), 2 written") !=
+    REQUIRE(run.output.find("1 module(s), 5 type(s) from 1 schema file(s), 4 written") !=
             std::string::npos);
 
     const std::string header = testCase.header();
@@ -153,6 +153,32 @@ TEST_CASE("the generated header carries the types, traits, versions and frozen l
     requireContains(metadata, "\"type\": \"vec3\"");
     requireContains(metadata, "\"type\": \"mat4\"");
     requireContains(metadata, "\"bit\": 3");
+
+    /* The managed view mirrors the same storage types; enums arrive as their
+       width, handles as csbind's typed wrappers, math from the shared file. */
+    const std::string managed =
+        resonate::test::readTextFile(testCase.gen + "/csharp/Resonate.Test.g.cs");
+    REQUIRE_FALSE(managed.empty());
+    requireContains(managed, "namespace Resonate.Test;");
+    requireContains(managed, "public struct Inner");
+    requireContains(managed, "public struct Health");
+    requireContains(managed, "    public int Current;");
+    requireContains(managed, "    public byte Flags;");
+    requireContains(managed, "    public uint Mask;");
+    requireContains(managed, "    public Inner Inner;");
+    requireContains(managed, "    public Resonate.CSharp.Bindings.EntityHandle Owner;");
+    requireContains(managed, "    public Resonate.CSharp.Bindings.BlobHandle Slots;");
+    requireContains(managed, "    public Resonate.CSharp.Math.Vec3 Position;");
+    requireContains(managed, "public static class HealthLayout");
+    requireContains(managed, "public const int FlagsOffset = 4;");
+    requireContains(managed, "public static class LayoutChecks");
+
+    const std::string math =
+        resonate::test::readTextFile(testCase.gen + "/csharp/Resonate.CSharp.Math.g.cs");
+    REQUIRE_FALSE(math.empty());
+    requireContains(math, "namespace Resonate.CSharp.Math;");
+    requireContains(math, "public struct Mat4");
+    requireContains(math, "    public float M33;");
 }
 
 TEST_CASE("a module of document node types generates metadata and a header without types",
@@ -191,7 +217,7 @@ TEST_CASE("a run that changes nothing writes nothing", "[schema][emit]")
     const ToolRun first = testCase.compile();
     INFO(first.output);
     REQUIRE(first.exitCode == 0);
-    REQUIRE(first.output.find("2 written") != std::string::npos);
+    REQUIRE(first.output.find("4 written") != std::string::npos);
 
     const std::string header = testCase.header();
     const std::string metadata = testCase.metadata();

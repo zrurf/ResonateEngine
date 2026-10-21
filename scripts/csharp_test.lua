@@ -13,7 +13,14 @@ local ASSEMBLY = path.join(OUT_DIR, "Resonate.Tests.Managed.dll")
 local GENERATED = path.join(PROJECT_DIR, "build", "gen", "csharp",
                             "Resonate.CSharp.Bindings.g.cs")
 
--- The fixture compiles the generated ids, so they exist before the publish.
+-- The fixture compiles the generated ids and the schema's component views, so
+-- both exist before the publish. The schema script runs here too, whatever
+-- order xmake runs the rule hooks in.
+local schema = os.execv(os.programfile(),
+                        {"lua", path.join(PROJECT_DIR, "scripts", "schema.lua")}, {try = true})
+if schema ~= 0 then
+    raise("csharp test: schema generation failed")
+end
 local generated = os.execv(os.programfile(), {"lua", path.join(PROJECT_DIR, "scripts", "csbind.lua")},
                            {try = true})
 if generated ~= 0 then

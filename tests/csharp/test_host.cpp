@@ -8,6 +8,8 @@
 #include <resonate/csharp/host.hpp>
 #include <resonate/csharp/registration.h>
 
+#include "resonate.render/components.gen.h"
+
 #include "paths.h"
 
 namespace
@@ -123,7 +125,8 @@ TEST_CASE("csharp: a generated view struct reads as a span on the managed side",
 
     const float transforms[3] = {1.5F, 2.5F, 3.0F};
     resonate::csharp::bindings::FrameView view{};
-    view.handle.value = 0x0000000200000001ULL;
+    view.handle.index = 1U;
+    view.handle.generation = 2U;
     view.delta_seconds = 1.0F / 60.0F;
     view.frame_index = 3U;
     view.transform_data = transforms;
@@ -134,4 +137,28 @@ TEST_CASE("csharp: a generated view struct reads as a span on the managed side",
 
     const auto handle = reinterpret_cast<std::uint64_t (*)(void*)>(read_handle);
     CHECK(handle(&view) == 0x0000000200000001ULL);
+}
+
+TEST_CASE("csharp: schema-generated component views read native chunks", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::RuntimeHost host;
+    std::string error;
+    REQUIRE(host.initialize(fixture.config, error));
+
+    void* verify = host.load_function(fixture.assembly, kProbeType, "VerifySchemaLayouts", error);
+    REQUIRE(verify != nullptr);
+    CHECK(reinterpret_cast<int (*)()>(verify)() == 0);
+
+    void* sum_function = host.load_function(fixture.assembly, kProbeType, "SumFarZ", error);
+    REQUIRE(sum_function != nullptr);
+
+    resonate::render::Camera cameras[2] = {};
+    cameras[0].far_z = 100.0F;
+    cameras[1].far_z = 250.0F;
+
+    const auto sum = reinterpret_cast<float (*)(void*, int)>(sum_function);
+    CHECK(sum(cameras, 2) == 350.0F);
 }
