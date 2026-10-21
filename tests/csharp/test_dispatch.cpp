@@ -118,3 +118,16 @@ TEST_CASE("dispatch: swapping during calls lands every call on a live entry", "[
     CHECK(every_call_ran);
     CHECK(sink.calls.load(std::memory_order_relaxed) == kCalls);
 }
+
+TEST_CASE("dispatch: clear empties a slot", "[csharp]")
+{
+    resonate::csharp::DispatchTable table(2U);
+    CHECK(table.set(0U, &firstEntry));
+    CHECK(table.clear(0U));
+    CHECK(table.get(0U) == nullptr);
+
+    Counter counter;
+    CHECK_FALSE(table.invoke(0U, &counter));
+    CHECK(counter.calls == 0);
+    CHECK_FALSE(table.clear(2U));
+}

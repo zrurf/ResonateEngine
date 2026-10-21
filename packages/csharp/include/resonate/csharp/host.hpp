@@ -33,6 +33,11 @@ public:
        no unload; a later initialize joins the runtime already running. */
     void shutdown();
 
+    bool initialized() const
+    {
+        return loader_ != nullptr;
+    }
+
 private:
     void* library_ = nullptr;
     void* context_ = nullptr;

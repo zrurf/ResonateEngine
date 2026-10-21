@@ -43,7 +43,10 @@ const HostChar* unmanagedCallersOnly()
 std::basic_string<HostChar> nativePath(const std::string& utf8)
 {
 #ifdef RESONATE_PLATFORM_WINDOWS
-    return std::filesystem::u8path(utf8).wstring();
+    /* u8path carries a deprecation warning in C++20; the char8_t path
+       constructor is the same conversion. */
+    const std::u8string text(reinterpret_cast<const char8_t*>(utf8.data()), utf8.size());
+    return std::filesystem::path(text).wstring();
 #else
     return utf8;
 #endif

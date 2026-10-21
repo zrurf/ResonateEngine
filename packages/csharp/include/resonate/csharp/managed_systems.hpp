@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <resonate/csharp/bindings.h>
 #include <resonate/csharp/dispatch.h>
@@ -40,6 +42,27 @@ public:
     /* Native state the managed systems may reference through the context. */
     void set_user(void* user);
 
+    /* Installs a patch from `patch_assembly` through a managed bootstrap: the
+       patch's Register replaces the slots it names, and every displaced entry
+       is remembered so unload restores it. One patch at a time. */
+    bool load_patch(const std::string& bootstrap_assembly, const std::string& bootstrap_type,
+                    const std::string& patch_assembly, const std::string& entry_type,
+                    std::string& error);
+
+    /* Restores the replaced slots (the patch's code is about to go), then
+       unloads its context. */
+    bool unload_patch(std::string& error);
+
+    bool patched() const
+    {
+        return !patch_frames_.empty();
+    }
+
+    /* The registration callback a patch reaches through its registration; it
+       remembers the entry being displaced. Public because the C callback in
+       the implementation has to call it. */
+    bool replace_tracked(std::uint32_t id, DispatchEntry entry);
+
     /* The component whose first non-empty chunk rides the context each frame
        (its name as registered, e.g. "resonate.hierarchy.LocalTransform").
        Empty leaves the chunk fields null. */
@@ -66,6 +89,15 @@ private:
     ecs::Query query_;
     bool query_ready_ = false;
     ResonateCSharpHostApi api_{};
+
+    struct PatchFrame
+    {
+        void* context = nullptr;
+        std::vector<std::pair<std::uint32_t, DispatchEntry>> previous;
+    };
+    void restoreFrame(PatchFrame& frame);
+    std::vector<PatchFrame> patch_frames_;
+    void* bootstrap_unload_ = nullptr;
 };
 
 } // namespace resonate::csharp

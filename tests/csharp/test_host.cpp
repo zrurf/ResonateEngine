@@ -421,3 +421,45 @@ TEST_CASE("csharp: a collectible ALC patch replaces a dispatch slot", "[csharp]"
     REQUIRE(unload != nullptr);
     CHECK(reinterpret_cast<int (*)(void*)>(unload)(request.context) == 0);
 }
+
+TEST_CASE("csharp: ManagedSystems installs and restores a patch", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+    REQUIRE(!fixture.bootstrap.empty());
+    REQUIRE(!fixture.patch.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    resonate::ecs::CommandBuffer commands(world);
+
+    int base_counters[6] = {0, -1, 0, 0, -1, 0};
+    systems.set_user(base_counters);
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    CHECK(base_counters[0] == 1);
+    CHECK(base_counters[2] == -1);
+
+    REQUIRE(systems.load_patch(fixture.bootstrap, kBootstrapType, fixture.patch,
+                               "Resonate.Tests.Patch.PatchBehaviour", error));
+    CHECK(systems.patched());
+
+    int patched[6] = {0, -1, 0, 0, -1, 0};
+    systems.set_user(patched);
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    CHECK(patched[0] == 1);
+    CHECK(patched[1] == 2);
+    CHECK(patched[2] == 0);
+
+    REQUIRE(systems.unload_patch(error));
+    CHECK_FALSE(systems.patched());
+
+    /* The displaced entry is back: the base tick runs again. */
+    int restored[6] = {0, -1, 0, 0, -1, 0};
+    systems.set_user(restored);
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    CHECK(restored[0] == 1);
+    CHECK(restored[2] == -1);
+}

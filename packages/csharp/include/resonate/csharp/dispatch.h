@@ -33,6 +33,10 @@ public:
        observes either the old or the new entry. */
     bool replace(std::uint32_t id, DispatchEntry entry);
 
+    /* Empties a slot. An unloaded patch leaves a dangling function pointer, so
+       the host clears or restores every slot the patch named first. */
+    bool clear(std::uint32_t id);
+
     DispatchEntry get(std::uint32_t id) const;
 
     /* Runs the slot when one is registered and reports whether it ran; an

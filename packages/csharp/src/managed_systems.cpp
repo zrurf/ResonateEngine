@@ -73,6 +73,24 @@ extern "C" std::int32_t markChunkChanged(void* host_api)
     return 0;
 }
 
+/* The request the managed patch host reads; it mirrors the bootstrap's
+   InstallRequest field for field. */
+struct PatchRequest
+{
+    const char* path;
+    const char* entry_type;
+    void* registration;
+    void* context;
+};
+
+/* The registration callback a patch reaches: the displaced entry is
+   remembered, so an unload can put it back. */
+extern "C" std::int32_t patchEntry(void* context, std::uint32_t id, void* entry)
+{
+    auto* systems = static_cast<ManagedSystems*>(context);
+    return systems->replace_tracked(id, reinterpret_cast<DispatchEntry>(entry)) ? 0 : 1;
+}
+
 } // namespace
 
 ManagedSystems::~ManagedSystems()
@@ -112,6 +130,15 @@ bool ManagedSystems::load(const std::string& runtime_config, const std::string& 
 
 void ManagedSystems::unload()
 {
+    /* The slots point into managed code; restore them before the runtime
+       closes. The contexts themselves die with the process. */
+    while (!patch_frames_.empty())
+    {
+        PatchFrame frame = std::move(patch_frames_.back());
+        patch_frames_.pop_back();
+        restoreFrame(frame);
+    }
+    bootstrap_unload_ = nullptr;
     registration_ = nullptr;
     table_.resize(64U);
     frames_ = 0U;
@@ -120,6 +147,117 @@ void ManagedSystems::unload()
     query_ready_ = false;
     query_ = ecs::Query{};
     host_.shutdown();
+}
+
+bool ManagedSystems::load_patch(const std::string& bootstrap_assembly,
+                                const std::string& bootstrap_type,
+                                const std::string& patch_assembly, const std::string& entry_type,
+                                std::string& error)
+{
+    error.clear();
+    if (!host_.initialized())
+    {
+        error = "the runtime is not initialized";
+        return false;
+    }
+    if (!patch_frames_.empty())
+    {
+        error = "a patch is already installed";
+        return false;
+    }
+
+    void* install = host_.load_function(bootstrap_assembly, bootstrap_type, "Install", error);
+    if (install == nullptr)
+    {
+        return false;
+    }
+    void* unload = host_.load_function(bootstrap_assembly, bootstrap_type, "Unload", error);
+    if (unload == nullptr)
+    {
+        return false;
+    }
+
+    /* The frame exists before Install: the patch's Register runs inside it and
+       records what it displaces. */
+    patch_frames_.push_back(PatchFrame{});
+    ResonateCSharpRegistration registration{this, &patchEntry};
+    PatchRequest request{patch_assembly.c_str(), entry_type.c_str(), &registration, nullptr};
+    const int status = reinterpret_cast<int (*)(void*)>(install)(&request);
+    if (status != 0 || request.context == nullptr)
+    {
+        PatchFrame frame = std::move(patch_frames_.back());
+        patch_frames_.pop_back();
+        restoreFrame(frame);
+        error = "the patch host refused the patch (" + std::to_string(status) + ")";
+        return false;
+    }
+    patch_frames_.back().context = request.context;
+    bootstrap_unload_ = unload;
+    return true;
+}
+
+bool ManagedSystems::unload_patch(std::string& error)
+{
+    error.clear();
+    if (patch_frames_.empty() || bootstrap_unload_ == nullptr)
+    {
+        error = "no patch is installed";
+        return false;
+    }
+
+    PatchFrame frame = std::move(patch_frames_.back());
+    patch_frames_.pop_back();
+    /* Restore first: the slots point into the code the unload frees. */
+    restoreFrame(frame);
+    const int status = reinterpret_cast<int (*)(void*)>(bootstrap_unload_)(frame.context);
+    if (status != 0)
+    {
+        error = "the patch host refused the unload (" + std::to_string(status) + ")";
+        return false;
+    }
+    if (patch_frames_.empty())
+    {
+        bootstrap_unload_ = nullptr;
+    }
+    return true;
+}
+
+bool ManagedSystems::replace_tracked(std::uint32_t id, DispatchEntry entry)
+{
+    if (patch_frames_.empty())
+    {
+        return false;
+    }
+    PatchFrame& frame = patch_frames_.back();
+    bool tracked = false;
+    for (const std::pair<std::uint32_t, DispatchEntry>& previous : frame.previous)
+    {
+        if (previous.first == id)
+        {
+            tracked = true;
+            break;
+        }
+    }
+    if (!tracked)
+    {
+        frame.previous.emplace_back(id, table_.get(id));
+    }
+    return table_.replace(id, entry);
+}
+
+void ManagedSystems::restoreFrame(PatchFrame& frame)
+{
+    for (auto previous = frame.previous.rbegin(); previous != frame.previous.rend(); ++previous)
+    {
+        if (previous->second != nullptr)
+        {
+            table_.replace(previous->first, previous->second);
+        }
+        else
+        {
+            table_.clear(previous->first);
+        }
+    }
 }
 
 void ManagedSystems::set_user(void* user)

@@ -40,6 +40,16 @@ bool DispatchTable::replace(std::uint32_t id, DispatchEntry entry)
     return true;
 }
 
+bool DispatchTable::clear(std::uint32_t id)
+{
+    if (id >= capacity_)
+    {
+        return false;
+    }
+    entries_[id].store(nullptr, std::memory_order_release);
+    return true;
+}
+
 DispatchEntry DispatchTable::get(std::uint32_t id) const
 {
     if (id >= capacity_)
