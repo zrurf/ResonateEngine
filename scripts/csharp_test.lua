@@ -16,6 +16,11 @@ local function publish_is_stale()
         return true
     end
     local built_at = os.mtime(ASSEMBLY)
+    -- The command line below is part of the output: a change to it (say, adding
+    -- ReadyToRun) must republish even when the fixture sources did not move.
+    if os.mtime(path.join(PROJECT_DIR, "scripts", "csharp_test.lua")) >= built_at then
+        return true
+    end
     for _, file in ipairs(os.files(path.join(FIXTURE_DIR, "**"))) do
         if os.mtime(file) >= built_at then
             return true
@@ -24,8 +29,23 @@ local function publish_is_stale()
     return false
 end
 
+-- The design's base is ReadyToRun: native code shipped in the assembly, the
+-- full runtime present, so a patch can still JIT over it.
+local function runtime_identifier()
+    local arch = os.arch()
+    if os.host() == "windows" then
+        return "win-" .. arch
+    end
+    if os.host() == "macos" then
+        return "osx-" .. arch
+    end
+    return "linux-" .. arch
+end
+
 if publish_is_stale() then
-    local publish = {"publish", PROJECT, "-c", "Debug", "-o", OUT_DIR, "--nologo", "-v", "quiet"}
+    local publish = {"publish", PROJECT, "-c", "Debug", "-o", OUT_DIR,
+                     "-r", runtime_identifier(), "--self-contained", "false",
+                     "-p:PublishReadyToRun=true", "--nologo", "-v", "quiet"}
     local code = os.execv("dotnet", publish, {try = true})
     if code ~= 0 then
         -- Two builds can publish the same output at once; a retry finds the
