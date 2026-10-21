@@ -19,7 +19,7 @@ extern "C" std::int32_t managedSystemsRegisterEntry(void* context, std::uint32_t
 
 extern "C" std::int32_t spawnEntity(void* host_api, std::uint64_t* out_entity)
 {
-    auto* api = static_cast<ResonateCSharpHostApi*>(host_api);
+    auto* api = static_cast<bindings::HostApi*>(host_api);
     auto* commands = static_cast<ecs::CommandBuffer*>(api->commands);
     if (commands == nullptr)
     {
@@ -34,9 +34,9 @@ extern "C" std::int32_t spawnEntity(void* host_api, std::uint64_t* out_entity)
 }
 
 extern "C" std::int32_t addComponent(void* host_api, std::uint64_t handle,
-                                     const char* component, const void* data)
+                                     const char* component, void* data)
 {
-    auto* api = static_cast<ResonateCSharpHostApi*>(host_api);
+    auto* api = static_cast<bindings::HostApi*>(host_api);
     auto* commands = static_cast<ecs::CommandBuffer*>(api->commands);
     auto* world = static_cast<ecs::World*>(api->world);
     if (commands == nullptr || world == nullptr || component == nullptr || data == nullptr)
@@ -59,7 +59,7 @@ extern "C" std::int32_t addComponent(void* host_api, std::uint64_t handle,
    marks them; the observer dispatch stays the world's. */
 extern "C" std::int32_t markChunkChanged(void* host_api)
 {
-    auto* api = static_cast<ResonateCSharpHostApi*>(host_api);
+    auto* api = static_cast<bindings::HostApi*>(host_api);
     auto* world = static_cast<ecs::World*>(api->world);
     const auto* entities = static_cast<const ecs::Entity*>(api->entity_data);
     if (world == nullptr || entities == nullptr)

@@ -22,11 +22,22 @@ internal sealed class HandleEntry
 }
 
 /* A boundary struct. Field types come from the closed vocabulary below, which
-   is what lets both sides be generated with one layout. */
+   is what lets both sides be generated with one layout. A field may instead
+   name a function from the contract's `functions`. */
 internal sealed class FieldEntry
 {
     public string? Name { get; set; }
     public string? Type { get; set; }
+    public string? Fn { get; set; }
+}
+
+/* A function pointer a boundary struct can carry; its return and parameter
+   types come from the same vocabulary. */
+internal sealed class FunctionEntry
+{
+    public string? Name { get; set; }
+    public string? Ret { get; set; }
+    public List<string>? Params { get; set; }
 }
 
 internal sealed class StructEntry
@@ -39,6 +50,7 @@ internal sealed class Contract
 {
     public List<SystemEntry>? Systems { get; set; }
     public List<HandleEntry>? Handles { get; set; }
+    public List<FunctionEntry>? Functions { get; set; }
     public List<StructEntry>? Structs { get; set; }
 }
 
@@ -48,6 +60,7 @@ internal sealed class FieldLayout
 {
     public required FieldEntry Field { get; init; }
     public required FieldType Type { get; init; }
+    public FunctionEntry? Function { get; init; }
     public int Offset { get; init; }
 }
 
@@ -71,6 +84,8 @@ internal static class Program
         ["f32"] = new("float", "float", 4, 4),
         ["f32_pointer"] = new("const float*", "float*", 8, 8),
         ["u8_pointer"] = new("const std::uint8_t*", "byte*", 8, 8),
+        ["utf8_pointer"] = new("const char*", "byte*", 8, 8),
+        ["u64_pointer"] = new("std::uint64_t*", "ulong*", 8, 8),
         ["void_pointer"] = new("void*", "IntPtr", 8, 8),
     };
 
@@ -133,7 +148,11 @@ internal static class Program
                 new($"{handle}Handle", $"{handle}Handle", 8, 8);
             type_names.Add($"{handle}Handle");
         }
-        if (!ValidateStructs(contract.Structs, types, type_names, out List<StructLayout> layouts))
+        if (!ValidateFunctions(contract.Functions, types, out Dictionary<string, FunctionEntry> functions))
+        {
+            return 1;
+        }
+        if (!ValidateStructs(contract.Structs, types, functions, type_names, out List<StructLayout> layouts))
         {
             return 1;
         }
@@ -202,6 +221,7 @@ internal static class Program
 
     private static bool ValidateStructs(List<StructEntry>? entries,
                                         Dictionary<string, FieldType> types,
+                                        Dictionary<string, FunctionEntry> functions,
                                         HashSet<string> reserved_type_names,
                                         out List<StructLayout> layouts)
     {
@@ -231,12 +251,9 @@ internal static class Program
             int alignment = 1;
             foreach (FieldEntry field in entry.Fields)
             {
-                if (string.IsNullOrEmpty(field.Name) || field.Type is null ||
-                    !types.TryGetValue(field.Type, out FieldType type))
+                if (string.IsNullOrEmpty(field.Name))
                 {
-                    Console.Error.WriteLine(
-                        $"csbind: {entry.Name} has a field with a missing name or unknown type " +
-                        $"'{field.Type}'");
+                    Console.Error.WriteLine($"csbind: {entry.Name} has a field without a name");
                     return false;
                 }
                 if (!field_names.Add(field.Name))
@@ -244,8 +261,38 @@ internal static class Program
                     Console.Error.WriteLine($"csbind: {entry.Name} repeats field '{field.Name}'");
                     return false;
                 }
+
+                FieldType type;
+                FunctionEntry? function = null;
+                if (field.Fn is not null)
+                {
+                    if (!functions.TryGetValue(field.Fn, out function))
+                    {
+                        Console.Error.WriteLine(
+                            $"csbind: {entry.Name}.{field.Name} names unknown function '{field.Fn}'");
+                        return false;
+                    }
+                    /* A function pointer is pointer-sized on every target. */
+                    type = new FieldType("", "", 8, 8);
+                }
+                else if (field.Type is not null && types.TryGetValue(field.Type, out type))
+                {
+                }
+                else
+                {
+                    Console.Error.WriteLine(
+                        $"csbind: {entry.Name} has a field with a missing name or unknown type " +
+                        $"'{field.Type}'");
+                    return false;
+                }
                 offset = AlignUp(offset, type.Alignment);
-                fields.Add(new FieldLayout { Field = field, Type = type, Offset = offset });
+                fields.Add(new FieldLayout
+                {
+                    Field = field,
+                    Type = type,
+                    Function = function,
+                    Offset = offset,
+                });
                 offset += type.Size;
                 alignment = Math.Max(alignment, type.Alignment);
             }
@@ -299,6 +346,79 @@ internal static class Program
         return (value + alignment - 1) / alignment * alignment;
     }
 
+    private static bool ValidateFunctions(List<FunctionEntry>? entries,
+                                          Dictionary<string, FieldType> types,
+                                          out Dictionary<string, FunctionEntry> functions)
+    {
+        functions = new Dictionary<string, FunctionEntry>(StringComparer.Ordinal);
+        if (entries is null)
+        {
+            return true;
+        }
+        foreach (FunctionEntry entry in entries)
+        {
+            if (string.IsNullOrEmpty(entry.Name) || entry.Ret is null || entry.Params is null)
+            {
+                Console.Error.WriteLine(
+                    "csbind: a function needs a name, a return type and a parameter list");
+                return false;
+            }
+            if (entry.Ret != "void" && !types.ContainsKey(entry.Ret))
+            {
+                Console.Error.WriteLine(
+                    $"csbind: function '{entry.Name}' has unknown return '{entry.Ret}'");
+                return false;
+            }
+            foreach (string parameter in entry.Params)
+            {
+                if (parameter == "void" || !types.ContainsKey(parameter))
+                {
+                    Console.Error.WriteLine(
+                        $"csbind: function '{entry.Name}' has unknown parameter '{parameter}'");
+                    return false;
+                }
+            }
+            if (!functions.TryAdd(entry.Name, entry))
+            {
+                Console.Error.WriteLine($"csbind: duplicate function '{entry.Name}'");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static string CppType(string type)
+    {
+        return type == "void" ? "void" : Types[type].Cpp;
+    }
+
+    private static string CppParameters(FunctionEntry function)
+    {
+        List<string> parameters = new();
+        foreach (string parameter in function.Params!)
+        {
+            parameters.Add(CppType(parameter));
+        }
+        return string.Join(", ", parameters);
+    }
+
+    private static string CSharpType(string type)
+    {
+        return type == "void" ? "void" : Types[type].CSharp;
+    }
+
+    /* The return type is the last argument of a C# function pointer type. */
+    private static string CSharpFunction(FunctionEntry function)
+    {
+        List<string> parts = new();
+        foreach (string parameter in function.Params!)
+        {
+            parts.Add(CSharpType(parameter));
+        }
+        parts.Add(CSharpType(function.Ret!));
+        return "delegate* unmanaged<" + string.Join(", ", parts) + ">";
+    }
+
     private static string EmitHeader(string input, List<(string Name, uint Id)> systems,
                                      List<string> handles, List<StructLayout> layouts)
     {
@@ -342,7 +462,15 @@ internal static class Program
             text.AppendLine("{");
             foreach (FieldLayout field in layout.Fields)
             {
-                text.AppendLine($"    {field.Type.Cpp} {field.Field.Name};");
+                if (field.Function is not null)
+                {
+                    text.AppendLine($"    {CppType(field.Function.Ret!)} (*{field.Field.Name})(" +
+                                    $"{CppParameters(field.Function)});");
+                }
+                else
+                {
+                    text.AppendLine($"    {field.Type.Cpp} {field.Field.Name};");
+                }
             }
             text.AppendLine("};");
             text.AppendLine();
@@ -407,7 +535,15 @@ internal static class Program
             text.AppendLine("{");
             foreach (FieldLayout field in layout.Fields)
             {
-                text.AppendLine($"    public {field.Type.CSharp} {PascalCase(field.Field.Name!)};");
+                if (field.Function is not null)
+                {
+                    text.AppendLine($"    public {CSharpFunction(field.Function)} " +
+                                    $"{PascalCase(field.Field.Name!)};");
+                }
+                else
+                {
+                    text.AppendLine($"    public {field.Type.CSharp} {PascalCase(field.Field.Name!)};");
+                }
             }
             text.AppendLine("}");
             text.AppendLine();

@@ -1,32 +1,143 @@
 {
   "systems": [
-    { "name": "tick", "id": 7 }
+    {
+      "name": "tick",
+      "id": 7
+    }
   ],
   "handles": [
-    { "name": "entity" },
-    { "name": "blob" }
+    {
+      "name": "entity"
+    },
+    {
+      "name": "blob"
+    }
   ],
   "structs": [
     {
+      "name": "HostApi",
+      "fields": [
+        {
+          "name": "world",
+          "type": "void_pointer"
+        },
+        {
+          "name": "component",
+          "type": "u32"
+        },
+        {
+          "name": "chunk_data",
+          "type": "void_pointer"
+        },
+        {
+          "name": "chunk_count",
+          "type": "u64"
+        },
+        {
+          "name": "entity_data",
+          "type": "void_pointer"
+        },
+        {
+          "name": "mark_chunk_changed",
+          "fn": "mark_chunk_changed"
+        },
+        {
+          "name": "commands",
+          "type": "void_pointer"
+        },
+        {
+          "name": "spawn",
+          "fn": "spawn"
+        },
+        {
+          "name": "add_component",
+          "fn": "add_component"
+        }
+      ]
+    },
+    {
       "name": "SystemContext",
       "fields": [
-        { "name": "delta_seconds", "type": "f32" },
-        { "name": "frame_index", "type": "u64" },
-        { "name": "user", "type": "void_pointer" },
-        { "name": "chunk_data", "type": "void_pointer" },
-        { "name": "chunk_count", "type": "u64" },
-        { "name": "entity_data", "type": "void_pointer" },
-        { "name": "host_api", "type": "void_pointer" }
+        {
+          "name": "delta_seconds",
+          "type": "f32"
+        },
+        {
+          "name": "frame_index",
+          "type": "u64"
+        },
+        {
+          "name": "user",
+          "type": "void_pointer"
+        },
+        {
+          "name": "chunk_data",
+          "type": "void_pointer"
+        },
+        {
+          "name": "chunk_count",
+          "type": "u64"
+        },
+        {
+          "name": "entity_data",
+          "type": "void_pointer"
+        },
+        {
+          "name": "host_api",
+          "type": "void_pointer"
+        }
       ]
     },
     {
       "name": "FrameView",
       "fields": [
-        { "name": "handle", "type": "entity_handle" },
-        { "name": "delta_seconds", "type": "f32" },
-        { "name": "frame_index", "type": "u64" },
-        { "name": "transform_data", "type": "f32_pointer" },
-        { "name": "transform_count", "type": "u64" }
+        {
+          "name": "handle",
+          "type": "entity_handle"
+        },
+        {
+          "name": "delta_seconds",
+          "type": "f32"
+        },
+        {
+          "name": "frame_index",
+          "type": "u64"
+        },
+        {
+          "name": "transform_data",
+          "type": "f32_pointer"
+        },
+        {
+          "name": "transform_count",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "name": "mark_chunk_changed",
+      "ret": "i32",
+      "params": [
+        "void_pointer"
+      ]
+    },
+    {
+      "name": "spawn",
+      "ret": "i32",
+      "params": [
+        "void_pointer",
+        "u64_pointer"
+      ]
+    },
+    {
+      "name": "add_component",
+      "ret": "i32",
+      "params": [
+        "void_pointer",
+        "u64",
+        "utf8_pointer",
+        "void_pointer"
       ]
     }
   ]

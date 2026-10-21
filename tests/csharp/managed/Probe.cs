@@ -4,22 +4,6 @@ using Resonate.CSharp.Bindings;
 
 namespace Resonate.Tests.Managed;
 
-/* Mirrors packages/csharp/include/resonate/csharp/host_api.h: the calls a
-   managed system may make while it runs, filled once per chunk. */
-[StructLayout(LayoutKind.Sequential)]
-public unsafe struct HostApi
-{
-    public IntPtr World;
-    public uint Component;
-    public IntPtr ChunkData;
-    public ulong ChunkCount;
-    public IntPtr EntityData;
-    public delegate* unmanaged<IntPtr, int> MarkChunkChanged;
-    public IntPtr Commands;
-    public delegate* unmanaged<IntPtr, ulong*, int> Spawn;
-    public delegate* unmanaged<IntPtr, ulong, byte*, void*, int> AddComponent;
-}
-
 /* The native side hands this struct to Register; it mirrors
    packages/csharp/include/resonate/csharp/registration.h field for field. */
 [StructLayout(LayoutKind.Sequential)]
@@ -80,7 +64,7 @@ public static unsafe class Probe
                 };
                 fixed (byte* name = Resonate.Hierarchy.LocalTransform.SchemaNameUtf8)
                 {
-                    status = api->AddComponent((IntPtr)api, entity, name, &transform);
+                    status = api->AddComponent((IntPtr)api, entity, name, (IntPtr)(&transform));
                 }
             }
             counters[6] = status;
