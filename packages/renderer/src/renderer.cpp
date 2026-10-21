@@ -56,6 +56,17 @@ using resonate::render::Use;
 /* The shader-side blocks, mirrored byte for byte in the Slang sources. The
    frame data and the point lights live in device-local storage buffers the
    extract rewrites every frame. */
+struct ShaderLight
+{
+    Vec4 position_radius;
+    Vec4 color_intensity;
+};
+
+/* A compat-tier device may not read storage buffers at all, so a fixed set of
+   point lights rides the frame's uniform block; the cluster list stays the
+   bindless path's way. */
+constexpr std::uint32_t kUniformLights = 32;
+
 struct ShaderFrameData
 {
     Mat4 view_proj;
@@ -66,16 +77,17 @@ struct ShaderFrameData
     Vec4 light_count_and_pad;         /* x = light count, yz = cluster tile pixels */
     Mat4 light_view_proj[3];
     Vec4 split_distances; /* far view-space depth per cascade */
+    std::uint32_t uniform_light_count = 0;
+    std::uint32_t uniform_light_pad[3] = {};
+    ShaderLight uniform_lights[kUniformLights] = {};
 };
+
+/* std140 offsets the shader's FrameData sees. */
+static_assert(offsetof(ShaderFrameData, uniform_lights) == 416);
+static_assert(sizeof(ShaderFrameData) == 1440);
 
 constexpr std::uint32_t kMaxLights = 256;
 constexpr std::uint32_t kCascades = 3;
-
-struct ShaderLight
-{
-    Vec4 position_radius;
-    Vec4 color_intensity;
-};
 
 struct ShaderClusterLights
 {
@@ -358,6 +370,7 @@ struct RenderSystem::Impl
     ResonateRenderImage checker_texture{};
     std::uint32_t white_texture_slot = 0U;
     std::uint32_t checker_texture_slot = 0U;
+    bool albedo_ready = false;
 
     /* The producer's world, for the optional Material lookup. */
     ecs::World* extract_world = nullptr;
@@ -383,6 +396,7 @@ struct RenderSystem::Impl
     }
 
     bool initialize();
+    bool createAlbedoTextures();
     bool ensurePipelines();
     ResonateRenderBuffer uploadStorage(std::uint64_t size_bytes, bool host_visible);
     ResonateRenderBuffer uploadUniform(std::uint64_t size_bytes);
@@ -995,9 +1009,29 @@ bool RenderSystem::Impl::ensurePipelines()
         return false;
     }
 
-    /* The albedo tables v1 ships: white (material 0) and a checker (material
-       1). The checker comes from the cooked KTX2 when the content tree is
-       there; the procedural pattern keeps a bare build drawing. */
+    /* The table slots the push constants carry. */
+    frame_data_slot = slotOf(frame_data.vertices);
+    light_list_slot = slotOf(light_list.vertices);
+
+    pipelines_ready = true;
+    if (!ready_noted)
+    {
+        ready_noted = true;
+        std::fprintf(stderr, "renderer: pipelines ready\n");
+    }
+    return true;
+}
+
+/* The albedo tables v1 ships: white (material 0) and a checker (material 1).
+   The checker comes from the cooked KTX2 when the content tree is there; the
+   procedural pattern keeps a bare build drawing.
+
+   Created after the first frame on purpose: this Mali driver samples an image
+   uploaded before the first present as a constant, ignoring later uploads and
+   descriptor rewrites, while the same image created after the first frame
+   samples correctly. */
+bool RenderSystem::Impl::createAlbedoTextures()
+{
     const std::vector<std::uint8_t> white_pixels(4U, 255U);
     TextureImage checker;
     std::string texture_error;
@@ -1039,28 +1073,16 @@ bool RenderSystem::Impl::ensurePipelines()
     const ResonateRenderFormat checker_format = checker_loaded && !checker.srgb
                                                     ? RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM
                                                     : RESONATE_RENDER_FORMAT_R8G8B8A8_SRGB;
-    if (!createSampledTexture(*device, 1U, 1U, RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, white_pixels,
-                              white_texture) ||
-        !createSampledTexture(*device, checker_width, checker_height, checker_format,
-                              checker_pixels, checker_texture))
+    if (!createSampledTexture(*device, checker_width, checker_height, checker_format,
+                              checker_pixels, checker_texture) ||
+        !createSampledTexture(*device, 1U, 1U, RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, white_pixels,
+                              white_texture))
     {
         complain("texture creation failed");
-        pipelines_failed = true;
         return false;
     }
     white_texture_slot = slotOf(white_texture);
     checker_texture_slot = slotOf(checker_texture);
-
-    /* The table slots the push constants carry. */
-    frame_data_slot = slotOf(frame_data.vertices);
-    light_list_slot = slotOf(light_list.vertices);
-
-    pipelines_ready = true;
-    if (!ready_noted)
-    {
-        ready_noted = true;
-        std::fprintf(stderr, "renderer: pipelines ready\n");
-    }
     return true;
 }
 
@@ -1192,6 +1214,38 @@ bool RenderSystem::Impl::extract(ecs::World& world)
             }
         },
         this);
+
+    /* The compat path walks a fixed light set, so the set is the lights nearest
+       the view centre: taking the first N would leave the visible field dark
+       whenever the light order starts far away. */
+    std::vector<std::uint32_t> nearest(scratch.lights.size());
+    for (std::uint32_t index = 0; index < nearest.size(); ++index)
+    {
+        nearest[index] = index;
+    }
+    const Vec3 forward{camera_world.m[0][2], camera_world.m[1][2], camera_world.m[2][2]};
+    const Vec3 centre{camera_world.m[0][3] + forward.x * 10.0F,
+                      camera_world.m[1][3] + forward.y * 10.0F,
+                      camera_world.m[2][3] + forward.z * 10.0F};
+    const auto distanceSquared = [&centre](const ShaderLight& light)
+    {
+        const Vec3 position{light.position_radius.x, light.position_radius.y,
+                            light.position_radius.z};
+        return lengthSquared(position - centre);
+    };
+    const auto uniform_lights = static_cast<std::uint32_t>(
+        std::min<std::size_t>(scratch.lights.size(), kUniformLights));
+    std::partial_sort(nearest.begin(), nearest.begin() + uniform_lights, nearest.end(),
+                      [&](std::uint32_t a, std::uint32_t b)
+                      {
+                          return distanceSquared(scratch.lights[a]) <
+                                 distanceSquared(scratch.lights[b]);
+                      });
+    scratch.frame_data.uniform_light_count = uniform_lights;
+    for (std::uint32_t index = 0; index < uniform_lights; ++index)
+    {
+        scratch.frame_data.uniform_lights[index] = scratch.lights[nearest[index]];
+    }
 
     instances.forEachChunk(
         [](void* context, ChunkView view)
@@ -1810,6 +1864,15 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
     if (!executor->execute(error, &Impl::prepareEntry, this) && !error.empty())
     {
         complain(error.c_str());
+    }
+    if (!albedo_ready)
+    {
+        albedo_ready = true;
+        device->wait_idle(device->self);
+        if (!createAlbedoTextures())
+        {
+            complain("albedo textures unavailable");
+        }
     }
 }
 

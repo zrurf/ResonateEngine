@@ -960,7 +960,7 @@ ResonateStatus Context::createTableImageDummy()
     image.arrayLayers = 1;
     image.samples = VK_SAMPLE_COUNT_1_BIT;
     image.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    image.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -989,8 +989,8 @@ ResonateStatus Context::createTableImageDummy()
         return RESONATE_E_INTERNAL;
     }
 
-    /* One transition, so the binding is legal from the first frame; nothing
-       ever reads the dummy's texels. */
+    /* The dummy is white and ready to sample from the first frame: a draw that
+       names a slot before its real image exists gets a neutral albedo. */
     VkCommandBufferAllocateInfo command{};
     command.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     command.commandPool = command_pool_;
@@ -1010,15 +1010,26 @@ ResonateStatus Context::createTableImageDummy()
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = table_dummy_image_;
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     barrier.subresourceRange.levelCount = 1;
     barrier.subresourceRange.layerCount = 1;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     vkCmdPipelineBarrier(buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
+                         &barrier);
+    const VkClearColorValue white{{1.0F, 1.0F, 1.0F, 1.0F}};
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0U, 1U, 0U, 1U};
+    vkCmdClearColorImage(buffer, table_dummy_image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &white,
+                         1U, &range);
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          0U, 0U, nullptr, 0U, nullptr, 1U, &barrier);
@@ -1155,15 +1166,20 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
     std::vector<VkSurfaceFormatKHR> formats(format_count);
     vkGetPhysicalDeviceSurfaceFormatsKHR(physical_, surface_, &format_count, formats.data());
     surface_format_ = formats.empty() ? surface_format_ : formats[0];
+    /* The shaders end the frame in linear light; an sRGB swapchain encodes on
+       write. A linear swapchain would show the scene unencoded and dark. */
     for (const VkSurfaceFormatKHR& format : formats)
     {
-        if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
-            format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        const bool srgb = format.format == VK_FORMAT_B8G8R8A8_SRGB ||
+                          format.format == VK_FORMAT_R8G8B8A8_SRGB;
+        if (srgb && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
         {
             surface_format_ = format;
             break;
         }
     }
+    std::fprintf(stderr, "render-vulkan: swapchain format %u\n",
+                 static_cast<unsigned>(surface_format_.format));
 
     extent_ = caps.currentExtent;
     if (extent_.width == UINT32_MAX)
@@ -1204,6 +1220,13 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
         }
     }
 
+    /* The compositor rotates the image to the display; claiming the current
+       transform would say the image is already rotated, which it is not. */
+    const VkSurfaceTransformFlagBitsKHR pre_transform =
+        (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) != 0U
+            ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+            : caps.currentTransform;
+
     VkSwapchainCreateInfoKHR info{};
     info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     info.surface = surface_;
@@ -1214,7 +1237,7 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
     info.imageArrayLayers = 1;
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    info.preTransform = caps.currentTransform;
+    info.preTransform = pre_transform;
     info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     info.presentMode = present_mode_;
     info.clipped = VK_TRUE;
@@ -2141,11 +2164,11 @@ ResonateStatus Context::present()
     info.pSwapchains = &swapchain_;
     info.pImageIndices = &image_index_;
     VkResult presented = vkQueuePresentKHR(queue_, &info);
-    if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR)
+    if (presented == VK_ERROR_OUT_OF_DATE_KHR)
     {
         recreate_pending_ = true;
     }
-    else if (presented != VK_SUCCESS)
+    else if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR)
     {
         note(surface_failed_, "present failed");
         return RESONATE_E_INTERNAL;

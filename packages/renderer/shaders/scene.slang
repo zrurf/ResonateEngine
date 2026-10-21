@@ -7,6 +7,14 @@
 // bindings 0-4 and the sampled-image array at binding 5; slots arrive in the
 // push constants.
 
+struct Light
+{
+    float3 position;
+    float radius;
+    float3 color;
+    float intensity;
+};
+
 struct FrameData
 {
     float4x4 view_proj;
@@ -17,14 +25,13 @@ struct FrameData
     float4 light_count_and_pad;         // x = light count
     float4x4 light_view_proj[3];
     float4 split_distances; // far view-space depth per cascade
-};
-
-struct Light
-{
-    float3 position;
-    float radius;
-    float3 color;
-    float intensity;
+    // Flat point lights for a device that cannot read the cluster storage
+    // buffers; std140 places the array at offset 416.
+    uint uniform_light_count;
+    uint uniform_light_pad0;
+    uint uniform_light_pad1;
+    uint uniform_light_pad2;
+    Light uniform_lights[32];
 };
 
 struct ClusterLights
@@ -80,7 +87,7 @@ VertexOutput sceneVertex(VertexInput input)
 {
     VertexOutput output;
     FrameData frame = frame_block;
-    output.position = mul(frame.view_proj, world);
+    float4 world = mul(push.model, float4(input.position, 1.0));
     output.position = mul(frame.view_proj, world);
     // The cofactor matrix is the inverse transpose up to the determinant, which
     // the normalize removes: normals stay perpendicular under non-uniform scale.
@@ -219,11 +226,8 @@ float3 shade(float3 albedo, float3 normal, float3 view_direction, float3 light_d
     return (diffuse + specular) * radiance * n_dot_l;
 }
 
-float4 shadeScene(VertexOutput input, FrameData frame, float shadow)
+float4 shadeScene(VertexOutput input, FrameData frame, float shadow, bool flat)
 {
-    ClusterLights lights = cluster_lights[push.slots.z].Load(
-        clusterOf(input.position.xy, input.view_depth, frame));
-
     float3 albedo = input.color * push.tint.rgb *
                     image_table[push.texture_slot].Sample(input.uv).rgb;
     float3 normal = normalize(input.normal);
@@ -236,15 +240,32 @@ float4 shadeScene(VertexOutput input, FrameData frame, float shadow)
     color += shade(albedo, normal, view_direction, -frame.direction_and_far.xyz,
                    directional_color * shadow, roughness, push.metallic);
 
-    for (uint i = 0; i < lights.count; ++i)
+    /* The compat fallback lights stay diffuse-only: the GGX loop for 32 lights
+       costs more than this tier's share of the frame. */
+    for (uint i = 0; i < (flat ? min(frame.uniform_light_count, 32u) : 0u); ++i)
     {
-        uint light_index = light_indices[push.slots.w].Load(lights.offset + i);
-        Light light = light_table[push.slots2.x].Load(light_index);
+        Light light = frame.uniform_lights[i];
         float3 to_light = light.position - input.world_position;
         float distance = length(to_light);
         float attenuation = saturate(1.0 - distance / light.radius);
-        color += shade(albedo, normal, view_direction, to_light / distance,
-                       light.color * light.intensity * attenuation, roughness, push.metallic);
+        float n_dot_l = saturate(dot(normal, to_light / distance));
+        color += albedo * light.color * light.intensity * attenuation * n_dot_l / PI;
+    }
+
+    if (!flat)
+    {
+        ClusterLights lights = cluster_lights[push.slots.z].Load(
+            clusterOf(input.position.xy, input.view_depth, frame));
+        for (uint i = 0; i < lights.count; ++i)
+        {
+            uint light_index = light_indices[push.slots.w].Load(lights.offset + i);
+            Light light = light_table[push.slots2.x].Load(light_index);
+            float3 to_light = light.position - input.world_position;
+            float distance = length(to_light);
+            float attenuation = saturate(1.0 - distance / light.radius);
+            color += shade(albedo, normal, view_direction, to_light / distance,
+                           light.color * light.intensity * attenuation, roughness, push.metallic);
+        }
     }
 
     // Depth fog: the last tenth of the view range fades into the sky tone.
@@ -260,7 +281,7 @@ float4 sceneFragment(VertexOutput input) : SV_Target
 {
     FrameData frame = frame_block;
     return shadeScene(input, frame,
-                      shadowFactor(input.world_position, input.view_depth, frame));
+                      shadowFactor(input.world_position, input.view_depth, frame), false);
 }
 
 [shader("fragment")]
@@ -268,5 +289,5 @@ float4 sceneFragmentCompat(VertexOutput input) : SV_Target
 {
     FrameData frame = frame_block;
     return shadeScene(input, frame,
-                      shadowFactorCompat(input.world_position, input.view_depth, frame));
+                      shadowFactorCompat(input.world_position, input.view_depth, frame), true);
 }

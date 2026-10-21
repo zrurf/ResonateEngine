@@ -128,13 +128,18 @@ local function run(program, argv)
     end
 end
 
+-- The theme in res/ carries the display-cutout setting; aapt2 needs it
+-- compiled before the link.
+local resources = path.join(staging, "resources.zip")
+run(aapt2, {"compile", "--dir", path.join(os.projectdir(), "packages", "host", "android", "res"),
+            "-o", resources})
 run(aapt2, {"link", "-o", base,
             "--manifest", path.join(os.projectdir(), "packages", "host", "android",
                                     "AndroidManifest.xml"),
             "-I", path.join(platform, "android.jar"),
             "--min-sdk-version", sdk_version,
             "--target-sdk-version", tostring(platform_version),
-            "--version-code", "1", "--version-name", "0.1"})
+            "--version-code", "1", "--version-name", "0.1", resources})
 -- jar rather than aapt2 -A: aapt2 on Windows writes the staged assets with
 -- backslashes in their entry names, which the asset manager looks up with
 -- forward slashes.

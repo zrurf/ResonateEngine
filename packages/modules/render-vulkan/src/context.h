@@ -351,7 +351,8 @@ class Context
        indexing the image slots are too, and destroyed bindings return to the
        dummy. On one with it the image slots stay partially bound. */
     static constexpr uint32_t kStorageTableSize = 7;
-    static constexpr uint32_t kImageTableSize = 16;    static constexpr uint32_t kStorageTableBindings = 5;
+    static constexpr uint32_t kImageTableSize = 16;
+    static constexpr uint32_t kStorageTableBindings = 5;
     static constexpr uint32_t kSampledTableBinding = 5;
     /* The frame block at a fixed binding: some mobile drivers return zeros for
        a storage-buffer array read through the table, and the vertex stage
