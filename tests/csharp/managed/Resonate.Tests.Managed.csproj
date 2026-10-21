@@ -10,6 +10,8 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <DebugType>embedded</DebugType>
+    <!-- Tick writes through the native context pointer: the zero-marshal path. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- hostfxr loads this as a component: the publish drops a runtimeconfig
          beside the assembly for the initializer to read. -->
     <EnableDynamicLoading>true</EnableDynamicLoading>
