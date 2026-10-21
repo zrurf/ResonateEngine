@@ -81,3 +81,10 @@ if publish_is_stale() then
                   tostring(code) .. "); the .NET SDK is required for the C# host tests")
     end
 end
+
+-- The laws are build-time contracts; their checks belong to the suite.
+local analyzers = path.join(PROJECT_DIR, "scripts", "analyzers.lua")
+local checked = os.execv(os.programfile(), {"lua", analyzers}, {try = true})
+if checked ~= 0 then
+    raise("csharp test: the behaviour analyzer self-check failed")
+end

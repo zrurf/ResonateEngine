@@ -203,6 +203,20 @@ task("schema")
         description = "Compile content modules' .rschema declarations into generated C++ and metadata.",
     }
 
+task("analyzers")
+    set_category("plugin")
+    on_run(function ()
+        local script = path.join(os.projectdir(), "scripts", "analyzers.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script})
+        if output ~= nil then
+            print(tidy_check_output(output))
+        end
+    end)
+    set_menu {
+        usage = "xmake analyzers",
+        description = "Build and run the behaviour analyzers' self-checks.",
+    }
+
 task("slang")
     set_category("plugin")
     on_run(function ()
