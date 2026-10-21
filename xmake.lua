@@ -50,7 +50,7 @@ if is_plat("android") then
     add_defines("RESONATE_PLATFORM_ANDROID")
     set_config("ndk_cxxstl", "c++_shared")
     set_config("ndk_sdkver", 30)
-    add_syslinks("dl", "pthread")
+    -- Bionic keeps pthread and dl in libc; there are no separate libs.
 end
 
 if is_plat("iphoneos") then
@@ -70,16 +70,24 @@ end
 -- which emits AVX-512 and faults on CPUs where it is fused off.
 includes("packages/thirdparty/basisu")
 
+-- The engine libraries and modules alone: no window, editor, launcher or
+-- tests. A cross-compiled build (Android) uses this to skip the host-only
+-- tools and the display stack.
+option("engine_only")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Build the engine libraries and modules only (no window, tools, editor or tests).")
+option_end()
+
 add_requires("basisu 1.16.4")
-add_requires("catch2 v3.16.0", {verify = false})
-add_requires("emhash 1.2.0")
-add_requires("libhv 1.3.4")
-add_requires("libsdl3 3.4.16", {verify = false})
-add_requires("mimalloc v3.5.3", {verify = false})
-add_requires("stringzilla v5.2.0", {verify = false})
 add_requires("toml++ v3.4.0")
 add_requires("xxhash v0.8.4", {verify = false, configs = {cmake = false}})
-add_requires("yyjson 0.13.0", {verify = false})
+if not get_config("engine_only") then
+    add_requires("catch2 v3.16.0", {verify = false})
+    add_requires("libsdl3 3.4.16", {verify = false})
+    add_requires("mimalloc v3.5.3", {verify = false})
+    add_requires("yyjson 0.13.0", {verify = false})
+end
 
 -- Vulkan comes from the installed SDK rather than vendored sources: the SDK
 -- carries the headers, the loader import library, the validation layers and the
@@ -248,21 +256,23 @@ task("texcook")
     }
 
 includes("packages/pal")
+includes("packages/window")
 includes("packages/core")
 includes("packages/ecs")
 includes("packages/gameplay")
 includes("packages/module")
-includes("packages/tools/texcook")
 includes("packages/render")
-includes("packages/window")
 includes("packages/physics")
 includes("packages/audio")
 includes("packages/ui")
 includes("packages/hierarchy")
 includes("packages/renderer")
 includes("packages/runtime")
-includes("packages/startup")
-includes("packages/editor")
-includes("packages/launcher")
 includes("packages/modules")
-includes("tests")
+if not get_config("engine_only") then
+    includes("packages/tools/texcook")
+    includes("packages/startup")
+    includes("packages/editor")
+    includes("packages/launcher")
+    includes("tests")
+end

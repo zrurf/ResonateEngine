@@ -74,7 +74,7 @@ target("Resonate.Tests")
     -- about an include path that does not exist yet, and the rule's output only
     -- appears during the build, so the directory is created as the target loads.
     add_rules("resonate.schema")
-    add_includedirs("$(builddir)/gen")
+    add_includedirs(path.join(os.projectdir(), "build", "gen"))
     on_load(function (target)
         os.mkdir(path.join(os.projectdir(), "build", "gen"))
     end)

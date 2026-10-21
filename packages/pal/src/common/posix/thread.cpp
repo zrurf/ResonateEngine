@@ -59,7 +59,12 @@ void applyAffinity(int32_t core)
     cpu_set_t set;
     CPU_ZERO(&set);
     CPU_SET(static_cast<int>(core), &set);
+#    if defined(__ANDROID__)
+    /* Bionic has no pthread_setaffinity_np; 0 places the calling thread. */
+    sched_setaffinity(0, sizeof(set), &set);
+#    else
     pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+#    endif
 #endif
 }
 

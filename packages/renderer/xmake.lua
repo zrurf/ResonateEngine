@@ -14,7 +14,7 @@ target("Resonate.Renderer")
     -- The components are schema-declared: build/gen has to hold their generated
     -- header before this target compiles. The rule's hook fires only for the
     -- requested target, so the idempotent script runs here too.
-    add_includedirs("$(builddir)/gen")
+    add_includedirs(path.join(os.projectdir(), "build", "gen"))
     on_load(function (target)
         os.mkdir(path.join(os.projectdir(), "build", "gen"))
     end)
@@ -31,5 +31,7 @@ target("Resonate.Renderer")
     -- textures at runtime, not to compile, so this is an order-only dep.
     add_deps("Resonate.Render", "Resonate.Render.Graph", "Resonate.ECS",
              "Resonate.Hierarchy", "Resonate.Core.Math")
-    add_deps("Resonate.Tools.TexCook", {links = false, inherit = false})
+    if not get_config("engine_only") then
+        add_deps("Resonate.Tools.TexCook", {links = false, inherit = false})
+    end
     add_packages("basisu", {public = true})

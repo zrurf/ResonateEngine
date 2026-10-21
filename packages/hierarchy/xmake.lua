@@ -15,7 +15,7 @@ target("Resonate.Hierarchy")
     -- only for the target that was requested, and this library is usually built
     -- as somebody's dependency, so it runs the compiler itself — the script is
     -- idempotent, so a second run in one build is just a freshness check.
-    add_includedirs("$(builddir)/gen")
+    add_includedirs(path.join(os.projectdir(), "build", "gen"))
     on_load(function (target)
         os.mkdir(path.join(os.projectdir(), "build", "gen"))
     end)

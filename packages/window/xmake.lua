@@ -14,12 +14,15 @@ target("Resonate.Window.Abi")
 
     add_deps("Resonate.Module.Abi")
 
-target("Resonate.Window")
-    set_kind("static")
-    add_includedirs("host", {public = true})
-    add_files("src/**.cpp")
+if not get_config("engine_only") then
+    target("Resonate.Window")
+        set_kind("static")
+        add_includedirs("host", {public = true})
+        add_files("src/**.cpp")
 
-    -- Render.Abi and not Render: the window publishes a canvas, which is an
-    -- interface, so it needs no part of the render package's host side.
-    add_deps("Resonate.Window.Abi", "Resonate.PAL", "Resonate.Render.Abi")
-    add_packages("libsdl3")
+        -- Render.Abi and not Render: the window publishes a canvas, which is an
+        -- interface, so it needs no part of the render package's host side.
+        add_deps("Resonate.Window.Abi", "Resonate.PAL", "Resonate.Render.Abi")
+        add_packages("libsdl3")
+
+end

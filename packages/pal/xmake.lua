@@ -18,7 +18,10 @@ target("Resonate.PAL")
         add_syslinks("user32", "kernel32")
     else
         add_files("src/common/posix/**.cpp")
-        add_syslinks("pthread", "dl")
+        -- Bionic keeps pthread and dl in libc; the desktop libs do not exist
+        -- there to link.
+        if not is_plat("android") then
+            add_syslinks("pthread", "dl")
+        end
     end
 
-    add_packages("libhv")
