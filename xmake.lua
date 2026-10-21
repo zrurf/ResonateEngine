@@ -50,6 +50,9 @@ if is_plat("android") then
     add_defines("RESONATE_PLATFORM_ANDROID")
     set_config("ndk_cxxstl", "c++_shared")
     set_config("ndk_sdkver", 30)
+    -- The app is one shared library around static archives, so every object
+    -- has to be position independent.
+    add_cxflags("-fPIC")
     -- Bionic keeps pthread and dl in libc; there are no separate libs.
 end
 
@@ -108,8 +111,14 @@ end
 
 target("Resonate.Vulkan")
     set_kind("headeronly")
-    add_includedirs(path.join(vulkan_sdk, "Include"), {public = true})
-    if is_plat("windows") then
+    if is_plat("android") then
+        -- libvulkan.so comes from the NDK sysroot; the SDK include carries the
+        -- same Khronos headers and VMA beside them.
+        add_includedirs(path.join(vulkan_sdk, "Include"), {public = true})
+        add_defines("VK_USE_PLATFORM_ANDROID_KHR", {public = true})
+        add_syslinks("vulkan", {public = true})
+    elseif is_plat("windows") then
+        add_includedirs(path.join(vulkan_sdk, "Include"), {public = true})
         add_defines("VK_USE_PLATFORM_WIN32_KHR", {public = true})
         add_linkdirs(path.join(vulkan_sdk, "Lib"), {public = true})
         add_links("vulkan-1", {public = true})
@@ -255,6 +264,20 @@ task("texcook")
         description = "Cook the source textures into the runtime KTX2 container.",
     }
 
+task("android-apk")
+    set_category("plugin")
+    on_run(function ()
+        local script = path.join(os.projectdir(), "scripts", "android_apk.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script})
+        if output ~= nil then
+            print((output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", "")))
+        end
+    end)
+    set_menu {
+        usage = "xmake android-apk",
+        description = "Package the built Android host and modules into resonate.apk.",
+    }
+
 includes("packages/pal")
 includes("packages/window")
 includes("packages/core")
@@ -269,9 +292,17 @@ includes("packages/hierarchy")
 includes("packages/renderer")
 includes("packages/runtime")
 includes("packages/modules")
+
+-- Startup composes the display stack and the frame loop; on Android the display
+-- comes from the NativeActivity shell, so the engine-only build still carries it.
+if not get_config("engine_only") or is_plat("android") then
+    includes("packages/startup")
+end
+if is_plat("android") then
+    includes("packages/host/android")
+end
 if not get_config("engine_only") then
     includes("packages/tools/texcook")
-    includes("packages/startup")
     includes("packages/editor")
     includes("packages/launcher")
     includes("tests")

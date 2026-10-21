@@ -8,6 +8,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -143,9 +144,17 @@ struct FrameSnapshot
 constexpr ResonateVec4 kClearColor{0.05F, 0.06F, 0.09F, 1.0F};
 
 /* The shader directory sits above the executable, wherever the build tree put
-   it; a shipped game keeps it beside the executable. */
+   it; a shipped game keeps it beside the executable. A platform that carries
+   them elsewhere — an APK's assets extracted by the host — names the directory
+   through the environment. */
 std::string shadersDirectory()
 {
+    if (const char* const from_environment = std::getenv("RESONATE_SHADER_PATH");
+        from_environment != nullptr && *from_environment != '\0')
+    {
+        return from_environment;
+    }
+
     std::filesystem::path directory = resonate_pal_io_executable_directory();
     for (int level = 0; level < 5; ++level)
     {

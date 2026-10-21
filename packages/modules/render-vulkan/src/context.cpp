@@ -4,6 +4,10 @@
 #include <cstring>
 #include <vector>
 
+#ifdef RESONATE_PLATFORM_ANDROID
+#    include <android/native_window.h>
+#endif
+
 #include <resonate/pal/io.h>
 #include <vma/vk_mem_alloc.h>
 
@@ -404,6 +408,8 @@ ResonateStatus Context::ensureInstance(bool needs_surface)
     const char* surface_extension = VK_KHR_SURFACE_EXTENSION_NAME;
 #ifdef RESONATE_PLATFORM_WINDOWS
     surface_extension = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
+#elif defined(RESONATE_PLATFORM_ANDROID)
+    surface_extension = VK_KHR_ANDROID_SURFACE_EXTENSION_NAME;
 #endif
 
     uint32_t available_layer_count = 0;
@@ -447,6 +453,22 @@ ResonateStatus Context::ensureInstance(bool needs_surface)
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app.pApplicationName = kAppName;
     app.apiVersion = VK_API_VERSION_1_1;
+
+    /* Descriptor indexing is core in Vulkan 1.2. Drivers past that promote it
+       and often stop advertising the extension, so the instance asks for the
+       newer core version when the loader carries it. */
+    auto enumerate_version = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
+        vkGetInstanceProcAddr(nullptr, "vkEnumerateInstanceVersion"));
+    if (enumerate_version != nullptr)
+    {
+        uint32_t loader_version = VK_API_VERSION_1_1;
+        if (enumerate_version(&loader_version) == VK_SUCCESS &&
+            loader_version >= VK_API_VERSION_1_2)
+        {
+            app.apiVersion = VK_API_VERSION_1_2;
+        }
+    }
+    instance_api_version_ = app.apiVersion;
 
     VkInstanceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -537,27 +559,47 @@ ResonateStatus Context::ensureDevice()
         note(device_failed_, "device has no swapchain extension");
         return RESONATE_E_UNSUPPORTED;
     }
-    if (!hasExtension(extensions, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME))
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physical_, &properties);
+    const bool core_indexing = instance_api_version_ >= VK_API_VERSION_1_2 &&
+                               properties.apiVersion >= VK_API_VERSION_1_2;
+    if (!core_indexing && !hasExtension(extensions, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME))
     {
-        note(device_failed_, "device has no descriptor indexing extension");
+        note(device_failed_, "device has no descriptor indexing support");
         return RESONATE_E_UNSUPPORTED;
     }
 
     /* The resource table needs partially bound arrays, and the scene shader
        picks a shadow map with a per-pixel index (a non-uniform sampled-image
        lookup). Slang's vertex-id path also reads a base-vertex builtin, so
-       shaderDrawParameters is required. */
+       shaderDrawParameters is required. Both live in core 1.2; an older device
+       reaches them through the extension instead. */
     VkPhysicalDeviceVulkan11Features vulkan11{};
     vulkan11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+    VkPhysicalDeviceVulkan12Features vulkan12{};
+    vulkan12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     VkPhysicalDeviceDescriptorIndexingFeatures indexing{};
     indexing.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
-    indexing.pNext = &vulkan11;
     VkPhysicalDeviceFeatures2 features{};
     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    features.pNext = &indexing;
+    if (core_indexing)
+    {
+        vulkan12.pNext = &vulkan11;
+        features.pNext = &vulkan12;
+    }
+    else
+    {
+        indexing.pNext = &vulkan11;
+        features.pNext = &indexing;
+    }
     vkGetPhysicalDeviceFeatures2(physical_, &features);
-    if (!indexing.shaderSampledImageArrayNonUniformIndexing ||
-        !indexing.descriptorBindingPartiallyBound || !vulkan11.shaderDrawParameters)
+
+    const bool partially_bound = core_indexing ? vulkan12.descriptorBindingPartiallyBound
+                                               : indexing.descriptorBindingPartiallyBound;
+    const bool non_uniform =
+        core_indexing ? vulkan12.shaderSampledImageArrayNonUniformIndexing
+                      : indexing.shaderSampledImageArrayNonUniformIndexing;
+    if (!non_uniform || !partially_bound || !vulkan11.shaderDrawParameters)
     {
         note(device_failed_, "device lacks the resource-table features");
         return RESONATE_E_UNSUPPORTED;
@@ -566,11 +608,26 @@ ResonateStatus Context::ensureDevice()
     VkPhysicalDeviceVulkan11Features enabled11{};
     enabled11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
     enabled11.shaderDrawParameters = VK_TRUE;
+
+    VkPhysicalDeviceVulkan12Features enabled12{};
+    enabled12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     VkPhysicalDeviceDescriptorIndexingFeatures enabled_indexing{};
     enabled_indexing.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
-    enabled_indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
-    enabled_indexing.descriptorBindingPartiallyBound = VK_TRUE;
-    enabled_indexing.pNext = &enabled11;
+    const void* feature_chain = nullptr;
+    if (core_indexing)
+    {
+        enabled12.descriptorBindingPartiallyBound = VK_TRUE;
+        enabled12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        enabled12.pNext = &enabled11;
+        feature_chain = &enabled12;
+    }
+    else
+    {
+        enabled_indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        enabled_indexing.descriptorBindingPartiallyBound = VK_TRUE;
+        enabled_indexing.pNext = &enabled11;
+        feature_chain = &enabled_indexing;
+    }
 
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo queue{};
@@ -585,10 +642,13 @@ ResonateStatus Context::ensureDevice()
     {
         device_extensions[device_extension_count++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     }
-    device_extensions[device_extension_count++] = VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME;
+    if (!core_indexing)
+    {
+        device_extensions[device_extension_count++] = VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME;
+    }
     VkDeviceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    info.pNext = &enabled_indexing;
+    info.pNext = feature_chain;
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = &queue;
     info.enabledExtensionCount = device_extension_count;
@@ -816,6 +876,15 @@ ResonateStatus Context::attachSurface(const void* native_surface, uint32_t width
         info.hinstance = GetModuleHandleW(nullptr);
         info.hwnd = reinterpret_cast<HWND>(const_cast<void*>(native_surface));
         if (vkCreateWin32SurfaceKHR(instance_, &info, nullptr, &surface_) != VK_SUCCESS)
+        {
+            note(surface_failed_, "surface creation failed");
+            return RESONATE_E_INTERNAL;
+        }
+#elif defined(RESONATE_PLATFORM_ANDROID)
+        VkAndroidSurfaceCreateInfoKHR info{};
+        info.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+        info.window = reinterpret_cast<ANativeWindow*>(const_cast<void*>(native_surface));
+        if (vkCreateAndroidSurfaceKHR(instance_, &info, nullptr, &surface_) != VK_SUCCESS)
         {
             note(surface_failed_, "surface creation failed");
             return RESONATE_E_INTERNAL;

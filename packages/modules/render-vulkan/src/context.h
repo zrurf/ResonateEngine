@@ -272,6 +272,8 @@ class Context
     void savePipelineCache();
 
     VkInstance instance_ = VK_NULL_HANDLE;
+    /* The version the instance was created with; the device inherits it. */
+    uint32_t instance_api_version_ = VK_API_VERSION_1_1;
     /* The loader's import library exports core and WSI entry points only; the
        debug utils ones resolve through vkGetInstanceProcAddr. */
     PFN_vkCreateDebugUtilsMessengerEXT create_messenger_ = nullptr;

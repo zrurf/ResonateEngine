@@ -35,6 +35,11 @@ class Application
            the executable; RESONATE_PLUGIN_PATH overrides it. */
         std::string plugin_directory;
 
+        /* Directory holding the module manifests. Empty means beside the
+           libraries, which is the desktop layout; a platform that keeps plugins
+           in a read-only directory points this at writable storage. */
+        std::string plugin_manifest_directory;
+
         /* Path the configuration was read from; --config on the command line.
            Whoever composes the run loads it into `settings` before run() —
            startup does, because the window's size is a setting too. */

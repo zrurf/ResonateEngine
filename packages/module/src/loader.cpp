@@ -999,6 +999,12 @@ ModuleHost::~ModuleHost()
 
 ResonateStatus ModuleHost::discover(const std::string& plugin_directory)
 {
+    return discover(plugin_directory, plugin_directory);
+}
+
+ResonateStatus ModuleHost::discover(const std::string& plugin_directory,
+                                    const std::string& manifest_directory)
+{
     Impl* impl = impl_.get();
     const std::string suffix = std::string(".") + resonate_pal_library_extension();
 
@@ -1060,7 +1066,7 @@ ResonateStatus ModuleHost::discover(const std::string& plugin_directory)
         }
 
         std::string text;
-        if (!readFile(plugin_directory + "/" + identity->id + ".toml", text))
+        if (!readFile(manifest_directory + "/" + identity->id + ".toml", text))
         {
             impl->write(RESONATE_LOG_ERROR,
                         std::string(identity->id) + " has no manifest beside its library");

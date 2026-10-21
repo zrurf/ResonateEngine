@@ -92,8 +92,15 @@ class ModuleHost
 
     /* Loads every library in the directory, reads each one's identity, and pairs
        it with the manifest of the same id that sits beside it. A library that
-       refuses to load is skipped and reported, not fatal. */
+       refuses to load is skipped and reported, not fatal.
+
+       The manifest overload serves platforms that keep plugins in a read-only
+       directory (an APK's native library directory) and their manifests in
+       writable storage: the libraries come from the first directory, the
+       manifests from the second. */
     ResonateStatus discover(const std::string& plugin_directory);
+    ResonateStatus discover(const std::string& plugin_directory,
+                            const std::string& manifest_directory);
 
     /* Orders the graph and checks that every required capability has a provider. */
     ResonateStatus resolve();

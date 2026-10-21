@@ -13,7 +13,7 @@ target("Resonate.Startup")
 
     -- tree.h includes the generated hierarchy components, so the schema output
     -- has to exist before this target compiles.
-    add_includedirs("$(builddir)/gen")
+    add_includedirs(path.join(os.projectdir(), "build", "gen"))
     on_load(function (target)
         os.mkdir(path.join(os.projectdir(), "build", "gen"))
     end)

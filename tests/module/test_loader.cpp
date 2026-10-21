@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <thread>
@@ -268,6 +269,36 @@ TEST_CASE("discovery reports a directory it cannot read", "[module][loader]")
 
     REQUIRE(host->discover("no_such_plugin_directory") == RESONATE_E_MISSING);
     REQUIRE(host->records().empty());
+}
+
+TEST_CASE("manifests are read from a directory of their own", "[module][loader]")
+{
+    /* The Android APK keeps its libraries in a read-only directory and stages
+       the manifests in app storage; the loader takes the two separately. */
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    INFO("the plugin targets are a build dependency of this test target");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    const std::filesystem::path manifests =
+        std::filesystem::path(resonate_pal_io_executable_directory()) / "loader-manifests";
+    std::error_code error;
+    std::filesystem::remove_all(manifests, error);
+    std::filesystem::create_directories(manifests, error);
+    REQUIRE_FALSE(error);
+
+    for (const char* id : {"resonate.audio", "resonate.physics", "resonate.render-vulkan",
+                           "resonate.ui"})
+    {
+        const std::string name = std::string(id) + ".toml";
+        std::filesystem::copy_file(std::filesystem::path(plugin_directory) / name,
+                                   manifests / name, error);
+        REQUIRE_FALSE(error);
+    }
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    REQUIRE(host->discover(plugin_directory, manifests.string()) == RESONATE_OK);
+    REQUIRE(host->records().size() == 4U);
 }
 
 TEST_CASE("the host loads the built plugins and runs one frame", "[module][loader]")

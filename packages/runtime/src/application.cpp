@@ -101,6 +101,10 @@ Application::Config Application::configFromCommandLine(const std::vector<std::st
         {
             config.plugin_directory = arguments[++index];
         }
+        else if (argument == "--plugin-manifest-dir")
+        {
+            config.plugin_manifest_directory = arguments[++index];
+        }
         else if (argument == "--config")
         {
             config.config_file = arguments[++index];
@@ -152,7 +156,10 @@ int Application::run(const Config& config)
         }
     }
 
-    if (host->discover(config.plugin_directory) != RESONATE_OK)
+    const std::string& manifest_directory = config.plugin_manifest_directory.empty()
+                                                ? config.plugin_directory
+                                                : config.plugin_manifest_directory;
+    if (host->discover(config.plugin_directory, manifest_directory) != RESONATE_OK)
     {
         return EXIT_FAILURE;
     }
