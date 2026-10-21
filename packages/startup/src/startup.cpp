@@ -219,6 +219,30 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             {
                 managed.set_component(component.c_str());
             }
+            const std::string patch =
+                config.settings.value("resonate.csharp", "patch").value_or("");
+            if (!patch.empty())
+            {
+                const std::string patch_host =
+                    config.settings.value("resonate.csharp", "patch-host").value_or("");
+                const std::string patch_host_type =
+                    config.settings.value("resonate.csharp", "patch-host-type").value_or("");
+                const std::string patch_entry =
+                    config.settings.value("resonate.csharp", "patch-entry-type").value_or("");
+                if (patch_host.empty() || patch_host_type.empty() || patch_entry.empty())
+                {
+                    std::fprintf(stderr, "resonate: [resonate.csharp] patch needs patch-host, "
+                                         "patch-host-type and patch-entry-type\n");
+                    return EXIT_FAILURE;
+                }
+                std::string patch_error;
+                if (!managed.load_patch(resolveManagedPath(patch_host), patch_host_type,
+                                        resolveManagedPath(patch), patch_entry, patch_error))
+                {
+                    std::fprintf(stderr, "resonate: managed patch: %s\n", patch_error.c_str());
+                    return EXIT_FAILURE;
+                }
+            }
         }
     }
 
