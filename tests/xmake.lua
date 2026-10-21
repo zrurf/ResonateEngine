@@ -75,8 +75,12 @@ target("Resonate.Tests")
     -- appears during the build, so the directory is created as the target loads.
     add_rules("resonate.schema")
     add_includedirs(path.join(os.projectdir(), "build", "gen"))
+    -- csbind's generated headers (build/gen/csharp); the C# fixture step
+    -- generates them before this target compiles.
+    add_includedirs(path.join(os.projectdir(), "build", "gen", "csharp"))
     on_load(function (target)
         os.mkdir(path.join(os.projectdir(), "build", "gen"))
+        os.mkdir(path.join(os.projectdir(), "build", "gen", "csharp"))
     end)
 
     -- For paths.h, which every test that needs a build artifact includes.

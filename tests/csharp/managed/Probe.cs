@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using Resonate.CSharp.Bindings;
 
 namespace Resonate.Tests.Managed;
 
@@ -15,10 +16,6 @@ public unsafe struct Registration
 /* The native host test reaches these through their unmanaged entry points. */
 public static unsafe class Probe
 {
-    /* A fixed id stands in for what the binding generator will assign; the
-       test asserts this exact slot. */
-    public const uint TickId = 7U;
-
     [UnmanagedCallersOnly]
     public static int Add(int left, int right)
     {
@@ -31,7 +28,7 @@ public static unsafe class Probe
     public static int Register(IntPtr api)
     {
         Registration* registration = (Registration*)api;
-        return registration->RegisterEntry(registration->Context, TickId,
+        return registration->RegisterEntry(registration->Context, Systems.Tick,
                                            (IntPtr)(delegate* unmanaged<IntPtr, void>)&Tick);
     }
 

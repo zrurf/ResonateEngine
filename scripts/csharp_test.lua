@@ -10,6 +10,15 @@ local FIXTURE_DIR = path.join(PROJECT_DIR, "tests", "csharp", "managed")
 local PROJECT = path.join(FIXTURE_DIR, "Resonate.Tests.Managed.csproj")
 local OUT_DIR = path.join(PROJECT_DIR, "build", "tools", "csharp-test")
 local ASSEMBLY = path.join(OUT_DIR, "Resonate.Tests.Managed.dll")
+local GENERATED = path.join(PROJECT_DIR, "build", "gen", "csharp",
+                            "Resonate.CSharp.Bindings.g.cs")
+
+-- The fixture compiles the generated ids, so they exist before the publish.
+local generated = os.execv(os.programfile(), {"lua", path.join(PROJECT_DIR, "scripts", "csbind.lua")},
+                           {try = true})
+if generated ~= 0 then
+    raise("csharp test: generating the binding ids failed")
+end
 
 local function publish_is_stale()
     if not os.isfile(ASSEMBLY) then
@@ -19,6 +28,9 @@ local function publish_is_stale()
     -- The command line below is part of the output: a change to it (say, adding
     -- ReadyToRun) must republish even when the fixture sources did not move.
     if os.mtime(path.join(PROJECT_DIR, "scripts", "csharp_test.lua")) >= built_at then
+        return true
+    end
+    if os.isfile(GENERATED) and os.mtime(GENERATED) >= built_at then
         return true
     end
     for _, file in ipairs(os.files(path.join(FIXTURE_DIR, "**"))) do

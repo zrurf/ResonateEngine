@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 
+#include <resonate/csharp/bindings.h>
 #include <resonate/csharp/dispatch.h>
 #include <resonate/csharp/host.hpp>
 #include <resonate/csharp/registration.h>
@@ -32,7 +33,6 @@ struct Fixture
 };
 
 constexpr const char* kProbeType = "Resonate.Tests.Managed.Probe, Resonate.Tests.Managed";
-constexpr std::uint32_t kTickId = 7U;
 
 } // namespace
 
@@ -95,9 +95,9 @@ TEST_CASE("csharp: managed code registers an entry into the dispatch table", "[c
     REQUIRE(register_probe(&registration) == 0);
 
     int counter = 0;
-    REQUIRE(table.get(kTickId) != nullptr);
-    CHECK(table.invoke(kTickId, &counter));
+    REQUIRE(table.get(resonate::csharp::bindings::kSystemTick) != nullptr);
+    CHECK(table.invoke(resonate::csharp::bindings::kSystemTick, &counter));
     CHECK(counter == 1);
-    CHECK(table.invoke(kTickId, &counter));
+    CHECK(table.invoke(resonate::csharp::bindings::kSystemTick, &counter));
     CHECK(counter == 2);
 }
