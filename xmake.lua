@@ -203,6 +203,20 @@ task("schema")
         description = "Compile content modules' .rschema declarations into generated C++ and metadata.",
     }
 
+task("csharp-demo")
+    set_category("plugin")
+    on_run(function ()
+        local script = path.join(os.projectdir(), "scripts", "csharp_demo.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script})
+        if output ~= nil then
+            print(tidy_check_output(output))
+        end
+    end)
+    set_menu {
+        usage = "xmake csharp-demo",
+        description = "Publish the sample managed game into build/content/csharp/demo.",
+    }
+
 task("analyzers")
     set_category("plugin")
     on_run(function ()

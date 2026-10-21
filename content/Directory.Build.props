@@ -1,0 +1,11 @@
+<Project>
+
+  <!-- Machine output belongs in the build tree: a C# project's obj/ and bin/
+       would otherwise land in the content directory, which is where git looks
+       and where the demo's own staleness glob would see them change. -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)../build/tools/$(MSBuildProjectName)/obj/</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)../build/tools/$(MSBuildProjectName)/bin/</BaseOutputPath>
+  </PropertyGroup>
+
+</Project>

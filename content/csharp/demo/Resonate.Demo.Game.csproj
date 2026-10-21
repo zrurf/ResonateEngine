@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <AssemblyName>Resonate.Demo.Game</AssemblyName>
+    <RootNamespace>Resonate.Demo.Game</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DebugType>embedded</DebugType>
+    <!-- The host calls Register through its unmanaged entry; Tick writes
+         through native pointers. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- hostfxr loads this as a component: the publish drops the
+         runtimeconfig.json the initializer reads. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <!-- The generated ids, boundary structs and component views. -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)../../../build/gen/csharp/**/*.g.cs" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../../packages/tools/analyzers/Resonate.CSharp.Attributes/Resonate.CSharp.Attributes.csproj" />
+  </ItemGroup>
+
+</Project>
