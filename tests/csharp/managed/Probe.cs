@@ -15,6 +15,9 @@ public unsafe struct HostApi
     public ulong ChunkCount;
     public IntPtr EntityData;
     public delegate* unmanaged<IntPtr, int> MarkChunkChanged;
+    public IntPtr Commands;
+    public delegate* unmanaged<IntPtr, ulong*, int> Spawn;
+    public delegate* unmanaged<IntPtr, ulong, byte*, void*, int> AddComponent;
 }
 
 /* The native side hands this struct to Register; it mirrors
@@ -55,6 +58,35 @@ public static unsafe class Probe
         counters[0] += 1;
         counters[1] = (int)frame->FrameIndex;
 
+        HostApi* api = (HostApi*)frame->HostApi;
+        if (frame->FrameIndex == 0 && counters[6] == 1)
+        {
+            ulong entity = 0;
+            int status = api->Spawn((IntPtr)api, &entity);
+            if (status == 0)
+            {
+                Resonate.Hierarchy.LocalTransform transform = default;
+                transform.Position = new Resonate.CSharp.Math.Vec3
+                {
+                    X = 4.0F,
+                    Y = 5.0F,
+                    Z = 6.0F,
+                };
+                transform.Scale = new Resonate.CSharp.Math.Vec3
+                {
+                    X = 1.0F,
+                    Y = 1.0F,
+                    Z = 1.0F,
+                };
+                fixed (byte* name = Resonate.Hierarchy.LocalTransform.SchemaNameUtf8)
+                {
+                    status = api->AddComponent((IntPtr)api, entity, name, &transform);
+                }
+            }
+            counters[6] = status;
+            counters[7] = (int)entity;
+        }
+
         if (frame->ChunkData == IntPtr.Zero || frame->ChunkCount == 0)
         {
             counters[2] = -1;
@@ -73,7 +105,6 @@ public static unsafe class Probe
         EntityHandle* entities = (EntityHandle*)frame->EntityData;
         counters[4] = (int)entities[0].Index;
 
-        HostApi* api = (HostApi*)frame->HostApi;
         counters[5] = api->MarkChunkChanged((IntPtr)api);
     }
 

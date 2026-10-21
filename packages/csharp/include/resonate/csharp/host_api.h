@@ -24,6 +24,15 @@ typedef struct ResonateCSharpHostApi
     void* entity_data;
     /* Stamps every row of the current chunk; returns 0 when it did. */
     int32_t (*mark_chunk_changed)(void* host_api);
+    /* The frame's command buffer: structural changes are recorded here and
+       played at the frame's sync point, never applied during the tick. */
+    void* commands;
+    /* Reserves an entity handle; it becomes alive at playback. */
+    int32_t (*spawn)(void* host_api, uint64_t* out_entity);
+    /* Records an add of the named component with `data` (the component's
+       bytes, in the layout the schema generated). */
+    int32_t (*add_component)(void* host_api, uint64_t entity, const char* component,
+                             const void* data);
 } ResonateCSharpHostApi;
 
 #ifdef __cplusplus

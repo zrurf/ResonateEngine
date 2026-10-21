@@ -72,7 +72,11 @@ if publish_is_stale() then
         os.sleep(1000)
         code = os.execv("dotnet", publish, {try = true})
     end
-    if code ~= 0 and not os.isfile(ASSEMBLY) then
+    -- A failed publish must fail the build even when an older assembly is
+    -- still on disk: the silent fallback once hid a compile error for a whole
+    -- test run. A concurrent publish that won the race has a fresh assembly,
+    -- so the staleness check is what decides.
+    if publish_is_stale() then
         raise("csharp test: publishing the managed fixture failed (dotnet publish exited " ..
                   tostring(code) .. "); the .NET SDK is required for the C# host tests")
     end

@@ -17,6 +17,44 @@ extern "C" std::int32_t managedSystemsRegisterEntry(void* context, std::uint32_t
     return table->set(id, reinterpret_cast<DispatchEntry>(entry)) ? 0 : 1;
 }
 
+extern "C" std::int32_t spawnEntity(void* host_api, std::uint64_t* out_entity)
+{
+    auto* api = static_cast<ResonateCSharpHostApi*>(host_api);
+    auto* commands = static_cast<ecs::CommandBuffer*>(api->commands);
+    if (commands == nullptr)
+    {
+        return 1;
+    }
+    const ecs::Entity entity = commands->create();
+    if (out_entity != nullptr)
+    {
+        *out_entity = (static_cast<std::uint64_t>(entity.generation) << 32) | entity.index;
+    }
+    return 0;
+}
+
+extern "C" std::int32_t addComponent(void* host_api, std::uint64_t handle,
+                                     const char* component, const void* data)
+{
+    auto* api = static_cast<ResonateCSharpHostApi*>(host_api);
+    auto* commands = static_cast<ecs::CommandBuffer*>(api->commands);
+    auto* world = static_cast<ecs::World*>(api->world);
+    if (commands == nullptr || world == nullptr || component == nullptr || data == nullptr)
+    {
+        return 1;
+    }
+    const ecs::ComponentIndex index = world->findComponent(component);
+    if (index == ecs::kInvalidComponent)
+    {
+        return 1;
+    }
+    /* The handle packs index low, generation high, like the C++ Entity. */
+    const ecs::Entity entity{static_cast<std::uint32_t>(handle),
+                             static_cast<std::uint32_t>(handle >> 32)};
+    commands->add(entity, index, data);
+    return 0;
+}
+
 /* A dense write over a chunk cannot know which rows it touched, so its owner
    marks them; the observer dispatch stays the world's. */
 extern "C" std::int32_t markChunkChanged(void* host_api)
@@ -95,7 +133,7 @@ void ManagedSystems::set_component(const char* name)
     component_ = ecs::kInvalidComponent;
 }
 
-void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer&,
+void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer& commands,
                             float delta_seconds)
 {
     auto* self = static_cast<ManagedSystems*>(context);
@@ -108,6 +146,9 @@ void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer
     self->frame_.frame_index = self->frames_;
     self->api_.world = &world;
     self->api_.mark_chunk_changed = &markChunkChanged;
+    self->api_.commands = &commands;
+    self->api_.spawn = &spawnEntity;
+    self->api_.add_component = &addComponent;
     self->frame_.host_api = &self->api_;
 
     /* The read path is the named component, one call per non-empty chunk: the

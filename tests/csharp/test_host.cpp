@@ -278,3 +278,62 @@ TEST_CASE("csharp: a large chunk set reaches managed code in one frame", "[cshar
     CHECK(counters[0] > 1);
     CHECK(systems.frames() == 1U);
 }
+
+TEST_CASE("csharp: a managed spawn plays through the command buffer", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
+    systems.set_component("resonate.hierarchy.LocalTransform");
+
+    /* counters[6] = 1 asks the managed tick to spawn once on frame 0. */
+    int counters[8] = {0, -1, 0, 0, -1, 0, 1, 0};
+    systems.set_user(counters);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    const resonate::ecs::Entity existing = world.create();
+    world.add(existing, resonate::hierarchy::LocalTransform{
+                            resonate::Vec3{1.0F, 0.0F, 0.0F}, resonate::Quat{},
+                            resonate::Vec3{1.0F, 1.0F, 1.0F}});
+
+    resonate::ecs::CommandBuffer commands(world);
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    CHECK(counters[6] == 0);
+    CHECK(counters[7] != 0);
+
+    /* What the managed system recorded becomes alive at the frame's sync
+       point, not during the tick. */
+    world.play(commands);
+
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    CHECK(counters[3] == 3);
+
+    const resonate::ecs::ComponentIndex all[] = {
+        resonate::ecs::ComponentTraits<resonate::hierarchy::LocalTransform>::index};
+    resonate::ecs::QueryDesc desc;
+    desc.all = resonate::Span<const resonate::ecs::ComponentIndex>(all, 1U);
+    resonate::ecs::Query query = world.createQuery(desc);
+    bool found = false;
+    query.forEachChunk(
+        [](void* context, resonate::ecs::ChunkView view)
+        {
+            const auto* data = static_cast<const resonate::hierarchy::LocalTransform*>(
+                view.componentData(
+                    resonate::ecs::ComponentTraits<resonate::hierarchy::LocalTransform>::index));
+            for (std::uint32_t row = 0; row < view.count; ++row)
+            {
+                /* The managed tick wrote Y on every row; X and Z are the
+                   spawned values. */
+                if (data[row].position.x == 4.0F && data[row].position.z == 6.0F)
+                {
+                    *static_cast<bool*>(context) = true;
+                }
+            }
+        },
+        &found);
+    CHECK(found);
+}

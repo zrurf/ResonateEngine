@@ -20,6 +20,7 @@ internal static class CSharpEmitter
             text.Append(index == 0 ? "" : ", ").Append(PathText.Relative(module.Files[index].Path));
         }
         text.Append("; do not edit.\n\n");
+        text.Append("using System;\n");
         text.Append("using System.Runtime.InteropServices;\n\n");
         text.Append("namespace ").Append(NamespaceOf(module.Id)).Append(";\n");
 
@@ -41,6 +42,10 @@ internal static class CSharpEmitter
                 text.Append("    public ").Append(FieldType(field, module)).Append(' ')
                     .Append(FieldName(type, field)).Append(";\n");
             }
+            text.Append("\n    public const string SchemaName = \"").Append(type.QualifiedName)
+                .Append("\";\n");
+            text.Append("    public static ReadOnlySpan<byte> SchemaNameUtf8 => \"")
+                .Append(type.QualifiedName).Append("\"u8;\n");
             text.Append("}\n\n");
             text.Append("public static class ").Append(type.Name).Append("Layout\n{\n");
             text.Append("    public const int Size = ").Append(type.Layout!.Size).Append(";\n");
