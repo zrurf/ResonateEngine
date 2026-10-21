@@ -15,7 +15,8 @@
         { "name": "user", "type": "void_pointer" },
         { "name": "chunk_data", "type": "void_pointer" },
         { "name": "chunk_count", "type": "u64" },
-        { "name": "entity_data", "type": "void_pointer" }
+        { "name": "entity_data", "type": "void_pointer" },
+        { "name": "host_api", "type": "void_pointer" }
       ]
     },
     {

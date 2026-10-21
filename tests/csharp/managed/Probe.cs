@@ -4,6 +4,19 @@ using Resonate.CSharp.Bindings;
 
 namespace Resonate.Tests.Managed;
 
+/* Mirrors packages/csharp/include/resonate/csharp/host_api.h: the calls a
+   managed system may make while it runs, filled once per chunk. */
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct HostApi
+{
+    public IntPtr World;
+    public uint Component;
+    public IntPtr ChunkData;
+    public ulong ChunkCount;
+    public IntPtr EntityData;
+    public delegate* unmanaged<IntPtr, int> MarkChunkChanged;
+}
+
 /* The native side hands this struct to Register; it mirrors
    packages/csharp/include/resonate/csharp/registration.h field for field. */
 [StructLayout(LayoutKind.Sequential)]
@@ -47,17 +60,21 @@ public static unsafe class Probe
             counters[2] = -1;
             return;
         }
-        ReadOnlySpan<Resonate.Hierarchy.LocalTransform> transforms =
+        Span<Resonate.Hierarchy.LocalTransform> transforms =
             new((Resonate.Hierarchy.LocalTransform*)frame->ChunkData, (int)frame->ChunkCount);
         float sum = 0.0F;
         for (int index = 0; index < transforms.Length; ++index)
         {
             sum += transforms[index].Position.X;
+            transforms[index].Position.Y = 1.0F;
         }
         counters[2] += (int)(sum * 10.0F);
         counters[3] += (int)frame->ChunkCount;
         EntityHandle* entities = (EntityHandle*)frame->EntityData;
         counters[4] = (int)entities[0].Index;
+
+        HostApi* api = (HostApi*)frame->HostApi;
+        counters[5] = api->MarkChunkChanged((IntPtr)api);
     }
 
     /* Reads a generated struct field by field: the engine lays the frame view

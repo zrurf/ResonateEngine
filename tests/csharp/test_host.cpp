@@ -219,6 +219,16 @@ TEST_CASE("csharp: a managed system reads a named component's chunk", "[csharp]"
                           resonate::Vec3{2.0F, 0.0F, 0.0F}, resonate::Quat{},
                           resonate::Vec3{1.0F, 1.0F, 1.0F}});
 
+    struct Observed
+    {
+        int runs = 0;
+    };
+    Observed observed;
+    REQUIRE(world.addObserver<resonate::hierarchy::LocalTransform>(
+        &observed,
+        [](void* user, resonate::ecs::World&, resonate::ecs::Entity,
+           resonate::ecs::ComponentIndex) { ++static_cast<Observed*>(user)->runs; }));
+
     resonate::ecs::CommandBuffer commands(world);
     resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
     CHECK(counters[0] == 1);
@@ -226,7 +236,13 @@ TEST_CASE("csharp: a managed system reads a named component's chunk", "[csharp]"
     CHECK(counters[2] == 30);
     CHECK(counters[3] == 2);
     CHECK(counters[4] == static_cast<int>(first.index));
+    CHECK(counters[5] == 0);
     CHECK(systems.frames() == 1U);
+
+    /* The managed write landed and the mark made the observers see it. */
+    CHECK(world.get<resonate::hierarchy::LocalTransform>(first)->position.y == 1.0F);
+    CHECK(world.get<resonate::hierarchy::LocalTransform>(second)->position.y == 1.0F);
+    CHECK(observed.runs == 2);
 }
 
 TEST_CASE("csharp: a large chunk set reaches managed code in one frame", "[csharp]")

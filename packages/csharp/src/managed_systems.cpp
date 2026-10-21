@@ -17,6 +17,24 @@ extern "C" std::int32_t managedSystemsRegisterEntry(void* context, std::uint32_t
     return table->set(id, reinterpret_cast<DispatchEntry>(entry)) ? 0 : 1;
 }
 
+/* A dense write over a chunk cannot know which rows it touched, so its owner
+   marks them; the observer dispatch stays the world's. */
+extern "C" std::int32_t markChunkChanged(void* host_api)
+{
+    auto* api = static_cast<ResonateCSharpHostApi*>(host_api);
+    auto* world = static_cast<ecs::World*>(api->world);
+    const auto* entities = static_cast<const ecs::Entity*>(api->entity_data);
+    if (world == nullptr || entities == nullptr)
+    {
+        return 1;
+    }
+    for (std::uint64_t row = 0; row < api->chunk_count; ++row)
+    {
+        world->markChanged(entities[row], api->component);
+    }
+    return 0;
+}
+
 } // namespace
 
 ManagedSystems::~ManagedSystems()
@@ -88,6 +106,9 @@ void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer
 
     self->frame_.delta_seconds = delta_seconds;
     self->frame_.frame_index = self->frames_;
+    self->api_.world = &world;
+    self->api_.mark_chunk_changed = &markChunkChanged;
+    self->frame_.host_api = &self->api_;
 
     /* The read path is the named component, one call per non-empty chunk: the
        body sees a dense array it wraps in a Span without copying. The query is
@@ -101,6 +122,7 @@ void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer
         }
         if (self->component_ != ecs::kInvalidComponent)
         {
+            self->api_.component = self->component_;
             if (!self->query_ready_)
             {
                 const ecs::ComponentIndex all[] = {self->component_};
@@ -120,6 +142,10 @@ void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer
                         systems->frame_.chunk_count = view.count;
                         systems->frame_.entity_data =
                             const_cast<ecs::Entity*>(view.entities);
+                        systems->api_.chunk_data = systems->frame_.chunk_data;
+                        systems->api_.chunk_count = view.count;
+                        systems->api_.entity_data =
+                            const_cast<ecs::Entity*>(view.entities);
                         systems->table_.invoke(bindings::kSystemTick, &systems->frame_);
                     },
                     self);
@@ -132,6 +158,9 @@ void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer
         self->frame_.chunk_data = nullptr;
         self->frame_.chunk_count = 0U;
         self->frame_.entity_data = nullptr;
+        self->api_.chunk_data = nullptr;
+        self->api_.chunk_count = 0U;
+        self->api_.entity_data = nullptr;
         self->table_.invoke(bindings::kSystemTick, &self->frame_);
     }
     ++self->frames_;

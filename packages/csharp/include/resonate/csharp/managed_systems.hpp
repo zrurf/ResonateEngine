@@ -7,6 +7,7 @@
 #include <resonate/csharp/bindings.h>
 #include <resonate/csharp/dispatch.h>
 #include <resonate/csharp/host.hpp>
+#include <resonate/csharp/host_api.h>
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
 
@@ -64,6 +65,7 @@ private:
     ecs::ComponentIndex component_ = ecs::kInvalidComponent;
     ecs::Query query_;
     bool query_ready_ = false;
+    ResonateCSharpHostApi api_{};
 };
 
 } // namespace resonate::csharp
