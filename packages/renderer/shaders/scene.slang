@@ -218,9 +218,8 @@ float3 shade(float3 albedo, float3 normal, float3 view_direction, float3 light_d
     return (diffuse + specular) * radiance * n_dot_l;
 }
 
-float4 shadeScene(VertexOutput input, bool compat)
+float4 shadeScene(VertexOutput input, FrameData frame, float shadow)
 {
-    FrameData frame = frame_table[push.slots.x].Load(0);
     ClusterLights lights = cluster_lights[push.slots.z].Load(
         clusterOf(input.position.xy, input.view_depth, frame));
 
@@ -232,8 +231,6 @@ float4 shadeScene(VertexOutput input, bool compat)
     float3 color = albedo * 0.12; // ambient floor
     float3 directional_color = frame.directional_color_intensity.rgb *
                                frame.directional_color_intensity.a;
-    float shadow = compat ? shadowFactorCompat(input.world_position, input.view_depth, frame)
-                          : shadowFactor(input.world_position, input.view_depth, frame);
     const float roughness = clamp(push.roughness, 0.04, 1.0);
     color += shade(albedo, normal, view_direction, -frame.direction_and_far.xyz,
                    directional_color * shadow, roughness, push.metallic);
@@ -260,11 +257,15 @@ float4 shadeScene(VertexOutput input, bool compat)
 [shader("fragment")]
 float4 sceneFragment(VertexOutput input) : SV_Target
 {
-    return shadeScene(input, false);
+    FrameData frame = frame_table[push.slots.x].Load(0);
+    return shadeScene(input, frame,
+                      shadowFactor(input.world_position, input.view_depth, frame));
 }
 
 [shader("fragment")]
 float4 sceneFragmentCompat(VertexOutput input) : SV_Target
 {
-    return shadeScene(input, true);
+    FrameData frame = frame_table[push.slots.x].Load(0);
+    return shadeScene(input, frame,
+                      shadowFactorCompat(input.world_position, input.view_depth, frame));
 }

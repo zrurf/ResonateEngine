@@ -301,6 +301,12 @@ class Context
        — Android recreates the window on rotation — and the old surface then has
        to go. */
     const void* attached_surface_ = nullptr;
+    std::vector<VkImage> swapchain_images_;
+    /* RESONATE_DEBUG_CANVAS: a centre texel of the presented image, read back
+       for the first few frames. */
+    VkBuffer debug_canvas_buffer_ = VK_NULL_HANDLE;
+    VmaAllocation_T* debug_canvas_allocation_ = nullptr;
+    uint32_t debug_canvas_frames_ = 0;
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     VkSurfaceFormatKHR surface_format_{};
     VkExtent2D extent_{};

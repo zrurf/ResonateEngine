@@ -259,6 +259,10 @@ Context::~Context()
         {
             vmaDestroyBuffer(allocator_, table_dummy_, table_dummy_allocation_);
         }
+        if (debug_canvas_buffer_ != VK_NULL_HANDLE)
+        {
+            vmaDestroyBuffer(allocator_, debug_canvas_buffer_, debug_canvas_allocation_);
+        }
         if (table_dummy_view_ != VK_NULL_HANDLE)
         {
             vkDestroyImageView(device_, table_dummy_view_, nullptr);
@@ -1234,6 +1238,7 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
         }
         views_.push_back(handle);
     }
+    swapchain_images_ = images;
 
     if (renderPassFor(RESONATE_RENDER_FORMAT_UNKNOWN, RESONATE_RENDER_FORMAT_UNKNOWN,
                       &render_pass_) != RESONATE_OK)
@@ -1382,6 +1387,7 @@ void Context::destroySwapchainObjects()
         vkDestroyImageView(device_, view, nullptr);
     }
     views_.clear();
+    swapchain_images_.clear();
     for (VkSemaphore semaphore : present_semaphores_)
     {
         vkDestroySemaphore(device_, semaphore, nullptr);
@@ -2009,6 +2015,62 @@ ResonateStatus Context::present()
         return RESONATE_E_STATE;
     }
     Frame& frame = frames_[frame_ % kFramesInFlight];
+
+    /* RESONATE_DEBUG_CANVAS: copy the presented image's centre texel so a
+       device run can tell a drawn frame from a cleared one. */
+    const bool debug_canvas =
+        !offscreen_ && swapchain_ != VK_NULL_HANDLE && !swapchain_images_.empty() &&
+        debug_canvas_frames_ < 5U && std::getenv("RESONATE_DEBUG_CANVAS") != nullptr;
+    if (debug_canvas && debug_canvas_buffer_ == VK_NULL_HANDLE)
+    {
+        VkBufferCreateInfo buffer{};
+        buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer.size = 4U;
+        buffer.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        buffer.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO;
+        allocation.flags =
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        vmaCreateBuffer(allocator_, &buffer, &allocation, &debug_canvas_buffer_,
+                        &debug_canvas_allocation_, nullptr);
+    }
+    if (debug_canvas && debug_canvas_buffer_ != VK_NULL_HANDLE)
+    {
+        VkImageMemoryBarrier to_copy{};
+        to_copy.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        to_copy.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        to_copy.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        to_copy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_copy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_copy.image = swapchain_images_[image_index_];
+        to_copy.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        to_copy.subresourceRange.levelCount = 1;
+        to_copy.subresourceRange.layerCount = 1;
+        to_copy.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(frame.command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
+                             &to_copy);
+
+        VkBufferImageCopy region{};
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.imageOffset = VkOffset3D{static_cast<int32_t>(extent_.width / 2U),
+                                        static_cast<int32_t>(extent_.height / 2U), 0};
+        region.imageExtent = VkExtent3D{1U, 1U, 1U};
+        vkCmdCopyImageToBuffer(frame.command, swapchain_images_[image_index_],
+                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, debug_canvas_buffer_, 1U,
+                               &region);
+
+        VkImageMemoryBarrier to_present = to_copy;
+        to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        to_present.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        to_present.dstAccessMask = 0;
+        vkCmdPipelineBarrier(frame.command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
+                             &to_present);
+    }
     vkEndCommandBuffer(frame.command);
 
     /* An offscreen frame waits on and signals nothing: there is no acquire and
@@ -2042,6 +2104,19 @@ ResonateStatus Context::present()
     {
         note(surface_failed_, "command submission failed");
         return RESONATE_E_INTERNAL;
+    }
+    if (debug_canvas && debug_canvas_buffer_ != VK_NULL_HANDLE)
+    {
+        vkWaitForFences(device_, 1, &frame.in_flight, VK_TRUE, UINT64_MAX);
+        void* mapped = nullptr;
+        if (vmaMapMemory(allocator_, debug_canvas_allocation_, &mapped) == VK_SUCCESS)
+        {
+            const auto* pixel = static_cast<const std::uint8_t*>(mapped);
+            std::fprintf(stderr, "render-vulkan: canvas centre %u,%u,%u,%u\n", pixel[0],
+                         pixel[1], pixel[2], pixel[3]);
+            vmaUnmapMemory(allocator_, debug_canvas_allocation_);
+        }
+        ++debug_canvas_frames_;
     }
     if (offscreen_)
     {
