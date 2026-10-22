@@ -337,7 +337,8 @@ internal static class SchemaParser
             {
                 case "field":
                 {
-                    FieldDecl? field = ParseField(child, diagnostics, fieldNames);
+                    FieldDecl? field = ParseField(child, diagnostics, fieldNames,
+                                                  kind == TypeKind.Node);
                     if (field is not null)
                     {
                         type.Fields.Add(field);
@@ -482,14 +483,22 @@ internal static class SchemaParser
     }
 
     private static FieldDecl? ParseField(XmlElement element, Diagnostics diagnostics,
-                                         HashSet<string> seen)
+                                         HashSet<string> seen, bool authoring)
     {
         CheckAttributes(element, FieldAttributes, diagnostics, "a field");
         XmlAttribute? name = Required(element, "name", diagnostics, "a field");
         XmlAttribute? typeName = Required(element, "type", diagnostics, "a field");
-        if (name is null || typeName is null
-            || !Names.Check(name.Value, "a field name", element.File, name.Line, name.Column,
-                            diagnostics))
+        if (name is null || typeName is null)
+        {
+            return null;
+        }
+        bool named = authoring
+                               ? Names.CheckAuthoring(name.Value, "an authoring field name",
+                                                      element.File, name.Line, name.Column,
+                                                      diagnostics)
+                               : Names.Check(name.Value, "a field name", element.File, name.Line,
+                                             name.Column, diagnostics);
+        if (!named)
         {
             return null;
         }

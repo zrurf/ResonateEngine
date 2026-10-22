@@ -35,6 +35,14 @@
     </xs:restriction>
   </xs:simpleType>
 
+  <!-- Authoring field names never become C++ members; they use the document
+       attribute spelling and may therefore carry hyphens (bind-width). -->
+  <xs:simpleType name="AuthoringName">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[A-Za-z_][A-Za-z0-9_-]*"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:simpleType name="NonEmptyText">
     <xs:restriction base="xs:string">
       <xs:minLength value="1"/>
@@ -101,6 +109,14 @@
     <xs:attribute name="default" type="xs:string"/>
   </xs:complexType>
 
+  <xs:complexType name="NodeField">
+    <xs:attribute name="name" type="AuthoringName" use="required"/>
+    <xs:attribute name="type" type="NonEmptyText" use="required"/>
+    <xs:attribute name="min" type="xs:string"/>
+    <xs:attribute name="max" type="xs:string"/>
+    <xs:attribute name="default" type="xs:string"/>
+  </xs:complexType>
+
   <xs:complexType name="Migration">
     <xs:attribute name="from" type="xs:positiveInteger" use="required"/>
     <xs:attribute name="to" type="xs:positiveInteger" use="required"/>
@@ -145,7 +161,7 @@
        no inheritance; uses are flattened at compile time. -->
   <xs:complexType name="Node">
     <xs:choice minOccurs="0" maxOccurs="unbounded">
-      <xs:element name="field" type="Field"/>
+      <xs:element name="field" type="NodeField"/>
       <xs:element name="uses" type="Use"/>
       <xs:element name="children" type="ChildrenRule"/>
     </xs:choice>

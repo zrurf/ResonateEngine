@@ -40,6 +40,37 @@ internal static class Names
         return true;
     }
 
+    /* Node authoring fields never become C++ members; they may carry the
+       hyphenated spelling the document attributes use (bind-width). */
+    internal static bool IsAuthoringShape(string text)
+    {
+        if (text.Length == 0 || (!char.IsAsciiLetter(text[0]) && text[0] != '_'))
+        {
+            return false;
+        }
+        foreach (char character in text)
+        {
+            if (!char.IsAsciiLetterOrDigit(character) && character != '_' && character != '-')
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    internal static bool CheckAuthoring(string text, string what, string file, int line,
+                                        int column, Diagnostics diagnostics)
+    {
+        if (!IsAuthoringShape(text))
+        {
+            diagnostics.Error(file, line, column,
+                              $"{what} '{text}' is not an authoring name: letters, digits, "
+                                  + "underscores and hyphens, not starting with a digit");
+            return false;
+        }
+        return true;
+    }
+
     internal static bool IsCppKeyword(string text)
     {
         return CppKeywords.Contains(text);
