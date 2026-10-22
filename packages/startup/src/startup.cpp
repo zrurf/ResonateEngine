@@ -12,7 +12,9 @@
 #endif
 
 #include <resonate/application/application.h>
-#include <resonate/csharp/managed_systems.hpp>
+#if defined(RESONATE_WITH_CSHARP)
+#    include <resonate/csharp/managed_systems.hpp>
+#endif
 #include <resonate/pal/io.h>
 #include <resonate/application/systems.h>
 #include <resonate/ecs/world.h>
@@ -52,6 +54,7 @@ std::string titleFor(const DisplayOptions& display, const char* default_title)
     return default_title != nullptr ? default_title : "Resonate";
 }
 
+#if defined(RESONATE_WITH_CSHARP)
 /* A relative path is taken beside the executable first, which is where a
    packaged content tree lives; otherwise it is left as given. */
 std::string resolveManagedPath(const std::string& path)
@@ -70,6 +73,7 @@ std::string resolveManagedPath(const std::string& path)
     }
     return path;
 }
+#endif
 
 } // namespace
 
@@ -179,6 +183,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     }
     render_system.setFeatures(features);
 
+#if defined(RESONATE_WITH_CSHARP)
     /* An optional managed assembly: its systems register alongside the C++
        ones and run through the dispatch table, so the frame never touches a
        delegate. A configured but broken assembly ends the run with the
@@ -245,13 +250,15 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             }
         }
     }
+#endif
 
     const EngineSystemDesc render_desc{"renderer.frame", RESONATE_STAGE_RENDER,
                                        &renderer::RenderSystem::invoke, &render_system};
+#if defined(RESONATE_WITH_CSHARP)
     const EngineSystemDesc managed_desc{"csharp.tick", RESONATE_STAGE_UPDATE,
                                         &csharp::ManagedSystems::invoke, &managed};
-    config.systems = [&propagation, &propagation_desc, &render_system, &render_desc, &managed_desc,
-                      managed_configured](ModuleHost& host, ecs::World& world)
+#endif
+    config.systems = [&](ModuleHost& host, ecs::World& world)
     {
         if (!hierarchy::registerComponents(world) ||
             !renderer::RenderSystem::registerComponents(world))
@@ -269,10 +276,12 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
         {
             return RESONATE_E_INVALID;
         }
+#if defined(RESONATE_WITH_CSHARP)
         if (managed_configured && addEngineSystem(host, managed_desc) != RESONATE_OK)
         {
             return RESONATE_E_INVALID;
         }
+#endif
         /* The demo scene is what the window shows until scenes load from disk;
            it is plain ECS entities, created before the frame loop starts. */
         renderer::composeDemoScene(world);
@@ -286,10 +295,12 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     /* The renderer's device resources go while the device module is alive;
        after the run the host detaches and the capability dies with it. The
        managed context closes after the frame loop has stopped. */
-    config.shutdown = [&render_system, &managed]
+    config.shutdown = [&]
     {
         render_system.release();
+#if defined(RESONATE_WITH_CSHARP)
         managed.unload();
+#endif
     };
 
     if (display.headless)

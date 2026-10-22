@@ -9,7 +9,14 @@ target("Resonate.Startup")
     add_files("src/**.cpp")
 
     add_deps("Resonate.Runtime", "Resonate.Window", "Resonate.Render",
-             "Resonate.Hierarchy", "Resonate.Renderer", "Resonate.CSharp")
+             "Resonate.Hierarchy", "Resonate.Renderer")
+
+    -- The managed runtime is host-only for now: the engine-only (Android)
+    -- build compiles the startup without the C# host.
+    if not get_config("engine_only") then
+        add_deps("Resonate.CSharp")
+        add_defines("RESONATE_WITH_CSHARP")
+    end
 
     -- tree.h includes the generated hierarchy components, so the schema output
     -- has to exist before this target compiles.
