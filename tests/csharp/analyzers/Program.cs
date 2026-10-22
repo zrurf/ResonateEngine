@@ -44,7 +44,12 @@ internal static class Program
         " public delegate* unmanaged<System.IntPtr, int> MarkChunkChanged; }" +        " public struct SystemContext { public float DeltaSeconds;" +
         " public System.IntPtr HostApi; public System.IntPtr Chunks;" +
         " public ulong ChunkCount; }" +
-        "}";
+        "}" +
+        /* The registration logs a contained exception; the self-check's
+           compilation references only the core library, where Console lives in
+           its own assembly. */
+        "namespace System { public static class Console {" +
+        " public static readonly System.IO.TextWriter Error = null; } }";
 
     private const string Marked = "[assembly: Resonate.CSharp.ResonateBehaviour]\n";
     private const string Mutable =
@@ -72,6 +77,12 @@ internal static class Program
         " [Resonate.CSharp.UpdateIn(Resonate.CSharp.ResonateStage.LateUpdate)]" +
         " public static void Follow(Resonate.CSharp.Bindings.SystemContext* frame) {" +
         " frame->DeltaSeconds = 2.0F; } } }";
+    private const string ThrowingEntry =
+        "[assembly: Resonate.CSharp.ResonateBehaviour]\n" +
+        "namespace Game { public static unsafe class Risky {" +
+        " [Resonate.CSharp.UpdateIn(Resonate.CSharp.ResonateStage.Update)]" +
+        " public static void Boom(Resonate.CSharp.Bindings.SystemContext* frame) {" +
+        " throw new System.InvalidOperationException(\"probe\"); } } }";
     private const string UnmarkedEntry =
         "namespace Game { public static unsafe class Behaviour {" +
         " public static void Tick(Resonate.CSharp.Bindings.SystemContext* frame) { } } }";
@@ -114,7 +125,13 @@ internal static class Program
         failures += Check("raw change marking", RawMarking, "RESONATE0007", 1);
 
         failures += CheckGenerator("declared update entry", Marked + UpdateEntry, 0, null,
-                                   new[] { "Systems.Update", "Game.Behaviour.Tick" });
+                                   new[] { "Systems.Update", "Game.Behaviour.Tick",
+                                           "catch (global::System.Exception exception)" });
+        /* A body may throw: the trampoline contains it, or the CLR terminates
+           the process when it crosses the unmanaged boundary. */
+        failures += CheckGenerator("entry that throws", ThrowingEntry, 0, null,
+                                   new[] { "catch (global::System.Exception exception)",
+                                           "Game.Risky.Boom" });
         failures += CheckGenerator("declared entries in two stages",
                                    Marked + UpdateEntry + LateEntry, 0, null,
                                    new[] { "Systems.Update", "Systems.LateUpdate" });
@@ -180,8 +197,10 @@ internal static class Program
         driver = driver.RunGeneratorsAndUpdateCompilation(
             compilation, out Compilation output, out ImmutableArray<Diagnostic> diagnostics);
 
+        /* A clean case must stay clean: any generator diagnostic is a failure,
+           not only the one the case names. */
         int count = expectedDiagnostics == 0
-                        ? 0
+                        ? diagnostics.Length
                         : diagnostics.Count(diagnostic => diagnostic.Id == rule);
         if (count != expectedDiagnostics)
         {

@@ -237,8 +237,19 @@ public sealed class RegistrationGenerator : IIncrementalGenerator
         text.AppendLine();
         text.AppendLine(
             "        [global::System.Runtime.InteropServices.UnmanagedCallersOnly]");
+        text.AppendLine("        public static int RegisterUnmanaged(global::System.IntPtr api)");
+        text.AppendLine("        {");
+        text.AppendLine("            try");
+        text.AppendLine("            {");
+        text.AppendLine("                return Register(api);");
+        text.AppendLine("            }");
+        text.AppendLine("            catch (global::System.Exception exception)");
+        text.AppendLine("            {");
         text.AppendLine(
-            "        public static int RegisterUnmanaged(global::System.IntPtr api) => Register(api);");
+            "                global::System.Console.Error.WriteLine(\"resonate: managed registration threw: \" + exception);");
+        text.AppendLine("                return 1;");
+        text.AppendLine("            }");
+        text.AppendLine("        }");
         foreach ((int stage, string name, List<Entry> group) in Group(entries))
         {
             text.AppendLine();
@@ -246,14 +257,25 @@ public sealed class RegistrationGenerator : IIncrementalGenerator
                 "        [global::System.Runtime.InteropServices.UnmanagedCallersOnly]");
             text.AppendLine($"        private static void {name}(global::System.IntPtr context)");
             text.AppendLine("        {");
+            /* A managed exception must not unwind into the engine's C ABI: the
+               CLR terminates the process when it leaves an UnmanagedCallersOnly
+               method. It is logged and the remaining stage entries still run. */
+            text.AppendLine("            try");
+            text.AppendLine("            {");
             foreach (Entry entry in group)
             {
                 string target = entry.Method.ContainingType.ToDisplayString(
                                     SymbolDisplayFormat.FullyQualifiedFormat) +
                                 "." + entry.Method.Name;
                 text.AppendLine(
-                    $"            {target}((global::Resonate.CSharp.Bindings.SystemContext*)context);");
+                    $"                {target}((global::Resonate.CSharp.Bindings.SystemContext*)context);");
             }
+            text.AppendLine("            }");
+            text.AppendLine("            catch (global::System.Exception exception)");
+            text.AppendLine("            {");
+            text.AppendLine(
+                "                global::System.Console.Error.WriteLine(\"resonate: managed entry threw: \" + exception);");
+            text.AppendLine("            }");
             text.AppendLine("        }");
         }
         text.AppendLine("    }");
