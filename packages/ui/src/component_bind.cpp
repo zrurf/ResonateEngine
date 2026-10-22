@@ -102,6 +102,8 @@ bool parseFloats(std::string_view text, float* out, std::size_t count, std::stri
     return true;
 }
 
+} // namespace
+
 bool parseField(const dom::ComponentFieldDesc& field, const std::string& text, std::byte* data,
                 std::string& error)
 {
@@ -217,8 +219,6 @@ bool parseField(const dom::ComponentFieldDesc& field, const std::string& text, s
     error = "the field type '" + std::string(type) + "' is not bindable here";
     return false;
 }
-
-} // namespace
 
 bool attachGeneric(ecs::World& world, const dom::Document& document, dom::NodeHandle node,
                    ecs::Entity entity, const dom::Component& component,

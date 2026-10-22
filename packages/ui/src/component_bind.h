@@ -11,6 +11,11 @@
 namespace resonate::ui::detail
 {
 
+/* Writes one field's text into a packed component payload through its schema
+   layout. Shared by the generic binder and the state-style compiler. */
+bool parseField(const dom::ComponentFieldDesc& field, const std::string& text, std::byte* data,
+                std::string& error);
+
 /* Parses a component's authoring fields through a schema descriptor and adds
    the packed bytes to the entity. Used for components whose domain owns no
    specific UI adapter (hierarchy, render, gameplay). */

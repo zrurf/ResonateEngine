@@ -1,9 +1,11 @@
 #include <resonate/ui/document.h>
 
+#include <resonate/ui/document_schema.h>
 #include <resonate/ui/style.h>
 
 #include "binding_internal.h"
 #include "component_bind.h"
+#include "state_style_internal.h"
 
 #include <cctype>
 #include <cerrno>
@@ -490,6 +492,62 @@ bool applyDataContext(const dom::Document& document, const dom::Component& compo
     return true;
 }
 
+bool applyInput(const dom::Document& document, const dom::Component& component, Input& input,
+                std::string& error)
+{
+    for (const dom::Field& field : component.fields)
+    {
+        const std::string_view name = document.text(field.name);
+        if (name == "state")
+        {
+            if (field.value == "Normal")
+            {
+                input.state = WidgetState::Normal;
+            }
+            else if (field.value == "Hovered")
+            {
+                input.state = WidgetState::Hovered;
+            }
+            else if (field.value == "Pressed")
+            {
+                input.state = WidgetState::Pressed;
+            }
+            else if (field.value == "Disabled")
+            {
+                input.state = WidgetState::Disabled;
+            }
+            else
+            {
+                error = "Input.state is not a WidgetState";
+                return false;
+            }
+        }
+        else if (name == "focusable" || name == "activated")
+        {
+            if (field.value != "true" && field.value != "false")
+            {
+                error = "Input." + std::string(name) + " is not a bool";
+                return false;
+            }
+            const bool value = field.value == "true";
+            if (name == "focusable")
+            {
+                input.focusable = value;
+            }
+            else
+            {
+                input.activated = value;
+            }
+        }
+        else
+        {
+            error = "unknown Input field '" + std::string(name) + "'";
+            return false;
+        }
+    }
+    return true;
+}
+
 struct BindingContext
 {
     Entity canvas{};
@@ -610,12 +668,194 @@ bool collectBindings(World& world, const dom::Document& document, dom::NodeHandl
     return true;
 }
 
+const dom::ComponentDesc* findDescriptor(std::string_view name,
+                                         const dom::ComponentRegistry* extra)
+{
+    if (const dom::ComponentDesc* descriptor = documentComponents().find(name))
+    {
+        return descriptor;
+    }
+    return extra != nullptr ? extra->find(name) : nullptr;
+}
+
+const dom::ComponentFieldDesc* findFieldDesc(const dom::ComponentDesc& descriptor,
+                                             std::string_view name)
+{
+    for (const dom::ComponentFieldDesc& field : descriptor.fields)
+    {
+        if (field.name != nullptr && name == field.name)
+        {
+            return &field;
+        }
+    }
+    return nullptr;
+}
+
+/* Compiles the difference between the normal and each state's resolved
+   declarations into records on the widget. Only nodes with Input have states,
+   and a state rule may only change a field the normal declarations also set,
+   so restoring the normal value needs no defaults. */
+bool collectStateStyles(World& world, const dom::Document& document, dom::NodeHandle node,
+                        Entity entity, const StyleTable& styles,
+                        const dom::ComponentRegistry* component_registry)
+{
+    if (!world.has<Input>(entity))
+    {
+        return true;
+    }
+
+    const std::vector<dom::Component> normal = styles.resolve(document, node, 0U);
+    std::vector<detail::StateStyleRecord> records;
+    for (std::uint32_t state = 1U; state <= 3U; ++state)
+    {
+        for (const dom::Component& styled : styles.resolve(document, node, state))
+        {
+            const std::string_view component_name = document.text(styled.type);
+            bool has_normal = false;
+            for (const dom::Component& candidate : normal)
+            {
+                if (candidate.type == styled.type)
+                {
+                    has_normal = true;
+                    break;
+                }
+            }
+            if (!has_normal)
+            {
+                return report(world, document, node,
+                              "a state rule may not add component '" +
+                                  std::string(component_name) + "'");
+            }
+
+            const dom::ComponentDesc* descriptor =
+                findDescriptor(component_name, component_registry);
+            if (descriptor == nullptr || descriptor->qualified_name == nullptr)
+            {
+                return report(world, document, node,
+                              "state rules need a registered component for '" +
+                                  std::string(component_name) + "'");
+            }
+            if (descriptor->derived != 0U)
+            {
+                return report(world, document, node,
+                              "a state rule may not declare derived component '" +
+                                  std::string(component_name) + "'");
+            }
+            const ecs::ComponentIndex index = world.findComponent(descriptor->qualified_name);
+            if (index == ecs::kInvalidComponent)
+            {
+                return report(world, document, node,
+                              "component '" + std::string(descriptor->qualified_name) +
+                                  "' is not registered");
+            }
+
+            for (const dom::Field& styled_field : styled.fields)
+            {
+                const std::string_view field_name = document.text(styled_field.name);
+                const dom::Field* normal_field = nullptr;
+                for (const dom::Component& candidate : normal)
+                {
+                    if (candidate.type != styled.type)
+                    {
+                        continue;
+                    }
+                    for (const dom::Field& field : candidate.fields)
+                    {
+                        if (field.name == styled_field.name)
+                        {
+                            normal_field = &field;
+                            break;
+                        }
+                    }
+                    if (normal_field != nullptr)
+                    {
+                        break;
+                    }
+                }
+                if (normal_field == nullptr)
+                {
+                    return report(world, document, node,
+                                  "a state rule sets " + std::string(component_name) + "." +
+                                      std::string(field_name) +
+                                      " but the normal style does not");
+                }
+                if (normal_field->value == styled_field.value)
+                {
+                    continue;
+                }
+
+                const dom::ComponentFieldDesc* layout = findFieldDesc(*descriptor, field_name);
+                if (layout == nullptr)
+                {
+                    return report(world, document, node,
+                                  "unknown field '" + std::string(field_name) + "' on " +
+                                      std::string(component_name));
+                }
+                if (layout->size == 0U || layout->size > detail::kStateStyleValueSize)
+                {
+                    return report(world, document, node,
+                                  "field " + std::string(component_name) + "." +
+                                      std::string(field_name) +
+                                      " is too large for a state style");
+                }
+
+                detail::StateStyleRecord value;
+                value.component = index;
+                value.offset = layout->offset;
+                value.size = layout->size;
+                std::string error;
+                if (!detail::parseField(*layout, normal_field->value, value.value, error))
+                {
+                    return report(world, document, node,
+                                  std::string(component_name) + "." + std::string(field_name) +
+                                      ": " + error);
+                }
+                value.state = 0U;
+                bool has_restore = false;
+                for (const detail::StateStyleRecord& record : records)
+                {
+                    if (record.state == 0U && record.component == value.component &&
+                        record.offset == value.offset)
+                    {
+                        has_restore = true;
+                        break;
+                    }
+                }
+                if (!has_restore)
+                {
+                    records.push_back(value);
+                }
+                if (!detail::parseField(*layout, styled_field.value, value.value, error))
+                {
+                    return report(world, document, node,
+                                  std::string(component_name) + "." + std::string(field_name) +
+                                      ": " + error);
+                }
+                value.state = state;
+                records.push_back(value);
+            }
+        }
+    }
+
+    if (records.empty())
+    {
+        return true;
+    }
+    const ecs::BlobHandle blob = world.createBlob(
+        entity, records.size() * sizeof(detail::StateStyleRecord), records.data());
+    if (!blob.valid() || world.add(entity, StateStyles{blob}) == nullptr)
+    {
+        return report(world, document, node, "state-style records could not be attached");
+    }
+    return true;
+}
+
 bool applyComponents(World& world, const dom::Document& document, dom::NodeHandle node,
                      Entity entity, const std::vector<dom::Component>& components,
                      BindingContext& bindings, const dom::ComponentRegistry* component_registry)
 {
     const dom::Component* computed = nullptr;
-    const dom::Component* authored_bindings = nullptr;
+    const dom::Component* authored_derived = nullptr;
     for (const dom::Component& component : components)
     {
         const std::string_view name = baseName(document.text(component.type));
@@ -624,9 +864,9 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
             computed = &component;
             continue;
         }
-        if (name == "Bindings")
+        if (name == "Bindings" || name == "PointerState" || name == "StateStyles")
         {
-            authored_bindings = &component;
+            authored_derived = &component;
             continue;
         }
 
@@ -668,6 +908,12 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
             applied = applyDataContext(document, component, value, error) &&
                       world.add(entity, value) != nullptr;
         }
+        else if (name == "Input")
+        {
+            Input value;
+            applied = applyInput(document, component, value, error) &&
+                      world.add(entity, value) != nullptr;
+        }
         else
         {
             const dom::ComponentDesc* descriptor =
@@ -697,10 +943,10 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
         return report(world, document, node,
                       "ComputedRect is derived by layout and cannot be authored");
     }
-    if (authored_bindings != nullptr)
+    if (authored_derived != nullptr)
     {
         return report(world, document, node,
-                      "Bindings is derived by the adapter and cannot be authored");
+                      "Bindings, PointerState and StateStyles are derived and cannot be authored");
     }
     if (world.add(entity, ComputedRect{}) == nullptr)
     {
@@ -731,9 +977,17 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
     }
 
     if (!applyComponents(world, document, node, entity, styles.resolve(document, node), bindings,
-                         component_registry))
+                         component_registry) ||
+        !collectStateStyles(world, document, node, entity, styles, component_registry))
     {
         return Entity{};
+    }
+    Input* input = world.get<Input>(entity);
+    if (input != nullptr && !input->focusable)
+    {
+        input->state = WidgetState::Disabled;
+        world.markChanged<Input>(entity);
+        detail::applyStateStyles(world, entity, static_cast<std::uint32_t>(WidgetState::Disabled));
     }
 
     for (dom::NodeHandle child = document.firstChild(node); child.valid();
@@ -799,6 +1053,15 @@ Entity instantiate(World& world, dom::Document& document,
     if (world.get<Canvas>(entity) == nullptr)
     {
         report(world, document, root, "the root node must carry Canvas");
+        for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)
+        {
+            world.destroy(*iterator);
+        }
+        return Entity{};
+    }
+    if (world.add(entity, PointerState{}) == nullptr)
+    {
+        report(world, document, root, "PointerState could not be attached");
         for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)
         {
             world.destroy(*iterator);

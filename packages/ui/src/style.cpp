@@ -38,6 +38,7 @@ struct Selector
     std::string type;
     std::vector<dom::StringId> classes;
     dom::StringId id = dom::kInvalidString;
+    std::uint32_t state = 0U;
 };
 
 bool parseSelector(dom::Document& document, std::string_view text, Selector& out,
@@ -74,6 +75,39 @@ bool parseSelector(dom::Document& document, std::string_view text, Selector& out
     while (index < text.size())
     {
         const char marker = text[index];
+        if (marker == ':')
+        {
+            ++index;
+            const std::size_t state_begin = index;
+            while (index < text.size() && isIdentifierCharacter(text[index]))
+            {
+                ++index;
+            }
+            const std::string_view state = text.substr(state_begin, index - state_begin);
+            if (state == "hover")
+            {
+                out.state = 1U;
+            }
+            else if (state == "pressed")
+            {
+                out.state = 2U;
+            }
+            else if (state == "disabled")
+            {
+                out.state = 3U;
+            }
+            else
+            {
+                error = "unknown state pseudo-class ':" + std::string(state) + "'";
+                return false;
+            }
+            if (index != text.size())
+            {
+                error = "a state pseudo-class ends the selector";
+                return false;
+            }
+            break;
+        }
         if (marker != '.' && marker != '#')
         {
             error = "unexpected character in selector; only Type.class#id is supported";
@@ -181,7 +215,8 @@ bool StyleTable::empty() const noexcept
 }
 
 std::vector<dom::Component> StyleTable::resolve(const dom::Document& document,
-                                                dom::NodeHandle node) const
+                                                dom::NodeHandle node,
+                                                std::uint32_t state) const
 {
     std::vector<dom::Component> result(document.components(node).begin(),
                                        document.components(node).end());
@@ -203,6 +238,10 @@ std::vector<dom::Component> StyleTable::resolve(const dom::Document& document,
 
     for (const Impl::Rule& rule : impl_->rules)
     {
+        if (rule.selector.state != 0U && rule.selector.state != state)
+        {
+            continue;
+        }
         if (!impl_->matches(document, rule, node))
         {
             continue;
@@ -286,7 +325,10 @@ bool buildStyles(dom::Document& document, StyleTable& out,
         }
         rule.specificity = (rule.selector.id != dom::kInvalidString ? 100 : 0) +
                            static_cast<std::int32_t>(rule.selector.classes.size()) * 10 +
-                           (rule.selector.type.empty() ? 0 : 1);
+                           (rule.selector.type.empty() ? 0 : 1) +
+                           (rule.selector.state == 1U
+                                ? 10
+                                : (rule.selector.state == 0U ? 0 : 20));
         rule.order = order++;
         for (const dom::Component& component : document.components(node))
         {

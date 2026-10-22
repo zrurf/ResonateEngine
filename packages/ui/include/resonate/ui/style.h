@@ -28,8 +28,11 @@ class StyleTable
 
     [[nodiscard]] bool empty() const noexcept;
 
+    /* `state` is a WidgetState value: 0 normal, 1 hovered, 2 pressed,
+       3 disabled. State rules apply on top of the base rules. */
     [[nodiscard]] std::vector<dom::Component> resolve(const dom::Document& document,
-                                                      dom::NodeHandle node) const;
+                                                      dom::NodeHandle node,
+                                                      std::uint32_t state = 0U) const;
 
   private:
     struct Impl;

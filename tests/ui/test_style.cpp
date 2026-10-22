@@ -108,6 +108,8 @@ TEST_CASE("ui style: malformed selectors and derived declarations are refused", 
     const char* const invalid[] = {
         R"xml(<document version="1"><Screen><StyleSheet><StyleRule selector=".bad selector"/></StyleSheet></Screen></document>)xml",
         R"xml(<document version="1"><Screen><StyleSheet><StyleRule selector=".x"><ComputedRect/></StyleRule></StyleSheet></Screen></document>)xml",
+        R"xml(<document version="1"><Screen><StyleSheet><StyleRule selector=".x:focus"/></StyleSheet></Screen></document>)xml",
+        R"xml(<document version="1"><Screen><StyleSheet><StyleRule selector=".x:hover.extra"/></StyleSheet></Screen></document>)xml",
     };
 
     for (const char* text : invalid)
@@ -120,6 +122,31 @@ TEST_CASE("ui style: malformed selectors and derived declarations are refused", 
         diagnostics.clear();
         CHECK_FALSE(resonate::ui::buildStyles(*document, styles, diagnostics));
         CHECK_FALSE(diagnostics.empty());
+
+        Fixture fixture;
+        CHECK_FALSE(resonate::ui::instantiate(fixture.world, *document).valid());
+    }
+}
+
+TEST_CASE("ui style: a state rule needs a normal declaration and may not add components",
+          "[ui][style]")
+{
+    const char* const invalid[] = {
+        /* The base value to restore on leaving the state is not declared. */
+        R"xml(<document version="1"><Screen><StyleSheet><StyleRule selector=".action:hover"><Background color="0 1 0 1"/></StyleRule></StyleSheet><Button class="action" width="10" height="10"/></Screen></document>)xml",
+        /* A state rule may restyle, not bring a component into existence. */
+        R"xml(<document version="1"><Screen><StyleSheet><StyleRule selector=".action"><Background color="0 1 0 1"/></StyleRule><StyleRule selector=".action:hover"><LayoutGroup gap="2"/></StyleRule></StyleSheet><Button class="action" width="10" height="10"/></Screen></document>)xml",
+    };
+
+    for (const char* text : invalid)
+    {
+        std::vector<resonate::dom::Diagnostic> diagnostics;
+        auto document =
+            resonate::dom::Document::parse(text, &resonate::ui::documentSchema(), diagnostics);
+        REQUIRE(document != nullptr);
+        resonate::ui::StyleTable styles;
+        diagnostics.clear();
+        REQUIRE(resonate::ui::buildStyles(*document, styles, diagnostics));
 
         Fixture fixture;
         CHECK_FALSE(resonate::ui::instantiate(fixture.world, *document).valid());

@@ -38,6 +38,21 @@
       ]
     },
     {
+      "name": "Button",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Button version 1",
+        "  field bind-x binding",
+        "  field bind-y binding",
+        "  field bind-width binding",
+        "  field bind-height binding",
+        "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
+        "  uses Background expose color",
+        "  uses Input"
+      ]
+    },
+    {
       "name": "Canvas",
       "kind": "component",
       "version": 1,
@@ -73,6 +88,19 @@
         "  field max_health f32 @4 size 4 default=1",
         "  field ammo f32 @8 size 4 default=0",
         "  field max_ammo f32 @12 size 4 default=1"
+      ]
+    },
+    {
+      "name": "Input",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Input version 1",
+        "  size 3 align 1",
+        "  field state resonate.ui.WidgetState @0 size 1 default=Normal",
+        "  field focusable bool @1 size 1 default=true",
+        "  field activated bool @2 size 1 default=false",
+        "  enum WidgetState u8 values Normal=0, Hovered=1, Pressed=2, Disabled=3"
       ]
     },
     {
@@ -125,6 +153,19 @@
       ]
     },
     {
+      "name": "PointerState",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component PointerState version 1",
+        "  size 28 align 4",
+        "  field hover entity @0 size 8",
+        "  field press entity @8 size 8",
+        "  field activated entity @16 size 8",
+        "  field down bool @24 size 1"
+      ]
+    },
+    {
       "name": "RectTransform",
       "kind": "component",
       "version": 1,
@@ -151,6 +192,16 @@
         "node Screen version 1",
         "  uses Canvas expose scale",
         "  uses DataContext expose ammo health max_ammo max_health"
+      ]
+    },
+    {
+      "name": "StateStyles",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component StateStyles version 1",
+        "  size 8 align 4",
+        "  field records blob @0 size 8"
       ]
     },
     {

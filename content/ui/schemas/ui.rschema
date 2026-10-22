@@ -34,6 +34,13 @@
     <value name="Stretch"/>
   </enum>
 
+  <enum name="WidgetState" width="u8">
+    <value name="Normal"/>
+    <value name="Hovered"/>
+    <value name="Pressed"/>
+    <value name="Disabled"/>
+  </enum>
+
   <!-- The root marker. Its rectangle is the target the layout pass is given;
        scale is the one global factor between authored pixels and the target. -->
   <component name="Canvas" version="1">
@@ -102,6 +109,27 @@
     <field name="records" type="blob"/>
   </component>
 
+  <!-- Interaction state of a widget. `activated` is true for the update in
+       which a press was released inside it. -->
+  <component name="Input" version="1">
+    <field name="state" type="WidgetState" default="Normal"/>
+    <field name="focusable" type="bool" default="true"/>
+    <field name="activated" type="bool" default="false"/>
+  </component>
+
+  <!-- The pointer's current target, derived by the input system. -->
+  <component name="PointerState" version="1" derived="true">
+    <field name="hover" type="entity"/>
+    <field name="press" type="entity"/>
+    <field name="activated" type="entity"/>
+    <field name="down" type="bool"/>
+  </component>
+
+  <!-- State-style overrides, compiled at instantiation; a blob on the canvas. -->
+  <component name="StateStyles" version="1" derived="true">
+    <field name="records" type="blob"/>
+  </component>
+
   <!-- Reserved for the style compiler: the interned table entry a widget's
        class set resolves to. Layout does not read it. -->
   <component name="StyleRef" version="1">
@@ -141,6 +169,17 @@
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color"/>
+    <field name="bind-x" type="binding"/>
+    <field name="bind-y" type="binding"/>
+    <field name="bind-width" type="binding"/>
+    <field name="bind-height" type="binding"/>
+  </node>
+
+  <node name="Button" version="1">
+    <uses component="RectTransform"
+          expose="x y width height anchor_min anchor_max pivot z position"/>
+    <uses component="Background" expose="color"/>
+    <uses component="Input"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>
     <field name="bind-width" type="binding"/>
