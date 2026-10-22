@@ -4,7 +4,8 @@
 
 local project = os.projectdir()
 local rust_root = path.join(project, "build", "text-rust")
-local triple = is_plat("android") and "aarch64-linux-android" or "x86_64-pc-windows-msvc"
+local android = os.getenv("RESONATE_TEXT_PLATFORM") == "android"
+local triple = android and "aarch64-linux-android" or "x86_64-pc-windows-msvc"
 
 local program_files_x86 = os.getenv("ProgramFiles(x86)") or "C:\\Program Files (x86)"
 local vswhere = path.join(program_files_x86, "Microsoft Visual Studio", "Installer", "vswhere.exe")
@@ -20,12 +21,14 @@ if os.isfile(vswhere) then
     end
 end
 table.insert(lines, string.format('set "CARGO_TARGET_DIR=%s"', rust_root))
-if is_plat("android") then
-    local ndk = get_config("ndk") or os.getenv("ANDROID_NDK_HOME") or
-                    os.getenv("ANDROID_NDK_ROOT")
+if android then
+    local ndk = os.getenv("RESONATE_TEXT_NDK")
     if ndk == nil or ndk == "" then
         raise("no NDK path: pass --ndk=<dir> or set ANDROID_NDK_HOME")
     end
+    -- The user's cargo config applies -C target-cpu=native to host builds;
+    -- that is meaningless and crashes rustc for an Android target.
+    table.insert(lines, 'set "RUSTFLAGS=-g"')
     local bin = path.join(ndk, "toolchains", "llvm", "prebuilt", "windows-x86_64", "bin")
     table.insert(lines, string.format(
                      'set "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=%s"',

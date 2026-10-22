@@ -26,7 +26,12 @@ target("Resonate.Text")
     -- which has the full environment the package script scope lacks.
     before_build(function (target)
         local script = path.join(os.projectdir(), "scripts", "text_rust.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
+        local envs = {RESONATE_TEXT_PLATFORM = is_plat("android") and "android" or "windows"}
+        if is_plat("android") then
+            envs.RESONATE_TEXT_NDK = get_config("ndk") or os.getenv("ANDROID_NDK_HOME") or
+                                         os.getenv("ANDROID_NDK_ROOT")
+        end
+        local output = os.iorunv(os.programfile(), {"lua", script}, {envs = envs})
         if output ~= nil then
             print((output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", "")))
         end
