@@ -65,7 +65,8 @@ target("Resonate.Tests")
 
     add_files("main.cpp", "render/**.cpp", "core/**.cpp", "module/**.cpp", "pal/**.cpp",
               "runtime/**.cpp", "window/**.cpp", "ecs/**.cpp", "gameplay/**.cpp",
-              "hierarchy/**.cpp", "ui/**.cpp", "document/**.cpp", "schema/**.cpp",
+              "hierarchy/**.cpp", "ui/**.cpp", "document/**.cpp", "document/**.c",
+              "schema/**.cpp",
               "csharp/**.cpp")
     add_tests("default")
 

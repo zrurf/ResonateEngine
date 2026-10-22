@@ -6,6 +6,8 @@
 
 #include <resonate/dom/abi.h>
 
+extern "C" int resonate_dom_c_abi_check(void);
+
 namespace
 {
 
@@ -31,6 +33,11 @@ const char* const kDocument = R"xml(<document version="1" schemas="resonate.ui">
 </document>)xml";
 
 } // namespace
+
+TEST_CASE("document abi: the C surface compiles and links as C", "[document][abi]")
+{
+    CHECK(resonate_dom_c_abi_check() == 0);
+}
 
 TEST_CASE("document abi: handles, strings, components and queries", "[document][abi]")
 {
