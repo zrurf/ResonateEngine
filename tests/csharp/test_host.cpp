@@ -291,7 +291,9 @@ TEST_CASE("csharp: a managed system reads a named component's chunk", "[csharp]"
     CHECK(counters[2] == 30);
     CHECK(counters[3] == 2);
     CHECK(counters[4] == static_cast<int>(first.index));
-    CHECK(counters[5] == 0);
+    /* The self view marked the chunk when it was disposed; the observer saw
+       the write. */
+    CHECK(counters[5] == 1);
     CHECK(counters[11] == 1);
     CHECK(systems.frames() == 1U);
 

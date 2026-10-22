@@ -11,3 +11,4 @@ RESONATE0003 | Resonate | Warning | Component memory is reached through a typed 
 RESONATE0004 | Resonate | Warning | Update declaration has an unusable entry
 RESONATE0005 | Resonate | Warning | Behaviour entry has no update declaration
 RESONATE0006 | Resonate | Warning | Component views are not cached
+RESONATE0007 | Resonate | Warning | Change marking is automatic

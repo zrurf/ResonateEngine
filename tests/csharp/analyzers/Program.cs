@@ -40,8 +40,8 @@ internal static class Program
         " public delegate* unmanaged<System.IntPtr, ulong*, int> Spawn;" +
         " public delegate* unmanaged<System.IntPtr, ulong, byte*, System.IntPtr, int> AddComponent;" +
         " public delegate* unmanaged<System.IntPtr, ulong, byte*, int> RemoveComponent;" +
-        " public delegate* unmanaged<System.IntPtr, ulong, int> Despawn; }" +
-        " public struct SystemContext { public float DeltaSeconds;" +
+        " public delegate* unmanaged<System.IntPtr, ulong, int> Despawn;" +
+        " public delegate* unmanaged<System.IntPtr, int> MarkChunkChanged; }" +        " public struct SystemContext { public float DeltaSeconds;" +
         " public System.IntPtr HostApi; public System.IntPtr ChunkData;" +
         " public ulong ChunkCount; public System.IntPtr EntityData; }" +
         "}";
@@ -92,6 +92,13 @@ internal static class Program
         " [Resonate.CSharp.UpdateIn(Resonate.CSharp.ResonateStage.Update)]" +
         " public static void Tick(Resonate.CSharp.Bindings.SystemContext* frame) {" +
         " System.IntPtr data = frame->ChunkData; } } }";
+    private const string RawMarking =
+        "[assembly: Resonate.CSharp.ResonateBehaviour]\n" +
+        "namespace Game { public static unsafe class Behaviour {" +
+        " [Resonate.CSharp.UpdateIn(Resonate.CSharp.ResonateStage.Update)]" +
+        " public static void Tick(Resonate.CSharp.Bindings.SystemContext* frame) {" +
+        " var api = (Resonate.CSharp.Bindings.HostApi*)frame->HostApi;" +
+        " api->MarkChunkChanged((System.IntPtr)api); } } }";
 
     private static int Main()
     {
@@ -104,6 +111,7 @@ internal static class Program
         failures += Check("marked + plain field", Marked + PlainField, "RESONATE0006", 0);
         failures += Check("raw structural call", RawStructural, "RESONATE0002", 1);
         failures += Check("raw chunk pointer", RawChunk, "RESONATE0003", 1);
+        failures += Check("raw change marking", RawMarking, "RESONATE0007", 1);
 
         failures += CheckGenerator("declared update entry", Marked + UpdateEntry, 0, null,
                                    new[] { "Systems.Update", "Game.Behaviour.Tick" });
@@ -131,7 +139,8 @@ internal static class Program
         ImmutableArray<Diagnostic> diagnostics = compilation
             .WithAnalyzers(ImmutableArray.Create<DiagnosticAnalyzer>(
                 new NoMutableStaticsAnalyzer(), new CachedViewAnalyzer(),
-                new StructuralBypassAnalyzer(), new RawChunkAccessAnalyzer()))
+                new StructuralBypassAnalyzer(), new RawChunkAccessAnalyzer(),
+                new ChangeMarkingAnalyzer()))
             .GetAnalyzerDiagnosticsAsync()
             .GetAwaiter()
             .GetResult();

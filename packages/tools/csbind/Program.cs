@@ -675,11 +675,13 @@ internal static class Program
             public ref readonly T Value => ref *_data;
         }
 
-        /* Law 3's self side: the chunk the stage handed over, writable. The
-           type check against the host's component name keeps a wrong T from
-           aliasing the memory. */
+        /* Law 3's self side: the chunk the stage handed over, writable, and the
+           mark goes out when the view is disposed (law 7: a write is never
+           invisible). The type check against the host's component name keeps a
+           wrong T from aliasing the memory. */
         public unsafe ref struct SelfView<T> where T : unmanaged
         {
+            private HostApi* _api;
             private Span<T> _items;
             private ReadOnlySpan<EntityHandle> _entities;
 
@@ -700,6 +702,7 @@ internal static class Program
                 }
                 view = new SelfView<T>
                 {
+                    _api = api,
                     _items = new Span<T>((void*)frame->ChunkData, (int)frame->ChunkCount),
                     _entities = new ReadOnlySpan<EntityHandle>(
                         (void*)frame->EntityData, (int)frame->ChunkCount),
@@ -710,6 +713,18 @@ internal static class Program
             public Span<T> Items => _items;
 
             public ReadOnlySpan<EntityHandle> Entities => _entities;
+
+            /* A self view denotes intent to write, so the chunk is marked even
+               when the body only read: over-reporting is safe, a missed write
+               is not. */
+            public void Dispose()
+            {
+                if (_api != null)
+                {
+                    _api->MarkChunkChanged((IntPtr)_api);
+                    _api = null;
+                }
+            }
         }
         """;
     }

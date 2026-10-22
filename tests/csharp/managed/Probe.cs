@@ -21,7 +21,8 @@ public static unsafe class Probe
        generator places it in the UPDATE table.
 
        Counter words: 0 calls, 1 last frame index, 2 ΣX×10 (or -1 when there is
-       no chunk), 3 rows, 4 first entity index, 5 mark status, 6 spawn status,
+       no chunk), 3 rows, 4 first entity index, 5 self view disposed (its chunk
+       mark went out), 6 spawn status,
        7 spawned index, 8 request on frame 1 (0 none, 1 remove, 2 despawn,
        3 read), 9 request result, 10 spawned generation, 11 wrong-type self
        view rejected. */
@@ -70,7 +71,6 @@ public static unsafe class Probe
             counters[8] = 0;
         }
 
-        HostApi* api = (HostApi*)frame->HostApi;
         if (!SelfView<Resonate.Hierarchy.LocalTransform>.TryFrom(
                 frame, Resonate.Hierarchy.LocalTransform.SchemaNameUtf8,
                 out SelfView<Resonate.Hierarchy.LocalTransform> self))
@@ -78,34 +78,38 @@ public static unsafe class Probe
             counters[2] = -1;
             return;
         }
-        Span<Resonate.Hierarchy.LocalTransform> transforms = self.Items;
-        float sum = 0.0F;
-        for (int index = 0; index < transforms.Length; ++index)
+        using (self)
         {
-            sum += transforms[index].Position.X;
-            transforms[index].Position.Y = 1.0F;
+            Span<Resonate.Hierarchy.LocalTransform> transforms = self.Items;
+            float sum = 0.0F;
+            for (int index = 0; index < transforms.Length; ++index)
+            {
+                sum += transforms[index].Position.X;
+                transforms[index].Position.Y = 1.0F;
+            }
+            counters[2] += (int)(sum * 10.0F);
+            counters[3] += transforms.Length;
+            counters[4] = (int)self.Entities[0].Index;
+
+            /* A view of the wrong type is rejected, so a mismatched T cannot
+               alias the chunk. */
+            bool rejected = !SelfView<Resonate.Hierarchy.WorldTransform>.TryFrom(
+                frame, Resonate.Hierarchy.WorldTransform.SchemaNameUtf8, out _);
+            counters[11] = rejected ? 1 : 0;
+
+            if (frame->FrameIndex == 1 && counters[8] == 3)
+            {
+                counters[9] = commands.Read(self.Entities[0],
+                                            Resonate.Hierarchy.LocalTransform.SchemaNameUtf8,
+                                            out ReadView<Resonate.Hierarchy.LocalTransform> view)
+                                  ? (int)(view.Value.Position.X * 10.0F)
+                                  : -1;
+                counters[8] = 0;
+            }
+
+            /* The view marks the chunk when it is disposed. */
+            counters[5] = 1;
         }
-        counters[2] += (int)(sum * 10.0F);
-        counters[3] += transforms.Length;
-        counters[4] = (int)self.Entities[0].Index;
-
-        /* A view of the wrong type is rejected, so a mismatched T cannot
-           alias the chunk. */
-        bool rejected = !SelfView<Resonate.Hierarchy.WorldTransform>.TryFrom(
-            frame, Resonate.Hierarchy.WorldTransform.SchemaNameUtf8, out _);
-        counters[11] = rejected ? 1 : 0;
-
-        if (frame->FrameIndex == 1 && counters[8] == 3)
-        {
-            counters[9] = commands.Read(self.Entities[0],
-                                        Resonate.Hierarchy.LocalTransform.SchemaNameUtf8,
-                                        out ReadView<Resonate.Hierarchy.LocalTransform> view)
-                              ? (int)(view.Value.Position.X * 10.0F)
-                              : -1;
-            counters[8] = 0;
-        }
-
-        counters[5] = api->MarkChunkChanged((IntPtr)api);
     }
 
     /* The read path's second stage: proves the registration keeps entries
