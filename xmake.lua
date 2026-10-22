@@ -300,6 +300,17 @@ task("csharp-bench")
         description = "Run the C# FFI-budget bench.",
     }
 
+task("csharp-reload")
+    set_category("plugin")
+    on_run(function ()
+        os.execv(os.programfile(), {"build", "-y", "Resonate.Bench.Reload"})
+        os.execv(os.programfile(), {"run", "Resonate.Bench.Reload"})
+    end)
+    set_menu {
+        usage = "xmake csharp-reload",
+        description = "Run the managed hot-reload acceptance bench.",
+    }
+
 task("texcook")
     set_category("plugin")
     on_run(function ()

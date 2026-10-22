@@ -192,3 +192,37 @@ target("Resonate.Bench.CSharp")
             print(output)
         end
     end)
+
+-- The hot-reload acceptance: rewrite one managed file, rebuild the patch,
+-- swap it through the collectible ALC and see the new value, timed end to end.
+target("Resonate.Bench.Reload")
+    set_kind("binary")
+    set_default(false)
+    set_group("tests")
+
+    add_files("bench/csharp_reload.cpp", "../packages/csharp/src/**.cpp",
+              "../packages/ecs/src/**.cpp", "../packages/core/src/container/**.cpp",
+              "../packages/core/src/memory/**.cpp", "../packages/core/src/job/**.cpp")
+    add_includedirs(".", "../packages/csharp/include", "../packages/ecs/include",
+                    "../packages/core/include", "../packages/module/include",
+                    path.join(os.projectdir(), "build", "gen", "csharp"))
+
+    add_files("../packages/pal/src/common/*.cpp")
+    add_includedirs("../packages/pal/include", "../packages/pal/src")
+    if is_plat("windows") then
+        add_files("../packages/pal/src/platform/os/windows/**.cpp")
+        add_syslinks("user32", "kernel32")
+    else
+        add_files("../packages/pal/src/common/posix/**.cpp")
+        add_syslinks("pthread", "dl")
+    end
+
+    add_packages("xxhash")
+
+    before_build(function (target)
+        local script = path.join(os.projectdir(), "scripts", "csharp_reload.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script})
+        if output ~= nil then
+            print(output)
+        end
+    end)

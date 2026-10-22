@@ -83,6 +83,14 @@ public static unsafe class PatchHost
                 return 1;
             }
             context.Unload();
+            /* Unload only initiates collection, and the mapped assembly file
+               stays locked until it happens. A reload loop rebuilds to the same
+               path, so collect here rather than making the caller poll. */
+            for (int round = 0; round < 3; ++round)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
             return 0;
         }
         catch (Exception)
