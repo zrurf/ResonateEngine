@@ -104,3 +104,9 @@ key = "resonate.csharp.patch-entry-type"
 type = "string"
 default = ""
 description = "Type holding the patch's registration, resolved inside the patch."
+
+[[setting]]
+key = "resonate.ui.document"
+type = "string"
+default = "content/ui/demo.rui"
+description = "UI document loaded at startup; empty uses the built-in HUD."

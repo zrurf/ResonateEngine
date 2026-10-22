@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,9 +28,12 @@
 #include <resonate/hierarchy/system.h>
 #include <resonate/hierarchy/tree.h>
 #include <resonate/module/host.hpp>
+#include <resonate/dom/document.h>
 #include <resonate/render/canvas.h>
 #include <resonate/render/offscreen.hpp>
 #include <resonate/renderer/renderer.h>
+#include <resonate/ui/document.h>
+#include <resonate/ui/document_schema.h>
 #include <resonate/ui/layout.h>
 #include <resonate/window/input.h>
 #include <resonate/window/session.hpp>
@@ -78,9 +83,83 @@ struct UiFrame
     }
 };
 
+ecs::Entity composeBuiltinHud(ecs::World& world);
+
+/* Content lives beside the executable in a shipped layout and in the project
+   tree during development; the walk covers both. */
+std::string findContentFile(const std::string& relative)
+{
+    std::filesystem::path directory = resonate_pal_io_executable_directory();
+    for (int level = 0; level < 6; ++level)
+    {
+        const std::filesystem::path candidate = directory / relative;
+        std::error_code error;
+        if (std::filesystem::is_regular_file(candidate, error))
+        {
+            return candidate.string();
+        }
+        if (!directory.has_parent_path())
+        {
+            break;
+        }
+        directory = directory.parent_path();
+    }
+    return {};
+}
+
+/* The configured UI document, instantiated into the world. A missing default
+   document falls back to the built-in HUD; a configured one or a broken one
+   ends the run with the reason. */
+ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool required)
+{
+    if (configured.empty())
+    {
+        return composeBuiltinHud(world);
+    }
+    const std::string path = findContentFile(configured);
+    if (path.empty())
+    {
+        if (required)
+        {
+            std::fprintf(stderr, "resonate: ui document: cannot find %s\n", configured.c_str());
+            return ecs::Entity{};
+        }
+        std::fprintf(stderr, "resonate: ui document: %s is missing; using the built-in HUD\n",
+                     configured.c_str());
+        return composeBuiltinHud(world);
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open())
+    {
+        std::fprintf(stderr, "resonate: ui document: cannot read %s\n", path.c_str());
+        return ecs::Entity{};
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    std::vector<dom::Diagnostic> diagnostics;
+    auto document = dom::Document::parse(text, &ui::documentSchema(), diagnostics);
+    if (document == nullptr)
+    {
+        for (const dom::Diagnostic& diagnostic : diagnostics)
+        {
+            std::fprintf(stderr, "resonate: ui document: %s:%u:%u: %s\n", path.c_str(),
+                         diagnostic.line, diagnostic.column, diagnostic.message.c_str());
+        }
+        return ecs::Entity{};
+    }
+    const ecs::Entity canvas = ui::instantiate(world, *document);
+    if (!canvas.valid())
+    {
+        return ecs::Entity{};
+    }
+    std::fprintf(stderr, "resonate: ui: %s\n", path.c_str());
+    return canvas;
+}
+
 /* The start-up's demo HUD: a panel with three bars, laid out and painted every
    frame. It is sample content, not a library default. */
-ecs::Entity composeDemoHud(ecs::World& world)
+ecs::Entity composeBuiltinHud(ecs::World& world)
 {
     const ecs::Entity canvas = world.create();
     world.add(canvas, ui::Canvas{});
@@ -301,6 +380,12 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             ? *display.height
             : schema.readUInt(config.settings, "resonate.window.height", 900U);
     config.max_fps = schema.readUInt(config.settings, "resonate.loop.max-fps", 0U);
+    const std::optional<std::string> ui_document_setting =
+        config.settings.value("resonate.ui", "document");
+    const std::string ui_document =
+        ui_document_setting.value_or("content/ui/demo.rui");
+    const bool ui_document_required =
+        ui_document_setting.has_value() && !ui_document_setting->empty();
 
     /* The session outlives the run, and the capabilities it publishes outlive the
        modules that resolved them. */
@@ -461,7 +546,11 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
                 host.capabilities(), detail::CapabilityTraits<ResonateRenderCanvas>::id.value(),
                 1U, &version);
             ui_frame.target = static_cast<const ResonateRenderCanvas*>(target);
-            ui_frame.canvas = composeDemoHud(world);
+            ui_frame.canvas = loadDemoHud(world, ui_document, ui_document_required);
+            if (!ui_frame.canvas.valid())
+            {
+                return RESONATE_E_INVALID;
+            }
         }
         /* The level slices live on this system's stack. The parallel path has
            been seen running a slice after its wait returned on Android, so the

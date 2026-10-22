@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<document version="1" schemas="resonate.ui">
+  <!-- The start-up HUD: a panel with a title and two bars, all implicit node
+       types. The layout pass resolves the exposed attributes into the default
+       RectTransform/Background/LayoutGroup components. -->
+  <Screen key="hud" name="HUD">
+    <Panel key="panel" id="hud-panel" name="Panel" class="panel"
+           x="40" y="40" width="360" height="180"
+           color="0.06 0.07 0.10 0.92"
+           direction="Column" align="Stretch" gap="8"
+           padding_left="12" padding_top="12" padding_right="12" padding_bottom="12">
+      <Label key="title" name="Title" height="28" color="0.20 0.42 0.90 1"/>
+      <Label key="bar.health" name="Health" height="16" color="0.35 0.84 0.45 1"/>
+      <Label key="bar.ammo" name="Ammo" height="16" color="0.92 0.52 0.30 1"/>
+    </Panel>
+  </Screen>
+</document>
