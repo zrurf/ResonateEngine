@@ -1116,8 +1116,10 @@ bool ActionMap::load(const std::string& path, std::string& error)
     }
 
     /* The document is valid; replace the map wholesale so a failed load never
-       leaves half a rebind applied. */
+       leaves half a rebind applied. The user layer described the old base map,
+       so it goes with it and is loaded again after this call. */
     impl_->actions.clear();
+    impl_->overrides.clear();
     impl_->actions.reserve(parsed_actions.size());
     for (ActionData& parsed : parsed_actions)
     {

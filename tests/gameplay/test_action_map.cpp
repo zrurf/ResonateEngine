@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 #include <resonate/gameplay/action_map.h>
@@ -381,6 +382,36 @@ TEST_CASE("action map: rebinding persists as a user layer", "[action-map]")
     check.left_mouse = true;
     restored.update(&check.input);
     CHECK_FALSE(restored.state("fire")->held);
+}
+
+TEST_CASE("action map: reloading the base map drops the old user layer", "[action-map]")
+{
+    TempMap base;
+    base.write(kDocument);
+    resonate::gameplay::ActionMap map;
+    std::string error;
+    REQUIRE(map.load(base.path(), error));
+    REQUIRE(map.bind("fire", "keyboard", "k", error));
+
+    /* A different base map: fire is now on escape. The old user layer named
+       space, which must not survive into the new map's overrides. */
+    base.write("<action-map>"
+               "<action name=\"fire\"/>"
+               "<binding action=\"fire\" device=\"keyboard\" control=\"escape\"/>"
+               "</action-map>");
+    REQUIRE(map.load(base.path(), error));
+
+    TempMap saved;
+    REQUIRE(map.saveOverrides(saved.path(), error));
+    std::ifstream in(saved.path(), std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    CHECK(text.find("<binding") == std::string::npos);
+
+    FakeInput fake;
+    fake.k = true;
+    map.update(&fake.input);
+    CHECK_FALSE(map.state("fire")->held);
 }
 
 TEST_CASE("action map: invalid overrides change nothing", "[action-map]")
