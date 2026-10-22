@@ -58,7 +58,9 @@ if stale() then
         code = os.execv("dotnet", publish, {try = true})
     end
     if code == 0 then
-        os.touch(ASSEMBLY .. ".stamp")
+        -- os.touch leaves an existing file alone; rewriting the stamp advances
+        -- it.
+        io.writefile(ASSEMBLY .. ".stamp", tostring(os.time()))
     end
     if stale() then
         raise("csharp demo: publishing the sample game failed (dotnet publish exited " ..

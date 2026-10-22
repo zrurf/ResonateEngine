@@ -85,6 +85,26 @@
         {
           "name": "add_component",
           "fn": "add_component"
+        },
+        {
+          "name": "remove_component",
+          "fn": "remove_component"
+        },
+        {
+          "name": "despawn",
+          "fn": "despawn"
+        },
+        {
+          "name": "read_component",
+          "fn": "read_component"
+        },
+        {
+          "name": "component_name",
+          "type": "utf8_pointer"
+        },
+        {
+          "name": "component_name_size",
+          "type": "u32"
         }
       ]
     },
@@ -180,6 +200,33 @@
         "void_pointer",
         "u32",
         "u32",
+        "void_pointer"
+      ]
+    },
+    {
+      "name": "remove_component",
+      "ret": "i32",
+      "params": [
+        "void_pointer",
+        "u64",
+        "utf8_pointer"
+      ]
+    },
+    {
+      "name": "despawn",
+      "ret": "i32",
+      "params": [
+        "void_pointer",
+        "u64"
+      ]
+    },
+    {
+      "name": "read_component",
+      "ret": "i32",
+      "params": [
+        "void_pointer",
+        "u64",
+        "utf8_pointer",
         "void_pointer"
       ]
     }

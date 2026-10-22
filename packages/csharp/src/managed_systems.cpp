@@ -16,6 +16,19 @@ extern "C" std::int32_t managedSystemsRegisterEntry(void* context, std::uint32_t
     return systems->register_entry(stage, id, reinterpret_cast<DispatchEntry>(entry)) ? 0 : 1;
 }
 
+/* Handles cross as one 64-bit value: index low, generation high, like the
+   C++ Entity. */
+ecs::Entity entityFromHandle(std::uint64_t handle)
+{
+    return ecs::Entity{static_cast<std::uint32_t>(handle),
+                       static_cast<std::uint32_t>(handle >> 32)};
+}
+
+std::uint64_t handleFromEntity(ecs::Entity entity)
+{
+    return (static_cast<std::uint64_t>(entity.generation) << 32) | entity.index;
+}
+
 extern "C" std::int32_t spawnEntity(void* host_api, std::uint64_t* out_entity)
 {
     auto* api = static_cast<bindings::HostApi*>(host_api);
@@ -27,7 +40,7 @@ extern "C" std::int32_t spawnEntity(void* host_api, std::uint64_t* out_entity)
     const ecs::Entity entity = commands->create();
     if (out_entity != nullptr)
     {
-        *out_entity = (static_cast<std::uint64_t>(entity.generation) << 32) | entity.index;
+        *out_entity = handleFromEntity(entity);
     }
     return 0;
 }
@@ -47,10 +60,63 @@ extern "C" std::int32_t addComponent(void* host_api, std::uint64_t handle,
     {
         return 1;
     }
-    /* The handle packs index low, generation high, like the C++ Entity. */
-    const ecs::Entity entity{static_cast<std::uint32_t>(handle),
-                             static_cast<std::uint32_t>(handle >> 32)};
-    commands->add(entity, index, data);
+    commands->add(entityFromHandle(handle), index, data);
+    return 0;
+}
+
+extern "C" std::int32_t removeComponent(void* host_api, std::uint64_t handle,
+                                        const char* component)
+{
+    auto* api = static_cast<bindings::HostApi*>(host_api);
+    auto* commands = static_cast<ecs::CommandBuffer*>(api->commands);
+    auto* world = static_cast<ecs::World*>(api->world);
+    if (commands == nullptr || world == nullptr || component == nullptr)
+    {
+        return 1;
+    }
+    const ecs::ComponentIndex index = world->findComponent(component);
+    if (index == ecs::kInvalidComponent)
+    {
+        return 1;
+    }
+    commands->remove(entityFromHandle(handle), index);
+    return 0;
+}
+
+extern "C" std::int32_t despawnEntity(void* host_api, std::uint64_t handle)
+{
+    auto* api = static_cast<bindings::HostApi*>(host_api);
+    auto* commands = static_cast<ecs::CommandBuffer*>(api->commands);
+    if (commands == nullptr)
+    {
+        return 1;
+    }
+    commands->destroy(entityFromHandle(handle));
+    return 0;
+}
+
+/* The other-entity read path: the pointer stays valid for the frame, and the
+   managed side only reads through it. */
+extern "C" std::int32_t readComponent(void* host_api, std::uint64_t handle,
+                                      const char* component, void* out_data)
+{
+    auto* api = static_cast<bindings::HostApi*>(host_api);
+    const auto* world = static_cast<const ecs::World*>(api->world);
+    if (world == nullptr || component == nullptr || out_data == nullptr)
+    {
+        return 1;
+    }
+    const ecs::ComponentIndex index = world->findComponent(component);
+    if (index == ecs::kInvalidComponent)
+    {
+        return 1;
+    }
+    const void* data = world->get(entityFromHandle(handle), index);
+    if (data == nullptr)
+    {
+        return 1;
+    }
+    *static_cast<const void**>(out_data) = data;
     return 0;
 }
 
@@ -394,16 +460,27 @@ void ManagedSystems::invokeStage(ResonateStage stage, void* context, ecs::World&
     self->api_.commands = &commands;
     self->api_.spawn = &spawnEntity;
     self->api_.add_component = &addComponent;
+    self->api_.remove_component = &removeComponent;
+    self->api_.despawn = &despawnEntity;
+    self->api_.read_component = &readComponent;
+    /* The self view checks its type against the name the host actually handed
+       over, so a wrong T cannot alias the chunk. */
+    self->api_.component_name =
+        self->component_name_.empty() ? nullptr : self->component_name_.c_str();
+    self->api_.component_name_size = static_cast<std::uint32_t>(self->component_name_.size());
     self->frame_.host_api = &self->api_;
 
     /* The read path is the named component, one call per non-empty chunk: the
        body sees a dense array it wraps in a Span without copying. The query is
-       created once and catches up with new archetypes itself. */
+       created once and catches up with new archetypes itself. A stage with no
+       matching chunk still runs once with empty chunk fields: that invocation
+       is what lets a behaviour spawn the first entity of the component. */
     struct ChunkCall
     {
         ManagedSystems* systems;
         std::uint32_t stage;
         std::uint32_t id;
+        std::uint32_t chunks;
     };
 
     bool called = false;
@@ -426,12 +503,13 @@ void ManagedSystems::invokeStage(ResonateStage stage, void* context, ecs::World&
             }
             if (self->query_ready_)
             {
-                ChunkCall call{self, static_cast<std::uint32_t>(stage), id};
+                ChunkCall call{self, static_cast<std::uint32_t>(stage), id, 0U};
                 self->query_.forEachChunk(
                     [](void* chunk_context, ecs::ChunkView view)
                     {
                         auto* call = static_cast<ChunkCall*>(chunk_context);
                         ManagedSystems* systems = call->systems;
+                        ++call->chunks;
                         systems->frame_.chunk_data =
                             view.componentData(systems->component_);
                         systems->frame_.chunk_count = view.count;
@@ -444,7 +522,7 @@ void ManagedSystems::invokeStage(ResonateStage stage, void* context, ecs::World&
                         systems->tables_[call->stage].invoke(call->id, &systems->frame_);
                     },
                     &call);
-                called = true;
+                called = call.chunks != 0U;
             }
         }
     }

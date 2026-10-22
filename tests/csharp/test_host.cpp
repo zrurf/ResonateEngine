@@ -20,6 +20,9 @@ namespace
 using AddFn = int (*)(int, int);
 using RegisterFn = int (*)(void*);
 
+/* The fixture's counter block; the managed tick documents the indices. */
+constexpr int kCounterWords = 12;
+
 /* The fixture is tests/csharp/managed; scripts/csharp_test.lua publishes it to
    build/tools/csharp-test before the test target builds. */
 struct Fixture
@@ -150,7 +153,7 @@ TEST_CASE("csharp: managed code registers an entry into the dispatch table", "[c
     resonate::csharp::bindings::Registration registration{&table, &registerEntry};
     REQUIRE(register_probe(&registration) == 0);
 
-    int counters[8] = {0, -1, 0, 0, -1, 0, 0, 0};
+    int counters[kCounterWords] = {0, -1, 0, 0, -1, 0, 0, 0};
     resonate::csharp::bindings::SystemContext context{};
     context.user = counters;
     context.frame_index = 5U;
@@ -231,7 +234,7 @@ TEST_CASE("csharp: the frame loop calls a managed system through the table", "[c
     std::string error;
     REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
 
-    int counters[6] = {0, -1, 0, 0, -1, 0};
+    int counters[kCounterWords] = {0, -1, 0, 0, -1, 0};
     systems.set_user(counters);
 
     resonate::ecs::World world(resonate::systemAllocator());
@@ -257,7 +260,7 @@ TEST_CASE("csharp: a managed system reads a named component's chunk", "[csharp]"
     REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
     systems.set_component("resonate.hierarchy.LocalTransform");
 
-    int counters[6] = {0, -1, 0, 0, -1, 0};
+    int counters[kCounterWords] = {0, -1, 0, 0, -1, 0};
     systems.set_user(counters);
 
     resonate::ecs::World world(resonate::systemAllocator());
@@ -289,6 +292,7 @@ TEST_CASE("csharp: a managed system reads a named component's chunk", "[csharp]"
     CHECK(counters[3] == 2);
     CHECK(counters[4] == static_cast<int>(first.index));
     CHECK(counters[5] == 0);
+    CHECK(counters[11] == 1);
     CHECK(systems.frames() == 1U);
 
     /* The managed write landed and the mark made the observers see it. */
@@ -307,7 +311,7 @@ TEST_CASE("csharp: a large chunk set reaches managed code in one frame", "[cshar
     REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
     systems.set_component("resonate.hierarchy.LocalTransform");
 
-    int counters[6] = {0, -1, 0, 0, -1, 0};
+    int counters[kCounterWords] = {0, -1, 0, 0, -1, 0};
     systems.set_user(counters);
 
     resonate::ecs::World world(resonate::systemAllocator());
@@ -342,7 +346,7 @@ TEST_CASE("csharp: a managed spawn plays through the command buffer", "[csharp]"
     systems.set_component("resonate.hierarchy.LocalTransform");
 
     /* counters[6] = 1 asks the managed tick to spawn once on frame 0. */
-    int counters[8] = {0, -1, 0, 0, -1, 0, 1, 0};
+    int counters[kCounterWords] = {0, -1, 0, 0, -1, 0, 1};
     systems.set_user(counters);
 
     resonate::ecs::World world(resonate::systemAllocator());
@@ -390,6 +394,106 @@ TEST_CASE("csharp: a managed spawn plays through the command buffer", "[csharp]"
     CHECK(found);
 }
 
+TEST_CASE("csharp: a managed remove plays through the command buffer", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
+    systems.set_component("resonate.hierarchy.LocalTransform");
+
+    /* The tick spawns on frame 0; the request word makes frame 1 remove the
+       spawned component through the generated commands. */
+    int counters[kCounterWords] = {0, -1, 0, 0, -1, 0, 1};
+    systems.set_user(counters);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    resonate::ecs::CommandBuffer commands(world);
+
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    REQUIRE(counters[6] == 0);
+    world.play(commands);
+
+    counters[8] = 1;
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    CHECK(counters[9] == 1);
+    world.play(commands);
+
+    /* The entity stays alive; only its component is gone. */
+    const resonate::ecs::Entity spawned{static_cast<std::uint32_t>(counters[7]),
+                                        static_cast<std::uint32_t>(counters[10])};
+    CHECK(world.alive(spawned));
+    CHECK(world.get<resonate::hierarchy::LocalTransform>(spawned) == nullptr);
+}
+
+TEST_CASE("csharp: a managed despawn plays through the command buffer", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
+    systems.set_component("resonate.hierarchy.LocalTransform");
+
+    int counters[kCounterWords] = {0, -1, 0, 0, -1, 0, 1};
+    systems.set_user(counters);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    resonate::ecs::CommandBuffer commands(world);
+
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    REQUIRE(counters[6] == 0);
+    world.play(commands);
+
+    counters[8] = 2;
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    CHECK(counters[9] == 1);
+    world.play(commands);
+
+    const resonate::ecs::Entity spawned{static_cast<std::uint32_t>(counters[7]),
+                                        static_cast<std::uint32_t>(counters[10])};
+    CHECK_FALSE(world.alive(spawned));
+}
+
+TEST_CASE("csharp: a managed read sees another entity's component", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
+    systems.set_component("resonate.hierarchy.LocalTransform");
+
+    int counters[kCounterWords] = {0, -1, 0, 0, -1, 0};
+    systems.set_user(counters);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    const resonate::ecs::Entity first = world.create();
+    world.add(first, resonate::hierarchy::LocalTransform{
+                         resonate::Vec3{1.0F, 0.0F, 0.0F}, resonate::Quat{},
+                         resonate::Vec3{1.0F, 1.0F, 1.0F}});
+    const resonate::ecs::Entity second = world.create();
+    world.add(second, resonate::hierarchy::LocalTransform{
+                          resonate::Vec3{2.5F, 0.0F, 0.0F}, resonate::Quat{},
+                          resonate::Vec3{1.0F, 1.0F, 1.0F}});
+
+    resonate::ecs::CommandBuffer commands(world);
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+
+    /* Frame 1 asks for a read of the first row through Commands; the read-only
+       view returns the committed value. */
+    counters[8] = 3;
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    CHECK(counters[9] == 10);
+}
+
 TEST_CASE("csharp: an entry runs only in the stage it declares", "[csharp]")
 {
     const Fixture fixture;
@@ -404,7 +508,7 @@ TEST_CASE("csharp: an entry runs only in the stage it declares", "[csharp]")
 
     resonate::ecs::World world(resonate::systemAllocator());
     resonate::ecs::CommandBuffer commands(world);
-    int counters[8] = {0, -1, 0, 0, -1, 0, 0, 0};
+    int counters[kCounterWords] = {0, -1, 0, 0, -1, 0, 0, 0};
     systems.set_user(counters);
 
     resonate::csharp::ManagedSystems::invokeStage(RESONATE_STAGE_LATE_UPDATE, &systems, world,
@@ -437,7 +541,7 @@ TEST_CASE("csharp: a collectible ALC patch replaces a dispatch slot", "[csharp]"
     REQUIRE(table.set(resonate::csharp::bindings::kSystemUpdate, &v1Tick));
 
     resonate::csharp::bindings::SystemContext context{};
-    int before[6] = {0, 0};
+    int before[kCounterWords] = {0, 0};
     context.user = before;
     REQUIRE(table.invoke(resonate::csharp::bindings::kSystemUpdate, &context));
     CHECK(before[1] == 1);
@@ -453,7 +557,7 @@ TEST_CASE("csharp: a collectible ALC patch replaces a dispatch slot", "[csharp]"
     CHECK(reinterpret_cast<int (*)(void*)>(install)(&request) == 0);
     CHECK(request.context != nullptr);
 
-    int after[6] = {0, 0};
+    int after[kCounterWords] = {0, 0};
     context.user = after;
     REQUIRE(table.invoke(resonate::csharp::bindings::kSystemUpdate, &context));
     CHECK(after[1] == 2);
@@ -479,7 +583,7 @@ TEST_CASE("csharp: ManagedSystems installs and restores a patch", "[csharp]")
     resonate::ecs::World world(resonate::systemAllocator());
     resonate::ecs::CommandBuffer commands(world);
 
-    int base_counters[6] = {0, -1, 0, 0, -1, 0};
+    int base_counters[kCounterWords] = {0, -1, 0, 0, -1, 0};
     systems.set_user(base_counters);
     resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
     CHECK(base_counters[0] == 1);
@@ -489,7 +593,7 @@ TEST_CASE("csharp: ManagedSystems installs and restores a patch", "[csharp]")
                                kPatchRegistrationType, error));
     CHECK(systems.patched());
 
-    int patched[6] = {0, -1, 0, 0, -1, 0};
+    int patched[kCounterWords] = {0, -1, 0, 0, -1, 0};
     systems.set_user(patched);
     resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
     CHECK(patched[0] == 1);
@@ -500,7 +604,7 @@ TEST_CASE("csharp: ManagedSystems installs and restores a patch", "[csharp]")
     CHECK_FALSE(systems.patched());
 
     /* The displaced entry is back: the base tick runs again. */
-    int restored[6] = {0, -1, 0, 0, -1, 0};
+    int restored[kCounterWords] = {0, -1, 0, 0, -1, 0};
     systems.set_user(restored);
     resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
     CHECK(restored[0] == 1);

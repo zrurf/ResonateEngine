@@ -557,7 +557,161 @@ internal static class Program
             }
             text.AppendLine("}");
         }
+        text.AppendLine();
+        text.AppendLine(CommandsFacade());
         return text.ToString();
+    }
+
+    /* Law 2's API shape: structural changes exist only on the frame's command
+       channel, and every one records for the sync point. The raw HostApi
+       pointers stay reachable at the ABI, but the generated facade is what
+       behaviour code is meant to hold; an analyzer flags the raw calls.
+
+       The facade names the contract's HostApi members, so it assumes the
+       engine's contract: spawn, add_component, remove_component and despawn. */
+    private static string CommandsFacade()
+    {
+        return """
+        /* The frame's command channel: spawn, add, remove and despawn record
+           into the buffer the sync point plays, never into live storage. */
+        public unsafe struct Commands
+        {
+            private HostApi* _api;
+
+            public static Commands For(SystemContext* frame)
+            {
+                return new Commands { _api = (HostApi*)frame->HostApi };
+            }
+
+            public bool IsValid => _api != null;
+
+            public bool Spawn(out EntityHandle entity)
+            {
+                entity = default;
+                ulong packed = 0;
+                if (_api == null || _api->Spawn((IntPtr)_api, &packed) != 0)
+                {
+                    return false;
+                }
+                entity = new EntityHandle((uint)packed, (uint)(packed >> 32));
+                return true;
+            }
+
+            /* The component name comes from the generated view:
+               T.SchemaNameUtf8. */
+            public bool Add<T>(EntityHandle entity, ReadOnlySpan<byte> component, in T value)
+                where T : unmanaged
+            {
+                if (_api == null)
+                {
+                    return false;
+                }
+                fixed (byte* name = component)
+                fixed (T* data = &value)
+                {
+                    return _api->AddComponent((IntPtr)_api, Pack(entity), name, (IntPtr)data) == 0;
+                }
+            }
+
+            public bool Remove(EntityHandle entity, ReadOnlySpan<byte> component)
+            {
+                if (_api == null)
+                {
+                    return false;
+                }
+                fixed (byte* name = component)
+                {
+                    return _api->RemoveComponent((IntPtr)_api, Pack(entity), name) == 0;
+                }
+            }
+
+            public bool Despawn(EntityHandle entity)
+            {
+                return _api != null && _api->Despawn((IntPtr)_api, Pack(entity)) == 0;
+            }
+
+            /* Another entity's component, read-only by type. The pointer lives
+               for the frame; the component name comes from the generated view. */
+            public bool Read<T>(EntityHandle entity, ReadOnlySpan<byte> component,
+                                out ReadView<T> view) where T : unmanaged
+            {
+                view = default;
+                if (_api == null)
+                {
+                    return false;
+                }
+                void* data = null;
+                fixed (byte* name = component)
+                {
+                    if (_api->ReadComponent((IntPtr)_api, Pack(entity), name,
+                                            (IntPtr)(&data)) != 0 || data == null)
+                    {
+                        return false;
+                    }
+                }
+                view = new ReadView<T>((T*)data);
+                return true;
+            }
+
+            private static ulong Pack(EntityHandle entity)
+            {
+                return ((ulong)entity.Generation << 32) | entity.Index;
+            }
+        }
+
+        /* Law 3's read side: the type exposes no writable path, so a view of
+           another entity's component cannot be written by accident. */
+        public readonly unsafe ref struct ReadView<T> where T : unmanaged
+        {
+            private readonly T* _data;
+
+            internal ReadView(T* data)
+            {
+                _data = data;
+            }
+
+            public bool IsValid => _data != null;
+
+            public ref readonly T Value => ref *_data;
+        }
+
+        /* Law 3's self side: the chunk the stage handed over, writable. The
+           type check against the host's component name keeps a wrong T from
+           aliasing the memory. */
+        public unsafe ref struct SelfView<T> where T : unmanaged
+        {
+            private Span<T> _items;
+            private ReadOnlySpan<EntityHandle> _entities;
+
+            public static bool TryFrom(SystemContext* frame, ReadOnlySpan<byte> component,
+                                       out SelfView<T> view)
+            {
+                view = default;
+                HostApi* api = (HostApi*)frame->HostApi;
+                if (api == null || api->ComponentName == null || api->ComponentNameSize == 0 ||
+                    frame->ChunkData == IntPtr.Zero || frame->ChunkCount == 0)
+                {
+                    return false;
+                }
+                ReadOnlySpan<byte> name = new(api->ComponentName, (int)api->ComponentNameSize);
+                if (!name.SequenceEqual(component))
+                {
+                    return false;
+                }
+                view = new SelfView<T>
+                {
+                    _items = new Span<T>((void*)frame->ChunkData, (int)frame->ChunkCount),
+                    _entities = new ReadOnlySpan<EntityHandle>(
+                        (void*)frame->EntityData, (int)frame->ChunkCount),
+                };
+                return true;
+            }
+
+            public Span<T> Items => _items;
+
+            public ReadOnlySpan<EntityHandle> Entities => _entities;
+        }
+        """;
     }
 
     /* Rewriting an identical file would move its mtime, and the fixture's

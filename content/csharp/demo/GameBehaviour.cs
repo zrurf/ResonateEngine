@@ -1,4 +1,3 @@
-using System;
 using Resonate.CSharp;
 using Resonate.CSharp.Bindings;
 
@@ -22,9 +21,8 @@ public static unsafe class GameBehaviour
             return;
         }
 
-        HostApi* api = (HostApi*)frame->HostApi;
-        ulong entity = 0;
-        if (api->Spawn((IntPtr)api, &entity) != 0)
+        Commands commands = Commands.For(frame);
+        if (!commands.Spawn(out EntityHandle entity))
         {
             return;
         }
@@ -44,14 +42,14 @@ public static unsafe class GameBehaviour
             Y = 1.0F,
             Z = 1.0F,
         };
-        Add(api, entity, Resonate.Hierarchy.LocalTransform.SchemaNameUtf8, &transform);
+        commands.Add(entity, Resonate.Hierarchy.LocalTransform.SchemaNameUtf8, transform);
 
         Resonate.Hierarchy.WorldTransform world = default;
         world.Matrix.M00 = 1.0F;
         world.Matrix.M11 = 1.0F;
         world.Matrix.M22 = 1.0F;
         world.Matrix.M33 = 1.0F;
-        Add(api, entity, Resonate.Hierarchy.WorldTransform.SchemaNameUtf8, &world);
+        commands.Add(entity, Resonate.Hierarchy.WorldTransform.SchemaNameUtf8, world);
 
         Resonate.Render.MeshInstance mesh = default;
         mesh.Mesh = kCubeMesh;
@@ -61,14 +59,6 @@ public static unsafe class GameBehaviour
             Y = 0.8F,
             Z = 0.5F,
         };
-        Add(api, entity, Resonate.Render.MeshInstance.SchemaNameUtf8, &mesh);
-    }
-
-    private static int Add(HostApi* api, ulong entity, ReadOnlySpan<byte> name, void* data)
-    {
-        fixed (byte* component = name)
-        {
-            return api->AddComponent((IntPtr)api, entity, component, (IntPtr)data);
-        }
+        commands.Add(entity, Resonate.Render.MeshInstance.SchemaNameUtf8, mesh);
     }
 }

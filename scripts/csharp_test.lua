@@ -107,7 +107,9 @@ local function publish(name, project, project_dir, out_dir, output, ready_to_run
         code = os.execv("dotnet", args, {try = true})
     end
     if code == 0 then
-        os.touch(output .. ".stamp")
+        -- os.touch leaves an existing file alone; rewriting the stamp is what
+        -- advances it.
+        io.writefile(output .. ".stamp", tostring(os.time()))
     end
     -- A failed publish must fail the build even when an older assembly is
     -- still on disk: the silent fallback once hid a compile error for a whole

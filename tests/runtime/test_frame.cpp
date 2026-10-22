@@ -585,7 +585,7 @@ TEST_CASE("a headless run calls a managed system every fixed step", "[runtime][f
                          "Resonate.CSharp.Generated.BehaviourRegistration, "
                          "Resonate.Tests.Managed", error));
 
-    int counters[6] = {0, -1, 0, 0, -1, 0};
+    int counters[12] = {0, -1, 0, 0, -1, 0};
     systems.set_user(counters);
 
     const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");

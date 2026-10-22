@@ -36,7 +36,14 @@ internal static class Program
         " public const uint Update = 7U; public const uint Physics = 13U;" +
         " public const uint LateUpdate = 17U; public const uint Render = 19U;" +
         " public const uint Present = 23U; }" +
-        " public struct SystemContext { public float DeltaSeconds; }" +
+        " public unsafe struct HostApi {" +
+        " public delegate* unmanaged<System.IntPtr, ulong*, int> Spawn;" +
+        " public delegate* unmanaged<System.IntPtr, ulong, byte*, System.IntPtr, int> AddComponent;" +
+        " public delegate* unmanaged<System.IntPtr, ulong, byte*, int> RemoveComponent;" +
+        " public delegate* unmanaged<System.IntPtr, ulong, int> Despawn; }" +
+        " public struct SystemContext { public float DeltaSeconds;" +
+        " public System.IntPtr HostApi; public System.IntPtr ChunkData;" +
+        " public ulong ChunkCount; public System.IntPtr EntityData; }" +
         "}";
 
     private const string Marked = "[assembly: Resonate.CSharp.ResonateBehaviour]\n";
@@ -72,6 +79,19 @@ internal static class Program
         "namespace Game { public static class Behaviour {" +
         " [Resonate.CSharp.UpdateIn(Resonate.CSharp.ResonateStage.Update)]" +
         " public static void Tick(int frame) { } } }";
+    private const string RawStructural =
+        "[assembly: Resonate.CSharp.ResonateBehaviour]\n" +
+        "namespace Game { public static unsafe class Behaviour {" +
+        " [Resonate.CSharp.UpdateIn(Resonate.CSharp.ResonateStage.Update)]" +
+        " public static void Tick(Resonate.CSharp.Bindings.SystemContext* frame) {" +
+        " var api = (Resonate.CSharp.Bindings.HostApi*)frame->HostApi;" +
+        " ulong entity = 0; api->Spawn((System.IntPtr)api, &entity); } } }";
+    private const string RawChunk =
+        "[assembly: Resonate.CSharp.ResonateBehaviour]\n" +
+        "namespace Game { public static unsafe class Behaviour {" +
+        " [Resonate.CSharp.UpdateIn(Resonate.CSharp.ResonateStage.Update)]" +
+        " public static void Tick(Resonate.CSharp.Bindings.SystemContext* frame) {" +
+        " System.IntPtr data = frame->ChunkData; } } }";
 
     private static int Main()
     {
@@ -82,6 +102,8 @@ internal static class Program
         failures += Check("marked + cached view field", Marked + CachedView, "RESONATE0006", 1);
         failures += Check("marked + view local", Marked + ViewLocal, "RESONATE0006", 0);
         failures += Check("marked + plain field", Marked + PlainField, "RESONATE0006", 0);
+        failures += Check("raw structural call", RawStructural, "RESONATE0002", 1);
+        failures += Check("raw chunk pointer", RawChunk, "RESONATE0003", 1);
 
         failures += CheckGenerator("declared update entry", Marked + UpdateEntry, 0, null,
                                    new[] { "Systems.Update", "Game.Behaviour.Tick" });
@@ -99,14 +121,17 @@ internal static class Program
 
     private static int Check(string name, string source, string rule, int expected)
     {
+        CSharpParseOptions parse = new(LanguageVersion.Latest);
         CSharpCompilation compilation = CSharpCompilation.Create(
             "Behaviour",
-            new[] { CSharpSyntaxTree.ParseText(Stubs), CSharpSyntaxTree.ParseText(source) },
+            new[] { CSharpSyntaxTree.ParseText(Stubs, parse),
+                    CSharpSyntaxTree.ParseText(source, parse) },
             new[] { MetadataReference.CreateFromFile(typeof(object).Assembly.Location) },
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true));
         ImmutableArray<Diagnostic> diagnostics = compilation
-            .WithAnalyzers(ImmutableArray.Create<DiagnosticAnalyzer>(new NoMutableStaticsAnalyzer(),
-                                                                     new CachedViewAnalyzer()))
+            .WithAnalyzers(ImmutableArray.Create<DiagnosticAnalyzer>(
+                new NoMutableStaticsAnalyzer(), new CachedViewAnalyzer(),
+                new StructuralBypassAnalyzer(), new RawChunkAccessAnalyzer()))
             .GetAnalyzerDiagnosticsAsync()
             .GetAwaiter()
             .GetResult();
