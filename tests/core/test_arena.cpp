@@ -171,3 +171,18 @@ TEST_CASE("per-thread arenas are distinct and reset together", "[core][arena]")
 
     FrameArenas::setActive(nullptr);
 }
+
+TEST_CASE("an arena starts a block when alignment padding passes the tail", "[core][arena]")
+{
+    TrackingAllocator allocator;
+    Arena arena(allocator, 64);
+
+    /* Fill the first block exactly: the next request's alignment padding lands
+       at or past the end, where the old subtraction read as a huge free tail. */
+    REQUIRE(arena.allocate(1024, 1) != nullptr);
+    const std::uint64_t before = allocator.allocations();
+    void* const aligned = arena.allocate(8, 65536);
+    REQUIRE(aligned != nullptr);
+    CHECK(reinterpret_cast<std::uintptr_t>(aligned) % 65536 == 0);
+    CHECK(allocator.allocations() == before + 1U);
+}

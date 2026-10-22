@@ -59,7 +59,9 @@ void* Arena::allocate(std::size_t size, std::size_t alignment)
     if (cursor_ != nullptr)
     {
         std::byte* const aligned = alignPointer(cursor_, alignment);
-        if (size <= static_cast<std::size_t>(end_ - aligned))
+        /* Alignment padding can push the cursor past the block's tail; the
+           subtraction would then be undefined and read as a large size. */
+        if (aligned <= end_ && size <= static_cast<std::size_t>(end_ - aligned))
         {
             cursor_ = aligned + size;
             used_ += static_cast<std::size_t>(cursor_ - aligned);

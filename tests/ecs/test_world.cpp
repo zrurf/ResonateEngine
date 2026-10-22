@@ -18,6 +18,11 @@ using resonate::ecs::ComponentTraits;
 using resonate::ecs::Entity;
 using resonate::ecs::World;
 
+} // namespace
+
+namespace
+{
+
 struct Position
 {
     float x = 0.0F;
@@ -61,6 +66,28 @@ struct Huge
 {
     unsigned char bytes[32U * 1024U];
 };
+
+/* Claims a size no chunk can hold: the layout arithmetic has to see the 2 GiB
+   sum as too large rather than wrap it into a small one. */
+struct OverflowHuge
+{
+    unsigned char byte = 0;
+};
+
+} // namespace
+
+namespace resonate::ecs
+{
+template <> struct ComponentTraits<OverflowHuge> : detail::ComponentDefaults<OverflowHuge>
+{
+    static constexpr const char* name = "test.overflow";
+    static constexpr std::uint32_t size = 0x80000000U;
+    static constexpr std::uint32_t alignment = 16U;
+};
+} // namespace resonate::ecs
+
+namespace
+{
 
 /* What the world reports is only observable through its sink. */
 struct Reports
@@ -379,6 +406,46 @@ TEST_CASE("component registration is idempotent and refuses name collisions", "[
     /* A layout that cannot be an array stride is refused. */
     REQUIRE(world.registerComponent<OddLayout>() == resonate::ecs::kInvalidComponent);
     REQUIRE(reports.contains("unusable layout"));
+}
+
+TEST_CASE("a component index beyond the mask is refused", "[ecs][world]")
+{
+    Reports reports;
+    World world(resonate::systemAllocator());
+    world.setReportSink(&reports, &Reports::sink);
+    REQUIRE(world.registerComponent<Position>() != resonate::ecs::kInvalidComponent);
+    const Entity entity = world.create();
+    const ComponentIndex outside = resonate::ecs::kMaxComponentTypes;
+
+    /* Every erased entry point checks the index before it touches the 64-bit
+       mask or the per-component arrays. */
+    CHECK_FALSE(world.addObserver(outside, nullptr,
+                                  [](void*, World&, Entity, ComponentIndex) {}));
+    CHECK(world.get(entity, outside) == nullptr);
+    CHECK_FALSE(world.has(entity, outside));
+    CHECK(world.add(entity, outside, nullptr) == nullptr);
+    CHECK_FALSE(world.remove(entity, outside));
+    CHECK(world.componentTick(outside) == 0);
+    CHECK_FALSE(world.changedSince(entity, outside, 0));
+    world.markChanged(entity, outside);
+    CHECK(reports.contains("not registered"));
+    CHECK(world.alive(entity));
+}
+
+TEST_CASE("a component size that overflows the layout is refused", "[ecs][world]")
+{
+    Reports reports;
+    World world(resonate::systemAllocator());
+    world.setReportSink(&reports, &Reports::sink);
+    /* A declared size near 2 GiB wraps a 32-bit per-entity sum into a layout
+       that looks small; the layout arithmetic must be wide enough to see it. */
+    const ComponentIndex huge = world.registerComponent<OverflowHuge>();
+    REQUIRE(huge != resonate::ecs::kInvalidComponent);
+
+    const Entity entity = world.create();
+    CHECK(world.add(entity, huge, nullptr) == nullptr);
+    CHECK(reports.contains("no room for one entity"));
+    CHECK(world.alive(entity));
 }
 
 TEST_CASE("a component larger than a chunk is refused without moving the entity", "[ecs][world]")

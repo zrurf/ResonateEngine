@@ -190,43 +190,52 @@ inline bool computeLayout(const std::uint32_t* sizes, const std::uint32_t* align
                           const std::uint16_t* maskComponents, std::uint32_t componentCount,
                           ChunkLayout& layout)
 {
-    std::uint32_t perEntity = sizeof(Entity) + 4U * componentCount;
+    /* The arithmetic is 64-bit: a component may be declared with any size, and
+       a set that cannot fit must be refused rather than wrapped into a layout
+       whose offsets collide. */
+    std::uint64_t perEntity = sizeof(Entity) + 4ULL * componentCount;
     for (std::uint32_t slot = 0; slot < componentCount; ++slot)
     {
         perEntity += sizes[maskComponents[slot]];
+        if (perEntity > kChunkBytes)
+        {
+            return false;
+        }
     }
 
-    std::uint32_t capacity = (kChunkBytes - sizeof(Chunk)) / perEntity + 2U;
-    for (; capacity > 0; --capacity)
-    {
-        std::uint32_t cursor = alignUp(static_cast<std::uint32_t>(sizeof(Chunk)),
-                                       static_cast<std::uint32_t>(alignof(Entity)));
-        layout.entitiesOffset = cursor;
-        cursor += static_cast<std::uint32_t>(sizeof(Entity)) * capacity;
+    const auto align_up = [](std::uint64_t value, std::uint64_t alignment) noexcept
+    { return (value + alignment - 1U) & ~(alignment - 1U); };
 
-        cursor = alignUp(cursor, 4U);
-        layout.chunkTicksOffset = cursor;
-        cursor += 4U * componentCount;
+    std::uint64_t capacity = (kChunkBytes - sizeof(Chunk)) / perEntity + 2ULL;
+    for (; capacity > 0U; --capacity)
+    {
+        std::uint64_t cursor = align_up(sizeof(Chunk), alignof(Entity));
+        layout.entitiesOffset = static_cast<std::uint32_t>(cursor);
+        cursor += sizeof(Entity) * capacity;
+
+        cursor = align_up(cursor, 4U);
+        layout.chunkTicksOffset = static_cast<std::uint32_t>(cursor);
+        cursor += 4ULL * componentCount;
 
         for (std::uint32_t slot = 0; slot < componentCount; ++slot)
         {
             const ComponentIndex component = maskComponents[slot];
             const std::uint32_t alignment = alignments[component] < 4U ? 4U : alignments[component];
 
-            cursor = alignUp(cursor, alignment);
-            layout.dataOffsets[component] = cursor;
-            cursor += sizes[component] * capacity;
+            cursor = align_up(cursor, alignment);
+            layout.dataOffsets[component] = static_cast<std::uint32_t>(cursor);
+            cursor += static_cast<std::uint64_t>(sizes[component]) * capacity;
 
-            cursor = alignUp(cursor, 4U);
-            layout.tickOffsets[component] = cursor;
-            cursor += 4U * capacity;
+            cursor = align_up(cursor, 4U);
+            layout.tickOffsets[component] = static_cast<std::uint32_t>(cursor);
+            cursor += 4ULL * capacity;
 
             layout.tickSlots[component] = static_cast<std::uint16_t>(slot);
         }
 
         if (cursor <= kChunkBytes)
         {
-            layout.capacity = capacity;
+            layout.capacity = static_cast<std::uint32_t>(capacity);
             return true;
         }
     }
@@ -426,7 +435,7 @@ struct WorldImpl
 
     bool registered(ComponentIndex component) const noexcept
     {
-        return (registeredMask & bitOf(component)) != 0U;
+        return component < kMaxComponentTypes && (registeredMask & bitOf(component)) != 0U;
     }
 
     bool hasType(ComponentIndex component) const noexcept
