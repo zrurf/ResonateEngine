@@ -72,8 +72,9 @@ if is_plat("ohos") then
     add_syslinks("dl", "pthread")
 end
 
--- Project-local package: the repo port enables every vector extension,
--- which emits AVX-512 and faults on CPUs where it is fused off.
+-- Project-local package: the upstream source downloads from GitHub, which is
+-- unreachable here; the Gitee mirror is used instead.
+includes("packages/thirdparty/harfbuzz")
 includes("packages/thirdparty/basisu")
 
 -- The engine libraries and modules alone: no window, editor, launcher or
@@ -86,6 +87,7 @@ option("engine_only")
 option_end()
 
 add_requires("basisu 1.16.4")
+add_requires("harfbuzz 13.1.1", {configs = {freetype = false, icu = false, glib = false}})
 add_requires("toml++ v3.4.0")
 add_requires("xxhash v0.8.4", {verify = false, configs = {cmake = false}})
 if not get_config("engine_only") then
@@ -345,6 +347,7 @@ includes("packages/module")
 includes("packages/render")
 includes("packages/physics")
 includes("packages/audio")
+includes("packages/text")
 includes("packages/ui")
 includes("packages/hierarchy")
 includes("packages/renderer")
