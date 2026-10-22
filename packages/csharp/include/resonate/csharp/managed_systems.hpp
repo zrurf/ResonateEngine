@@ -13,6 +13,7 @@
 #include <resonate/csharp/host.hpp>
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
+#include <resonate/gameplay/action_map.h>
 #include <resonate/module/stage.h>
 
 namespace resonate::csharp
@@ -55,6 +56,10 @@ public:
 
     /* Native state the managed systems may reference through the context. */
     void set_user(void* user);
+
+    /* The frame's input actions; the host API answers read_action from it.
+       Null (the default) makes every action read fail. */
+    void set_actions(const gameplay::ActionMap* actions);
 
     /* Installs a patch from `patch_assembly` through a managed bootstrap: the
        patch's Register replaces the slots it names, and every displaced entry
@@ -115,6 +120,7 @@ private:
     ecs::Query query_;
     bool query_ready_ = false;
     bindings::HostApi api_{};
+    const gameplay::ActionMap* actions_ = nullptr;
 
     /* The stage's chunks for the single boundary call; reserved once so a
        frame does not allocate. */

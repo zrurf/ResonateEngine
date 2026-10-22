@@ -1,14 +1,18 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
 #include <string>
 
 #include <resonate/core/allocator.h>
+#include <resonate/gameplay/action_map.h>
 #include <resonate/hierarchy/tree.h>
 #include <resonate/csharp/bindings.h>
 #include <resonate/csharp/dispatch.h>
 #include <resonate/csharp/host.hpp>
 #include <resonate/csharp/managed_systems.hpp>
+#include <resonate/window/input.h>
 
 #include "resonate.render/components.gen.h"
 
@@ -61,6 +65,47 @@ constexpr const char* kPatchRegistrationType =
     "Resonate.CSharp.Generated.BehaviourRegistration";
 constexpr const char* kBootstrapType =
     "Resonate.Tests.Bootstrap.PatchHost, Resonate.Tests.Bootstrap";
+
+/* One action map file for the managed read path, removed on exit. */
+class TempActionMap
+{
+  public:
+    TempActionMap()
+        : path_("resonate_test_host_actions_" + std::to_string(++counter) + ".ractionmap")
+    {
+    }
+
+    ~TempActionMap()
+    {
+        std::remove(path_.c_str());
+    }
+
+    TempActionMap(const TempActionMap&) = delete;
+    TempActionMap& operator=(const TempActionMap&) = delete;
+
+    void write(const std::string& text)
+    {
+        std::ofstream out(path_, std::ios::binary | std::ios::trunc);
+        out << text;
+    }
+
+    [[nodiscard]] const std::string& path() const
+    {
+        return path_;
+    }
+
+  private:
+    inline static int counter = 0;
+    std::string path_;
+};
+
+/* The managed read path only needs one held key; the real input capability is
+   not involved. */
+std::int32_t spaceHeld(void* self, ResonateKey key)
+{
+    (void)self;
+    return key == RESONATE_KEY_SPACE ? 1 : 0;
+}
 
 } // namespace
 
@@ -461,6 +506,45 @@ TEST_CASE("csharp: a managed despawn plays through the command buffer", "[csharp
     const resonate::ecs::Entity spawned{static_cast<std::uint32_t>(counters[7]),
                                         static_cast<std::uint32_t>(counters[10])};
     CHECK_FALSE(world.alive(spawned));
+}
+
+TEST_CASE("csharp: a managed entry reads the frame's actions", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
+
+    TempActionMap file;
+    file.write("<action-map>"
+               "<action name=\"fire\"/>"
+               "<binding action=\"fire\" device=\"keyboard\" control=\"space\"/>"
+               "</action-map>");
+    resonate::gameplay::ActionMap actions;
+    REQUIRE(actions.load(file.path(), error));
+    ResonateInput input{};
+    input.key_down = &spaceHeld;
+    actions.update(&input);
+    systems.set_actions(&actions);
+
+    int counters[kCounterWords] = {0, -1, 0, 0, -1, 0};
+    systems.set_user(counters);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    resonate::ecs::CommandBuffer commands(world);
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+
+    counters[8] = 4;
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    CHECK(counters[9] == 1);
+
+    /* An action the map does not declare fails the read instead of returning a
+       default state. */
+    counters[8] = 5;
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+    CHECK(counters[9] == 0);
 }
 
 TEST_CASE("csharp: a managed read sees another entity's component", "[csharp]")

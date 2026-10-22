@@ -120,6 +120,28 @@ extern "C" std::int32_t readComponent(void* host_api, std::uint64_t handle,
     return 0;
 }
 
+/* The frame's actions, already sampled by the input system; the managed side
+   reads pressed/held/released and cannot write them. */
+extern "C" std::int32_t readAction(void* host_api, const char* name, void* out_state)
+{
+    auto* api = static_cast<bindings::HostApi*>(host_api);
+    const auto* actions = static_cast<const gameplay::ActionMap*>(api->actions);
+    auto* state = static_cast<bindings::ActionState*>(out_state);
+    if (actions == nullptr || name == nullptr || state == nullptr)
+    {
+        return 1;
+    }
+    const gameplay::ActionState* found = actions->state(name);
+    if (found == nullptr)
+    {
+        return 1;
+    }
+    state->pressed = found->pressed ? 1 : 0;
+    state->held = found->held ? 1 : 0;
+    state->released = found->released ? 1 : 0;
+    return 0;
+}
+
 /* A dense write over a chunk cannot know which rows it touched, so its owner
    marks them; the observer dispatch stays the world's. The chunk's rows ride
    the call, so the frame may hold many chunks. */
@@ -298,6 +320,7 @@ void ManagedSystems::unload()
     query_ready_ = false;
     query_ = ecs::Query{};
     chunk_spans_.clear();
+    actions_ = nullptr;
     host_.shutdown();
 }
 
@@ -434,6 +457,11 @@ void ManagedSystems::set_user(void* user)
     frame_.user = user;
 }
 
+void ManagedSystems::set_actions(const gameplay::ActionMap* actions)
+{
+    actions_ = actions;
+}
+
 void ManagedSystems::set_component(const char* name)
 {
     component_name_ = name != nullptr ? name : "";
@@ -468,6 +496,8 @@ void ManagedSystems::invokeStage(ResonateStage stage, void* context, ecs::World&
     self->api_.remove_component = &removeComponent;
     self->api_.despawn = &despawnEntity;
     self->api_.read_component = &readComponent;
+    self->api_.actions = const_cast<gameplay::ActionMap*>(self->actions_);
+    self->api_.read_action = &readAction;
     /* The self view checks its type against the name the host actually handed
        over, so a wrong T cannot alias the chunk. */
     self->api_.component_name =

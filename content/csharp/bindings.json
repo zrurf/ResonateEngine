@@ -87,6 +87,14 @@
           "fn": "read_component"
         },
         {
+          "name": "actions",
+          "type": "void_pointer"
+        },
+        {
+          "name": "read_action",
+          "fn": "read_action"
+        },
+        {
           "name": "component_name",
           "type": "utf8_pointer"
         },
@@ -166,6 +174,23 @@
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "ActionState",
+      "fields": [
+        {
+          "name": "pressed",
+          "type": "i32"
+        },
+        {
+          "name": "held",
+          "type": "i32"
+        },
+        {
+          "name": "released",
+          "type": "i32"
+        }
+      ]
     }
   ],
   "functions": [
@@ -229,6 +254,15 @@
       "params": [
         "void_pointer",
         "u64",
+        "utf8_pointer",
+        "void_pointer"
+      ]
+    },
+    {
+      "name": "read_action",
+      "ret": "i32",
+      "params": [
+        "void_pointer",
         "utf8_pointer",
         "void_pointer"
       ]

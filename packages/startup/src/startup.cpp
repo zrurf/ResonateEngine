@@ -15,6 +15,7 @@
 
 #include <resonate/application/application.h>
 #include <resonate/application/settings.h>
+#include <resonate/gameplay/action_map.h>
 #if defined(RESONATE_WITH_CSHARP)
 #    include <resonate/csharp/managed_systems.hpp>
 #endif
@@ -26,12 +27,27 @@
 #include <resonate/module/host.hpp>
 #include <resonate/render/offscreen.hpp>
 #include <resonate/renderer/renderer.h>
+#include <resonate/window/input.h>
 #include <resonate/window/session.hpp>
 
 namespace resonate::startup
 {
 namespace
 {
+
+/* The input system: one sample per frame, before anything gameplay reads the
+   actions. A run without the input capability (headless) releases everything. */
+struct ActionTick
+{
+    gameplay::ActionMap* map = nullptr;
+    const ResonateInput* input = nullptr;
+
+    static void invoke(void* context, ecs::World&, ecs::CommandBuffer&, float)
+    {
+        auto* tick = static_cast<ActionTick*>(context);
+        tick->map->update(tick->input);
+    }
+};
 
 /* A value that is not a positive integer leaves the fallback alone, so a bad
    argument falls back to the default rather than to zero or a wrapped negative.
@@ -164,6 +180,23 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
                 std::fprintf(stderr, "resonate: config: %s\n", warning.c_str());
             }
         }
+    }
+
+    /* Input actions are optional: a run without a map still has raw input.
+       The map loads before anything consumes it, and a broken asset ends the
+       run with the reason. */
+    gameplay::ActionMap action_map;
+    const std::string action_map_path =
+        config.settings.value("resonate.input", "action-map").value_or("");
+    if (!action_map_path.empty())
+    {
+        std::string error;
+        if (!action_map.load(action_map_path, error))
+        {
+            std::fprintf(stderr, "resonate: action map: %s\n", error.c_str());
+            return EXIT_FAILURE;
+        }
+        std::fprintf(stderr, "resonate: input: %zu action(s)\n", action_map.actionCount());
     }
 
     /* CLI beats configuration beats the schema default. */
@@ -305,6 +338,12 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
         }
     }
 #endif
+    /* The input system samples actions once per frame, before gameplay reads
+       them. A run without a window still has the system and releases all. */
+    ActionTick action_tick{&action_map, nullptr};
+    const EngineSystemDesc actions_desc{"input.actions", RESONATE_STAGE_EARLY_UPDATE,
+                                        &ActionTick::invoke, &action_tick};
+    const bool actions_configured = !action_map_path.empty();
     config.systems = [&](ModuleHost& host, ecs::World& world)
     {
         if (!hierarchy::registerComponents(world) ||
@@ -322,6 +361,18 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             addEngineSystem(host, render_desc) != RESONATE_OK)
         {
             return RESONATE_E_INVALID;
+        }
+        if (actions_configured)
+        {
+            std::uint32_t version = 0;
+            void* input = resonate_capability_find(
+                host.capabilities(), detail::CapabilityTraits<ResonateInput>::id.value(),
+                detail::CapabilityTraits<ResonateInput>::version, &version);
+            action_tick.input = static_cast<const ResonateInput*>(input);
+            if (addEngineSystem(host, actions_desc) != RESONATE_OK)
+            {
+                return RESONATE_E_INVALID;
+            }
         }
 #if defined(RESONATE_WITH_CSHARP)
         if (managed_configured)

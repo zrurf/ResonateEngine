@@ -24,8 +24,8 @@ public static unsafe class Probe
        no chunk), 3 rows, 4 first entity index, 5 self view disposed (its chunk
        mark went out), 6 spawn status,
        7 spawned index, 8 request on frame 1 (0 none, 1 remove, 2 despawn,
-       3 read), 9 request result, 10 spawned generation, 11 wrong-type self
-       view rejected. */
+       3 read; 4 reads the "fire" action, 5 a missing one), 9 request result,
+       10 spawned generation, 11 wrong-type self view rejected. */
     [UpdateIn(ResonateStage.Update)]
     public static void TickFrame(SystemContext* frame)
     {
@@ -68,6 +68,19 @@ public static unsafe class Probe
                                      ? 1
                                      : 2)
                               : (commands.Despawn(target) ? 1 : 2);
+            counters[8] = 0;
+        }
+        else if (counters[8] == 4)
+        {
+            counters[9] = Actions.TryRead(frame, "fire"u8, out ActionState action) &&
+                                  action.Held != 0
+                              ? 1
+                              : 0;
+            counters[8] = 0;
+        }
+        else if (counters[8] == 5)
+        {
+            counters[9] = Actions.TryRead(frame, "missing"u8, out _) ? 1 : 0;
             counters[8] = 0;
         }
 

@@ -46,6 +46,12 @@ default = 1.0
 description = "Brightness above which bloom picks a pixel up."
 
 [[setting]]
+key = "resonate.input.action-map"
+type = "string"
+default = ""
+description = "Action map asset; empty runs without named actions."
+
+[[setting]]
 key = "resonate.csharp.assembly"
 type = "string"
 default = ""

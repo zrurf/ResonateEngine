@@ -764,6 +764,27 @@ internal static class Program
             public ReadOnlySpan<EntityHandle> Entities =>
                 new((void*)_span.Entities, (int)_span.Count);
         }
+
+        /* The frame's input actions, sampled by the engine's input system. The
+           managed side only reads the state; bindings stay an asset. */
+        public static unsafe class Actions
+        {
+            public static bool TryRead(SystemContext* frame, ReadOnlySpan<byte> action,
+                                       out ActionState state)
+            {
+                HostApi* api = (HostApi*)frame->HostApi;
+                state = default;
+                if (api == null || api->ReadAction == null)
+                {
+                    return false;
+                }
+                fixed (byte* name = action)
+                fixed (ActionState* statePtr = &state)
+                {
+                    return api->ReadAction((IntPtr)api, name, (IntPtr)statePtr) == 0;
+                }
+            }
+        }
         """;
     }
 
