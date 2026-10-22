@@ -167,9 +167,11 @@ target("Resonate.Bench.CSharp")
     set_optimize("fastest")
 
     add_files("bench/csharp_bench.cpp", "../packages/csharp/src/**.cpp",
+              "../packages/gameplay/src/action_map.cpp",
               "../packages/ecs/src/**.cpp", "../packages/core/src/container/**.cpp",
               "../packages/core/src/memory/**.cpp", "../packages/core/src/job/**.cpp")
-    add_includedirs(".", "../packages/csharp/include", "../packages/ecs/include",
+    add_includedirs(".", "../packages/csharp/include", "../packages/gameplay/include",
+                    "../packages/window/include", "../packages/ecs/include",
                     "../packages/core/include", "../packages/module/include",
                     path.join(os.projectdir(), "build", "gen", "csharp"))
 
@@ -201,9 +203,11 @@ target("Resonate.Bench.Reload")
     set_group("tests")
 
     add_files("bench/csharp_reload.cpp", "../packages/csharp/src/**.cpp",
+              "../packages/gameplay/src/action_map.cpp",
               "../packages/ecs/src/**.cpp", "../packages/core/src/container/**.cpp",
               "../packages/core/src/memory/**.cpp", "../packages/core/src/job/**.cpp")
-    add_includedirs(".", "../packages/csharp/include", "../packages/ecs/include",
+    add_includedirs(".", "../packages/csharp/include", "../packages/gameplay/include",
+                    "../packages/window/include", "../packages/ecs/include",
                     "../packages/core/include", "../packages/module/include",
                     path.join(os.projectdir(), "build", "gen", "csharp"))
 

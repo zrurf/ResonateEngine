@@ -46,8 +46,13 @@ using resonate::ecs::QueryDesc;
 using resonate::ecs::World;
 
 constexpr std::uint32_t kEntities = 100000;
-constexpr int kWarmups = 12;
-constexpr int kReps = 9;
+/* Enough warmup for tiered compilation to reach its steady state; the first
+   process after a build otherwise measures the transitional code. */
+constexpr int kWarmups = 30;
+constexpr int kReps = 15;
+/* Each sample averages this many passes: a 100k read is ~0.1 ms, short enough
+   that CPU-frequency noise dominates a single pass. */
+constexpr int kInner = 5;
 
 /* The design's FFI budget: 100k entities through a C# Span must reach 90% of
    the same pass written in C++. */
@@ -56,6 +61,24 @@ constexpr double kFfiBar = 0.90;
 double millisecondsSince(const std::chrono::steady_clock::time_point start)
 {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() * 1e3;
+}
+
+/* One paired sample: both sides measured back to back, so a frequency drift
+   between phases cannot bias the ratio. The median over the samples is the
+   reported number; the best pair is not, because interference inflates it. */
+struct RatioSample
+{
+    double ratio = 0.0;
+    double managed = 0.0;
+    double native = 0.0;
+};
+
+RatioSample medianOf(std::vector<RatioSample> samples)
+{
+    std::sort(samples.begin(), samples.end(),
+              [](const RatioSample& left, const RatioSample& right)
+              { return left.ratio < right.ratio; });
+    return samples[samples.size() / 2U];
 }
 
 /* The native reference does the same work as the managed entry: one dense
@@ -146,19 +169,44 @@ int main()
     desc.all = resonate::Span<const ComponentIndex>(all, 1U);
     Query query = world.createQuery(desc);
 
-    /* The write path: the self view's Span pass with its dispose mark. */
+    /* The write path: the self view's Span pass with its dispose mark. The two
+       sides are measured back-to-back per sample, so a CPU-frequency drift
+       between phases cannot bias the ratio. */
     counters[0] = 0;
     for (int rep = 0; rep < kWarmups; ++rep)
     {
         resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
     }
-    double managed_write_ms = 1e9;
+    NativePass native_write{component, &world};
+    for (int rep = 0; rep < kWarmups; ++rep)
+    {
+        query.forEachChunk(&NativePass::run, &native_write);
+    }
+
+    std::vector<RatioSample> write_samples;
+    write_samples.reserve(kReps);
     for (int rep = 0; rep < kReps; ++rep)
     {
-        const auto start = std::chrono::steady_clock::now();
-        resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
-        managed_write_ms = std::min(managed_write_ms, millisecondsSince(start));
+        auto start = std::chrono::steady_clock::now();
+        for (int inner = 0; inner < kInner; ++inner)
+        {
+            resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+        }
+        const double managed = millisecondsSince(start) / static_cast<double>(kInner);
+
+        start = std::chrono::steady_clock::now();
+        for (int inner = 0; inner < kInner; ++inner)
+        {
+            query.forEachChunk(&NativePass::run, &native_write);
+        }
+        const double native = millisecondsSince(start) / static_cast<double>(kInner);
+
+        write_samples.push_back(RatioSample{native / managed, managed, native});
     }
+    const RatioSample write_sample = medianOf(std::move(write_samples));
+    const double managed_write_ms = write_sample.managed;
+    const double native_write_ms = write_sample.native;
+    const double write_ratio = write_sample.ratio;
 
     const auto* first = world.get<SwarmTransform>(first_entity);
     if (first == nullptr || first->py != first->px)
@@ -167,45 +215,42 @@ int main()
         return 1;
     }
 
-    NativePass native_write{component, &world};
-    for (int rep = 0; rep < kWarmups; ++rep)
-    {
-        query.forEachChunk(&NativePass::run, &native_write);
-    }
-    double native_write_ms = 1e9;
-    for (int rep = 0; rep < kReps; ++rep)
-    {
-        const auto start = std::chrono::steady_clock::now();
-        query.forEachChunk(&NativePass::run, &native_write);
-        native_write_ms = std::min(native_write_ms, millisecondsSince(start));
-    }
-
     /* The design's bar: the swarm lane's read-only iteration. */
     counters[0] = 1;
     for (int rep = 0; rep < kWarmups; ++rep)
     {
         resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
     }
-    double managed_read_ms = 1e9;
-    for (int rep = 0; rep < kReps; ++rep)
-    {
-        const auto start = std::chrono::steady_clock::now();
-        resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
-        managed_read_ms = std::min(managed_read_ms, millisecondsSince(start));
-    }
-
     NativeRead native_read{component};
     for (int rep = 0; rep < kWarmups; ++rep)
     {
         query.forEachChunk(&NativeRead::run, &native_read);
     }
-    double native_read_ms = 1e9;
+
+    std::vector<RatioSample> read_samples;
+    read_samples.reserve(kReps);
     for (int rep = 0; rep < kReps; ++rep)
     {
-        const auto start = std::chrono::steady_clock::now();
-        query.forEachChunk(&NativeRead::run, &native_read);
-        native_read_ms = std::min(native_read_ms, millisecondsSince(start));
+        auto start = std::chrono::steady_clock::now();
+        for (int inner = 0; inner < kInner; ++inner)
+        {
+            resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+        }
+        const double managed = millisecondsSince(start) / static_cast<double>(kInner);
+
+        start = std::chrono::steady_clock::now();
+        for (int inner = 0; inner < kInner; ++inner)
+        {
+            query.forEachChunk(&NativeRead::run, &native_read);
+        }
+        const double native = millisecondsSince(start) / static_cast<double>(kInner);
+
+        read_samples.push_back(RatioSample{native / managed, managed, native});
     }
+    const RatioSample read_sample = medianOf(std::move(read_samples));
+    const double managed_read_ms = read_sample.managed;
+    const double native_read_ms = read_sample.native;
+    const double read_ratio = read_sample.ratio;
 
     if (counters[1] == 0 || native_read.total <= 0.0F)
     {
@@ -213,8 +258,6 @@ int main()
         return 1;
     }
 
-    const double write_ratio = native_write_ms / managed_write_ms;
-    const double read_ratio = native_read_ms / managed_read_ms;
     std::printf("[csharp-bench] write path managed %.4f ms, native %.4f ms, ratio %.4f\n",
                 managed_write_ms, native_write_ms, write_ratio);
     std::printf("[csharp-bench] read path  managed %.4f ms, native %.4f ms, ratio %.4f "

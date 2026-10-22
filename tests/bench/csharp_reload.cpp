@@ -133,11 +133,29 @@ int main()
 
     std::vector<double> times;
     times.reserve(kIterations);
+
+    const std::string build = "dotnet build \"" + project + "\" -c Debug -o \"" + output +
+                              "\" --nologo -v quiet";
+
+    /* One untimed build warms the compiler server, the generator and the
+       analyzer: those start once per session, not once per edit, and charging
+       them to the first edit would measure the toolchain's start-up. */
+    if (!writeSource(source, 0))
+    {
+        std::printf("[csharp-reload] cannot write %s\n", source.c_str());
+        return 1;
+    }
+    if (std::system(build.c_str()) != 0)
+    {
+        std::printf("[csharp-reload] warm-up build failed\n");
+        return 1;
+    }
+
     for (int version = 1; version <= kIterations; ++version)
     {
         const auto start = std::chrono::steady_clock::now();
 
-        if (!writeSource(source, version))
+        if (!writeSource(source, version + 1))
         {
             std::printf("[csharp-reload] cannot write %s\n", source.c_str());
             return 1;
@@ -149,8 +167,6 @@ int main()
             return 1;
         }
 
-        const std::string build = "dotnet build \"" + project + "\" -c Debug -o \"" + output +
-                                  "\" --nologo -v quiet";
         const int status = std::system(build.c_str());
         if (status != 0)
         {
@@ -173,22 +189,23 @@ int main()
            which is part of "visible". */
         world.play(commands);
         const double elapsed = millisecondsSince(start);
-        if (counters[1] != version)
+        const int expected = version + 1;
+        if (counters[1] != expected)
         {
-            std::printf("[csharp-reload] version %d is not visible (counter %d)\n", version,
+            std::printf("[csharp-reload] version %d is not visible (counter %d)\n", expected,
                         counters[1]);
             return 1;
         }
         const Entity spawned{static_cast<std::uint32_t>(counters[2]),
                              static_cast<std::uint32_t>(counters[3])};
         const auto* added = world.get<ReloadEntity>(spawned);
-        if (added == nullptr || added->value != static_cast<float>(version))
+        if (added == nullptr || added->value != static_cast<float>(expected))
         {
-            std::printf("[csharp-reload] version %d did not spawn its entity\n", version);
+            std::printf("[csharp-reload] version %d did not spawn its entity\n", expected);
             return 1;
         }
         times.push_back(elapsed);
-        std::printf("[csharp-reload] version %d: %.0f ms\n", version, elapsed);
+        std::printf("[csharp-reload] version %d: %.0f ms\n", expected, elapsed);
     }
 
     std::vector<double> sorted = times;
