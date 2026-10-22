@@ -3,6 +3,7 @@
 #include <resonate/ui/style.h>
 
 #include "binding_internal.h"
+#include "component_bind.h"
 
 #include <cctype>
 #include <cerrno>
@@ -611,7 +612,7 @@ bool collectBindings(World& world, const dom::Document& document, dom::NodeHandl
 
 bool applyComponents(World& world, const dom::Document& document, dom::NodeHandle node,
                      Entity entity, const std::vector<dom::Component>& components,
-                     BindingContext& bindings)
+                     BindingContext& bindings, const dom::ComponentRegistry* component_registry)
 {
     const dom::Component* computed = nullptr;
     const dom::Component* authored_bindings = nullptr;
@@ -669,7 +670,17 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
         }
         else
         {
-            error = "unknown component '" + std::string(document.text(component.type)) + "'";
+            const dom::ComponentDesc* descriptor =
+                component_registry != nullptr ? component_registry->find(name) : nullptr;
+            if (descriptor == nullptr)
+            {
+                error = "unknown component '" + std::string(document.text(component.type)) + "'";
+            }
+            else
+            {
+                applied = detail::attachGeneric(world, document, node, entity, component,
+                                                *descriptor, error);
+            }
         }
         if (!applied)
         {
@@ -704,6 +715,7 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
 
 Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Document& document,
                        dom::NodeHandle node, const StyleTable& styles, BindingContext& bindings,
+                       const dom::ComponentRegistry* component_registry,
                        std::vector<Entity>& created)
 {
     const Entity entity = world.create();
@@ -718,7 +730,8 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
         bindings.canvas = entity;
     }
 
-    if (!applyComponents(world, document, node, entity, styles.resolve(document, node), bindings))
+    if (!applyComponents(world, document, node, entity, styles.resolve(document, node), bindings,
+                         component_registry))
     {
         return Entity{};
     }
@@ -731,7 +744,8 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
             continue;
         }
         const Entity child_entity =
-            instantiateNode(world, commands, document, child, styles, bindings, created);
+            instantiateNode(world, commands, document, child, styles, bindings,
+                            component_registry, created);
         if (!child_entity.valid())
         {
             return Entity{};
@@ -743,7 +757,8 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
 
 } // namespace
 
-Entity instantiate(World& world, dom::Document& document)
+Entity instantiate(World& world, dom::Document& document,
+                   const dom::ComponentRegistry* component_registry)
 {
     const dom::NodeHandle root = document.root();
     if (!root.valid())
@@ -771,8 +786,8 @@ Entity instantiate(World& world, dom::Document& document)
     CommandBuffer commands(world);
     std::vector<Entity> created;
     BindingContext bindings;
-    const Entity entity =
-        instantiateNode(world, commands, document, root, styles, bindings, created);
+    const Entity entity = instantiateNode(world, commands, document, root, styles, bindings,
+                                          component_registry, created);
     if (!entity.valid())
     {
         for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)

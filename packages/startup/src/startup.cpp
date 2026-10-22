@@ -39,7 +39,11 @@
 #include <resonate/window/input.h>
 #include <resonate/window/session.hpp>
 
+#include "resonate.gameplay/nodes.gen.h"
+#include "resonate.hierarchy/nodes.gen.h"
+#include "resonate.render/nodes.gen.h"
 #include "resonate.ui/components.gen.h"
+#include "resonate.ui/nodes.gen.h"
 
 namespace resonate::startup
 {
@@ -86,6 +90,50 @@ struct UiFrame
 };
 
 ecs::Entity composeBuiltinHud(ecs::World& world);
+
+/* The content vocabulary is every module's generated table behind one
+   registry: a document may mix UI, hierarchy and render nodes. */
+const dom::SchemaRegistry& contentSchema()
+{
+    static const dom::TableSchemaRegistry hierarchy_table(
+        resonate::Span<const dom::NodeTypeDesc>(hierarchy::generated::kNodeTypes,
+                                                hierarchy::generated::kNodeTypeCount),
+        resonate::Span<const char* const>(hierarchy::generated::kComponents,
+                                          hierarchy::generated::kComponentCount));
+    static const dom::TableSchemaRegistry render_table(
+        resonate::Span<const dom::NodeTypeDesc>(render::generated::kNodeTypes,
+                                                render::generated::kNodeTypeCount),
+        resonate::Span<const char* const>(render::generated::kComponents,
+                                          render::generated::kComponentCount));
+    static const dom::TableSchemaRegistry gameplay_table(
+        resonate::Span<const dom::NodeTypeDesc>(gameplay::generated::kNodeTypes,
+                                                gameplay::generated::kNodeTypeCount),
+        resonate::Span<const char* const>(gameplay::generated::kComponents,
+                                          gameplay::generated::kComponentCount));
+    static const std::array<const dom::SchemaRegistry*, 4> tables{
+        &ui::documentSchema(), &hierarchy_table, &render_table, &gameplay_table};
+    static const dom::CompositeSchemaRegistry registry(
+        resonate::Span<const dom::SchemaRegistry* const>(tables.data(), tables.size()));
+    return registry;
+}
+
+const dom::ComponentRegistry& contentComponents()
+{
+    static const dom::TableComponentRegistry hierarchy_table(
+        resonate::Span<const dom::ComponentDesc>(hierarchy::generated::kComponentDescs,
+                                                 hierarchy::generated::kComponentDescCount));
+    static const dom::TableComponentRegistry render_table(
+        resonate::Span<const dom::ComponentDesc>(render::generated::kComponentDescs,
+                                                 render::generated::kComponentDescCount));
+    static const dom::TableComponentRegistry gameplay_table(
+        resonate::Span<const dom::ComponentDesc>(gameplay::generated::kComponentDescs,
+                                                 gameplay::generated::kComponentDescCount));
+    static const std::array<const dom::ComponentRegistry*, 4> tables{
+        &ui::documentComponents(), &hierarchy_table, &render_table, &gameplay_table};
+    static const dom::CompositeComponentRegistry registry(
+        resonate::Span<const dom::ComponentRegistry* const>(tables.data(), tables.size()));
+    return registry;
+}
 
 /* Content lives beside the executable in a shipped layout and in the project
    tree during development; the walk covers both. */
@@ -145,7 +193,7 @@ ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool r
     const std::string text((std::istreambuf_iterator<char>(in)),
                            std::istreambuf_iterator<char>());
     std::vector<dom::Diagnostic> diagnostics;
-    auto document = dom::Document::parse(text, &ui::documentSchema(), diagnostics);
+    auto document = dom::Document::parse(text, &contentSchema(), diagnostics);
     if (document == nullptr)
     {
         for (const dom::Diagnostic& diagnostic : diagnostics)
@@ -155,7 +203,7 @@ ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool r
         }
         return ecs::Entity{};
     }
-    const ecs::Entity canvas = ui::instantiate(world, *document);
+    const ecs::Entity canvas = ui::instantiate(world, *document, &contentComponents());
     if (!canvas.valid())
     {
         return ecs::Entity{};
