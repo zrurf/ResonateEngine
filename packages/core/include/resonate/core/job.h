@@ -66,6 +66,34 @@ enum JobAffinity : std::uint8_t
     JobAffinityBackground = 2, /* io, decompression, compilation */
 };
 
+namespace detail
+{
+
+/* A handle packs the slot in the low bits and the generation above it. The
+   generation keeps only the bits the slot leaves and wraps past zero, so slot 0
+   never packs to the null handle. */
+inline constexpr std::uint32_t kJobSlotBits = 12;
+inline constexpr std::uint32_t kJobSlotCount = 1U << kJobSlotBits;
+inline constexpr std::uint32_t kJobGenerationMask = (1U << (32U - kJobSlotBits)) - 1U;
+
+constexpr JobIndex packJobIndex(std::uint32_t slot, std::uint32_t generation) noexcept
+{
+    return slot | ((generation & kJobGenerationMask) << kJobSlotBits);
+}
+
+constexpr std::uint32_t nextJobGeneration(std::uint32_t generation) noexcept
+{
+    const std::uint32_t next = (generation + 1U) & kJobGenerationMask;
+    return next == 0U ? 1U : next;
+}
+
+constexpr bool jobIndexIsCurrent(JobIndex index, std::uint32_t generation) noexcept
+{
+    return ((index >> kJobSlotBits) & kJobGenerationMask) == (generation & kJobGenerationMask);
+}
+
+} // namespace detail
+
 class JobSystem
 {
   public:

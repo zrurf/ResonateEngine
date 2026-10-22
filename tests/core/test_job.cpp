@@ -894,3 +894,21 @@ TEST_CASE("a job's class wakes a worker of its own class", "[core][job]")
 
     delete jobs;
 }
+
+TEST_CASE("a job handle keeps its generation inside the packed bits", "[core][job]")
+{
+    using namespace resonate::detail;
+
+    /* Generations past the low bits wrap instead of truncating, so a live job
+       is never reported as completed. Zero is skipped: slot 0 with generation
+       0 would pack to the null handle. */
+    CHECK(packJobIndex(0U, 1U) != 0U);
+    CHECK(packJobIndex(0U, 0U) == 0U); /* why zero is skipped */
+    CHECK(nextJobGeneration(kJobGenerationMask) == 1U);
+    CHECK(nextJobGeneration(1U) == 2U);
+
+    /* A generation is always in [1, mask], and the packed handle still names
+       the live job. */
+    CHECK(jobIndexIsCurrent(packJobIndex(7U, kJobGenerationMask), kJobGenerationMask));
+    CHECK_FALSE(jobIndexIsCurrent(packJobIndex(7U, kJobGenerationMask), 1U));
+}

@@ -18,8 +18,6 @@ namespace
 /* Jobs in flight are slots: the low bits of a JobIndex name the slot, the rest
    is a generation that turns a recycled slot into "already completed" for a
    stale handle instead of a wait on somebody else's job. */
-constexpr std::uint32_t kSlotBits = 12;
-constexpr std::uint32_t kSlotCount = 1U << kSlotBits;
 constexpr std::uint32_t kGroupBits = 32;
 constexpr std::uint32_t kNoWorker = 0xFFFFFFFFU;
 constexpr std::uint32_t kParkSpins = 4;
@@ -737,7 +735,7 @@ class JobSystemImpl final : public JobSystem
             slot = freeSlots_.back();
             freeSlots_.pop_back();
         }
-        else if (slotsTaken_ < kSlotCount)
+        else if (slotsTaken_ < detail::kJobSlotCount)
         {
             slot = slotsTaken_++;
         }
@@ -755,21 +753,21 @@ class JobSystemImpl final : public JobSystem
     void releaseSlot(Job* job)
     {
         job->live = false;
-        job->generation += 1;
+        job->generation = detail::nextJobGeneration(job->generation);
         freeSlots_.push_back(job->slot);
     }
 
     std::uint32_t indexOf(const Job& job) const
     {
-        return job.slot | (job.generation << kSlotBits);
+        return detail::packJobIndex(job.slot, job.generation);
     }
 
     bool completed(JobIndex index)
     {
-        const std::uint32_t slot = index & (kSlotCount - 1);
+        const std::uint32_t slot = index & (detail::kJobSlotCount - 1U);
         Lock lock(dagMutex_);
         const Job& job = nodes_[slot];
-        return !job.live || job.generation != (index >> kSlotBits);
+        return !job.live || !detail::jobIndexIsCurrent(index, job.generation);
     }
 
     static std::uint32_t queueOf(JobPriority priority)
@@ -782,7 +780,7 @@ class JobSystemImpl final : public JobSystem
        moved, so the pool never grows. Running out of slots is not a failure —
        a submitter with none left runs queued work until one frees (see
        submit). */
-    std::vector<Job> nodes_ = std::vector<Job>(kSlotCount);
+    std::vector<Job> nodes_ = std::vector<Job>(detail::kJobSlotCount);
     std::vector<std::uint32_t> freeSlots_;
     std::uint32_t slotsTaken_ = 0;
     std::vector<Job*> groups_[kGroupBits]; /* incomplete jobs per resource group */
