@@ -80,6 +80,19 @@ TEST_CASE("config store: scalars, nested sections and fallbacks", "[config]")
     CHECK(empty.readBool("resonate.render", "vsync", true) == true);
 }
 
+TEST_CASE("config store: an unsigned read beyond 32 bits answers the fallback", "[config]")
+{
+    resonate::ConfigStore store;
+    TempConfig file;
+    file.write("[resonate.test]\nbig = \"99999999999999999999\"\n");
+    store.load(file.path());
+    CHECK(store.readUInt("resonate.test", "big", 7U) == 7U);
+
+    file.write("[resonate.test]\nbig = \"4294967295\"\n");
+    store.load(file.path());
+    CHECK(store.readUInt("resonate.test", "big", 7U) == 4294967295U);
+}
+
 TEST_CASE("config store: a file that cannot be parsed is reported and left empty", "[config]")
 {
     resonate::ConfigStore store;

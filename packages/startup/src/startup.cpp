@@ -56,7 +56,9 @@ std::optional<int> positiveFrom(const std::string& text)
 {
     const char* const begin = text.c_str();
     char* end = nullptr;
-    const long parsed = std::strtol(begin, &end, 10);
+    /* 64-bit, so a hand-typed value beyond int does not saturate at LONG_MAX
+       on Windows and slip through as valid. */
+    const long long parsed = std::strtoll(begin, &end, 10);
     if (end == begin || *end != '\0' || parsed <= 0 || parsed > INT_MAX)
     {
         return std::nullopt;

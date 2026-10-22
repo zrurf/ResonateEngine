@@ -136,7 +136,9 @@ std::uint32_t ConfigStore::readUInt(const char* section, const char* key,
 
     const char* begin = text->c_str();
     char* end = nullptr;
-    const unsigned long parsed = std::strtoul(begin, &end, 10);
+    /* A 64-bit accumulator, so a value beyond 32 bits is seen as out of range
+       instead of saturating at ULONG_MAX on a 32-bit long. */
+    const unsigned long long parsed = std::strtoull(begin, &end, 10);
     if (end == begin || *end != '\0' || parsed > UINT32_MAX)
     {
         return fallback;
