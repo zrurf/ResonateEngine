@@ -257,6 +257,9 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<ComputedRect>() != ecs::kInvalidComponent &&
            world.registerComponent<Background>() != ecs::kInvalidComponent &&
            world.registerComponent<Image>() != ecs::kInvalidComponent &&
+           world.registerComponent<Text>() != ecs::kInvalidComponent &&
+           world.registerComponent<Glyphs>() != ecs::kInvalidComponent &&
+           world.registerComponent<TextAtlasPage>() != ecs::kInvalidComponent &&
            world.registerComponent<DataContext>() != ecs::kInvalidComponent &&
            world.registerComponent<Bindings>() != ecs::kInvalidComponent &&
            world.registerComponent<Input>() != ecs::kInvalidComponent &&

@@ -192,6 +192,16 @@ struct UiRoot
     bool found = false;
 };
 
+/* The font atlas one UI canvas carries, shared by snapshots so publishing it
+   is a pointer swap rather than a page copy. */
+struct UiAtlas
+{
+    std::uint32_t width = 0U;
+    std::uint32_t height = 0U;
+    std::uint32_t revision = 0U;
+    std::vector<std::uint8_t> pixels;
+};
+
 /* One extracted frame, handed to the render thread. The producer fills a
    scratch snapshot and publishes it into the double buffer; the render thread
    executes the published one. */
@@ -201,6 +211,7 @@ struct FrameSnapshot
     std::vector<ShaderLight> lights;
     std::vector<DrawInstance> instances;
     ui::DisplayList ui;
+    std::shared_ptr<const UiAtlas> text_atlas;
     std::uint32_t target_width = 0U;
     std::uint32_t target_height = 0U;
 };
@@ -266,7 +277,7 @@ std::string contentTexturesDirectory()
 /* A tightly packed RGBA8 texture in the sampled-image table. */
 bool createSampledTexture(ResonateRenderDevice& device, std::uint32_t width, std::uint32_t height,
                           ResonateRenderFormat format, const std::vector<std::uint8_t>& pixels,
-                          ResonateRenderImage& out_texture)
+                          ResonateRenderImage& out_texture, bool nearest = true)
 {
     ResonateRenderImageDesc desc{};
     desc.struct_size = sizeof(desc);
@@ -274,8 +285,7 @@ bool createSampledTexture(ResonateRenderDevice& device, std::uint32_t width, std
     desc.width = width;
     desc.height = height;
     desc.usage = RESONATE_RENDER_IMAGE_SAMPLED;
-    /* Albedo texels stay crisp: a checker or pixel art must not smear. */
-    desc.nearest = 1U;
+    desc.nearest = nearest ? 1U : 0U;
     if (device.create_image(device.self, &desc, &out_texture) != RESONATE_OK)
     {
         return false;
@@ -338,6 +348,7 @@ struct RenderSystem::Impl
     ecs::Query directional_lights;
     ecs::Query ui_canvases;
     bool ui_enabled = false;
+    bool text_enabled = false;
     bool queries_ready = false;
 
     /* Producer state: the extract fills a scratch snapshot, then publishes it.
@@ -431,9 +442,18 @@ struct RenderSystem::Impl
        constants. */
     ResonateRenderImage white_texture{};
     ResonateRenderImage checker_texture{};
+    ResonateRenderImage font_atlas{};
     std::uint32_t white_texture_slot = 0U;
     std::uint32_t checker_texture_slot = 0U;
+    std::uint32_t font_atlas_slot = 0U;
+    std::uint32_t font_atlas_revision = 0U;
     bool albedo_ready = false;
+    bool font_atlas_ready = false;
+
+    /* The producer's copy of the canvas's TextAtlasPage, replaced only when
+       its revision moves. */
+    std::shared_ptr<const UiAtlas> text_atlas_cache;
+    std::uint32_t text_atlas_revision = 0U;
 
     /* The producer's world, for the optional Material lookup. */
     ecs::World* extract_world = nullptr;
@@ -459,7 +479,7 @@ struct RenderSystem::Impl
     }
 
     bool initialize();
-    bool createAlbedoTextures();
+    bool createAlbedoTextures(const FrameSnapshot& snapshot);
     bool ensurePipelines();
     ResonateRenderBuffer uploadStorage(std::uint64_t size_bytes, bool host_visible);
     ResonateRenderBuffer uploadUniform(std::uint64_t size_bytes);
@@ -857,6 +877,10 @@ std::uint32_t RenderSystem::Impl::uiTextureSlot(std::uint32_t texture) const
     {
         return kSolidUiTextureSlot;
     }
+    if (texture == ui::kTextureFont)
+    {
+        return font_atlas_ready ? font_atlas_slot : kSolidUiTextureSlot;
+    }
     if (!albedo_ready)
     {
         return kSolidUiTextureSlot;
@@ -1198,7 +1222,7 @@ bool RenderSystem::Impl::ensurePipelines()
    uploaded before the first present as a constant, ignoring later uploads and
    descriptor rewrites, while the same image created after the first frame
    samples correctly. */
-bool RenderSystem::Impl::createAlbedoTextures()
+bool RenderSystem::Impl::createAlbedoTextures(const FrameSnapshot& snapshot)
 {
     const std::vector<std::uint8_t> white_pixels(4U, 255U);
     TextureImage checker;
@@ -1251,6 +1275,29 @@ bool RenderSystem::Impl::createAlbedoTextures()
     }
     white_texture_slot = slotOf(white_texture);
     checker_texture_slot = slotOf(checker_texture);
+    if (snapshot.text_atlas != nullptr && snapshot.text_atlas->revision != 0U)
+    {
+        const UiAtlas& atlas = *snapshot.text_atlas;
+        if (atlas.width == 0U || atlas.height == 0U ||
+            atlas.pixels.size() != static_cast<std::size_t>(atlas.width) * atlas.height * 4U ||
+            !createSampledTexture(*device, atlas.width, atlas.height,
+                                  RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, atlas.pixels, font_atlas,
+                                  true))
+        {
+            complain("the font atlas texture was not created");
+            return false;
+        }
+        font_atlas_slot = slotOf(font_atlas);
+        if (device->header.struct_size >=
+                offsetof(ResonateRenderDevice, bind_image_slot) +
+                    sizeof(device->bind_image_slot) &&
+            device->bind_image_slot != nullptr)
+        {
+            device->bind_image_slot(device->self, font_atlas_slot, font_atlas, 1U);
+        }
+        font_atlas_revision = atlas.revision;
+        font_atlas_ready = true;
+    }
     return true;
 }
 
@@ -1278,6 +1325,7 @@ void RenderSystem::Impl::bindQueries(ecs::World& world)
     /* A run without the UI components (a unit test or a headless tool that
        never registers them) renders the scene and no overlay. */
     ui_enabled = ecs::ComponentTraits<ui::Canvas>::index != ecs::kInvalidComponent;
+    text_enabled = ecs::ComponentTraits<ui::TextAtlasPage>::index != ecs::kInvalidComponent;
     if (ui_enabled)
     {
         const ecs::ComponentIndex ui_all[] = {ecs::ComponentTraits<ui::Canvas>::index};
@@ -1526,6 +1574,31 @@ bool RenderSystem::Impl::extract(ecs::World& world)
         if (root.found)
         {
             ui::buildDisplayList(world, root.entity, scratch.ui);
+            scratch.text_atlas.reset();
+            if (text_enabled)
+            {
+                if (const auto* page = world.get<ui::TextAtlasPage>(root.entity))
+                {
+                    if (page->revision != text_atlas_revision &&
+                        world.alive(page->pixels))
+                    {
+                        auto atlas = std::make_shared<UiAtlas>();
+                        atlas->width = page->width;
+                        atlas->height = page->height;
+                        atlas->revision = page->revision;
+                        const auto* pixels =
+                            static_cast<const std::uint8_t*>(world.blobData(page->pixels));
+                        const std::size_t size = world.blobSize(page->pixels);
+                        if (pixels != nullptr)
+                        {
+                            atlas->pixels.assign(pixels, pixels + size);
+                        }
+                        text_atlas_cache = std::move(atlas);
+                        text_atlas_revision = page->revision;
+                    }
+                    scratch.text_atlas = text_atlas_cache;
+                }
+            }
         }
     }
     return true;
@@ -2169,7 +2242,7 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
     {
         albedo_ready = true;
         device->wait_idle(device->self);
-        if (!createAlbedoTextures())
+        if (!createAlbedoTextures(snapshot))
         {
             complain("albedo textures unavailable");
         }

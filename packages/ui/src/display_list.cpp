@@ -5,6 +5,7 @@
 
 #include <resonate/hierarchy/tree.h>
 
+#include "glyph_run.h"
 #include "resonate.ui/components.gen.h"
 
 namespace resonate::ui
@@ -46,6 +47,29 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         }
         quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, image->tint,
                               image->texture, image->uv_min, image->uv_max});
+    }
+    if (const Text* text = world.get<Text>(entity))
+    {
+        const Glyphs* glyphs = world.get<Glyphs>(entity);
+        if (glyphs != nullptr && world.alive(glyphs->records))
+        {
+            const ComputedRect* rect = world.get<ComputedRect>(entity);
+            if (rect == nullptr)
+            {
+                return report(world, entity, "has Text but no ComputedRect");
+            }
+            const auto* records = static_cast<const detail::GlyphQuad*>(
+                world.blobData(glyphs->records));
+            const std::size_t count =
+                world.blobSize(glyphs->records) / sizeof(detail::GlyphQuad);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                const detail::GlyphQuad& glyph = records[index];
+                quads_.push_back(Quad{rect->x + glyph.x, rect->y + glyph.y, glyph.width,
+                                      glyph.height, text->text_color, kTextureFont,
+                                      Vec2{glyph.u0, glyph.v0}, Vec2{glyph.u1, glyph.v1}});
+            }
+        }
     }
 
     const auto children = hierarchy::children(world, entity);

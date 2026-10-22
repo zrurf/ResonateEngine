@@ -103,6 +103,30 @@
     <field name="tint" type="vec4" default="1 1 1 1"/>
   </component>
 
+  <!-- A shaped run: the UTF-8 bytes in a blob, the size in pixels and the
+       color the coverage masks. The adapter fills it from the Label's text
+       authoring property. -->
+  <component name="Text" version="1">
+    <field name="content" type="blob"/>
+    <field name="font_size" type="f32" default="24"/>
+    <field name="text_color" type="vec4" default="1 1 1 1"/>
+  </component>
+
+  <!-- Compiled glyph quads in widget-local pixels: x/y/width/height plus the
+       atlas UV rect. Derived by the adapter from Text. -->
+  <component name="Glyphs" version="1" derived="true">
+    <field name="records" type="blob"/>
+  </component>
+
+  <!-- The canvas's single font atlas: RGBA8 coverage pages and the revision
+       the renderer compares before re-uploading. Derived by the adapter. -->
+  <component name="TextAtlasPage" version="1" derived="true">
+    <field name="width" type="u32"/>
+    <field name="height" type="u32"/>
+    <field name="revision" type="u32"/>
+    <field name="pixels" type="blob"/>
+  </component>
+
   <!-- The HUD's view model: gameplay or the demo writes these values; widgets
        bind their RectTransform fields to them. A later slice can bind straight
        to gameplay components. -->
@@ -169,6 +193,8 @@
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color"/>
+    <uses component="Text" expose="font_size text_color"/>
+    <field name="text" type="string"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>
     <field name="bind-width" type="binding"/>

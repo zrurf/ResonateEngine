@@ -32,12 +32,18 @@
            x="40" y="40" width="360" height="180"
            direction="Column" align="Start" gap="8"
            padding_left="12" padding_top="12" padding_right="12" padding_bottom="12">
-      <Label key="title" name="Title" class="title" width="336" height="28"/>
+      <Label key="title" name="Title" class="title" width="336" height="28"
+             text="动作演示" font_size="20" text_color="1 1 1 1"/>
       <Label key="bar.health" name="Health" class="bar" height="16"
+             text="生命值 240" font_size="13" text_color="0.05 0.12 0.05 1"
              bind-width="DataContext.health"/>
       <Label key="bar.ammo" name="Ammo" class="bar ammo" height="16"
+             text="弹药 90" font_size="13" text_color="0.20 0.08 0.02 1"
              bind-width="DataContext.ammo"/>
-      <Button key="action" name="Action" class="action" width="140" height="36"/>
+      <Button key="action" name="Action" class="action" width="140" height="36">
+        <Label key="action-label" text="开始游戏" font_size="16"
+               x="10" y="7" width="120" height="24" color="0 0 0 0"/>
+      </Button>
       <Picture key="icon" name="Icon" texture="1" x="276" y="96" width="48" height="48"
                position="Absolute"/>
     </Panel>

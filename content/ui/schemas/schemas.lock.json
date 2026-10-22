@@ -91,6 +91,16 @@
       ]
     },
     {
+      "name": "Glyphs",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Glyphs version 1",
+        "  size 8 align 4",
+        "  field records blob @0 size 8"
+      ]
+    },
+    {
       "name": "Image",
       "kind": "component",
       "version": 1,
@@ -122,12 +132,14 @@
       "version": 1,
       "shape": [
         "node Label version 1",
+        "  field text string",
         "  field bind-x binding",
         "  field bind-y binding",
         "  field bind-width binding",
         "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
-        "  uses Background expose color"
+        "  uses Background expose color",
+        "  uses Text expose font_size text_color"
       ]
     },
     {
@@ -256,6 +268,31 @@
       "version": 1,
       "shape": [
         "node StyleSheet version 1"
+      ]
+    },
+    {
+      "name": "Text",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Text version 1",
+        "  size 28 align 4",
+        "  field content blob @0 size 8",
+        "  field font_size f32 @8 size 4 default=24",
+        "  field text_color vec4 @12 size 16 default=1 1 1 1"
+      ]
+    },
+    {
+      "name": "TextAtlasPage",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component TextAtlasPage version 1",
+        "  size 20 align 4",
+        "  field width u32 @0 size 4",
+        "  field height u32 @4 size 4",
+        "  field revision u32 @8 size 4",
+        "  field pixels blob @12 size 8"
       ]
     }
   ]

@@ -5,6 +5,7 @@
 
 #include "binding_internal.h"
 #include "component_bind.h"
+#include "glyph_run.h"
 #include "state_style_internal.h"
 
 #include <cctype>
@@ -594,11 +595,49 @@ bool applyInput(const dom::Document& document, const dom::Component& component, 
     return true;
 }
 
+bool applyText(const dom::Document& document, const dom::Component& component, Text& text,
+               std::string& error)
+{
+    for (const dom::Field& field : component.fields)
+    {
+        const std::string_view name = document.text(field.name);
+        if (name == "font_size")
+        {
+            if (!parseFloat(field.value, text.font_size) || !(text.font_size > 0.0F))
+            {
+                error = "Text.font_size is not a positive number";
+                return false;
+            }
+        }
+        else if (name == "text_color")
+        {
+            if (!parseVec4(field.value, text.text_color))
+            {
+                error = "Text.text_color is not a vec4";
+                return false;
+            }
+        }
+        else if (name == "content")
+        {
+            error = "Text.content is written by the adapter and cannot be authored";
+            return false;
+        }
+        else
+        {
+            error = "unknown Text field '" + std::string(name) + "'";
+            return false;
+        }
+    }
+    return true;
+}
+
 struct BindingContext
 {
     Entity canvas{};
     ecs::ComponentIndex data_component = ecs::kInvalidComponent;
     std::vector<detail::BindingRecord> records;
+    dom::StringId text_property = dom::kInvalidString;
+    std::unique_ptr<detail::TextAtlasBuilder> atlas;
 };
 
 bool collectBindings(World& world, const dom::Document& document, dom::NodeHandle node,
@@ -710,6 +749,61 @@ bool collectBindings(World& world, const dom::Document& document, dom::NodeHandl
         record.target_offset = target_offset;
         record.kind = 0U;
         context.records.push_back(record);
+    }
+    return true;
+}
+
+bool buildTextRun(World& world, const dom::Document& document, dom::NodeHandle node,
+                  Entity entity, BindingContext& context)
+{
+    Text* text = world.get<Text>(entity);
+    if (text == nullptr)
+    {
+        return true;
+    }
+
+    if (context.text_property != dom::kInvalidString)
+    {
+        if (const dom::Field* property = document.property(node, context.text_property))
+        {
+            if (!property->value.empty())
+            {
+                const ecs::BlobHandle content =
+                    world.createBlob(entity, property->value.size(), property->value.data());
+                if (!content.valid())
+                {
+                    return report(world, document, node, "the text bytes could not be attached");
+                }
+                text->content = content;
+            }
+        }
+    }
+    if (!text->content.valid() || context.atlas == nullptr)
+    {
+        return true;
+    }
+    const auto* bytes = static_cast<const char*>(world.blobData(text->content));
+    const std::size_t size = world.blobSize(text->content);
+    if (bytes == nullptr || size == 0U)
+    {
+        return true;
+    }
+
+    std::vector<detail::GlyphQuad> glyphs;
+    std::string error;
+    if (!context.atlas->buildRun(std::string_view(bytes, size), text->font_size, glyphs, error))
+    {
+        return report(world, document, node, "text: " + error);
+    }
+    if (glyphs.empty())
+    {
+        return true;
+    }
+    const ecs::BlobHandle records =
+        world.createBlob(entity, glyphs.size() * sizeof(detail::GlyphQuad), glyphs.data());
+    if (!records.valid() || world.add(entity, Glyphs{records}) == nullptr)
+    {
+        return report(world, document, node, "glyph quads could not be attached");
     }
     return true;
 }
@@ -910,7 +1004,8 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
             computed = &component;
             continue;
         }
-        if (name == "Bindings" || name == "PointerState" || name == "StateStyles")
+        if (name == "Bindings" || name == "PointerState" || name == "StateStyles" ||
+            name == "Glyphs" || name == "TextAtlasPage")
         {
             authored_derived = &component;
             continue;
@@ -966,6 +1061,12 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
             applied = applyInput(document, component, value, error) &&
                       world.add(entity, value) != nullptr;
         }
+        else if (name == "Text")
+        {
+            Text value;
+            applied = applyText(document, component, value, error) &&
+                      world.add(entity, value) != nullptr;
+        }
         else
         {
             const dom::ComponentDesc* descriptor =
@@ -998,7 +1099,8 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
     if (authored_derived != nullptr)
     {
         return report(world, document, node,
-                      "Bindings, PointerState and StateStyles are derived and cannot be authored");
+                      "Bindings, PointerState, StateStyles, Glyphs and TextAtlasPage are derived "
+                      "and cannot be authored");
     }
     if (world.add(entity, ComputedRect{}) == nullptr)
     {
@@ -1041,6 +1143,10 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
         world.markChanged<Input>(entity);
         detail::applyStateStyles(world, entity, static_cast<std::uint32_t>(WidgetState::Disabled));
     }
+    if (!buildTextRun(world, document, node, entity, bindings))
+    {
+        return Entity{};
+    }
 
     for (dom::NodeHandle child = document.firstChild(node); child.valid();
          child = document.nextSibling(child))
@@ -1064,7 +1170,8 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
 } // namespace
 
 Entity instantiate(World& world, dom::Document& document,
-                   const dom::ComponentRegistry* component_registry)
+                   const dom::ComponentRegistry* component_registry,
+                   std::shared_ptr<const text::Font> font)
 {
     const dom::NodeHandle root = document.root();
     if (!root.valid())
@@ -1092,6 +1199,11 @@ Entity instantiate(World& world, dom::Document& document,
     CommandBuffer commands(world);
     std::vector<Entity> created;
     BindingContext bindings;
+    bindings.text_property = document.intern("text");
+    if (font != nullptr)
+    {
+        bindings.atlas = std::make_unique<detail::TextAtlasBuilder>(std::move(font));
+    }
     const Entity entity = instantiateNode(world, commands, document, root, styles, bindings,
                                           component_registry, created);
     if (!entity.valid())
@@ -1119,6 +1231,22 @@ Entity instantiate(World& world, dom::Document& document,
             world.destroy(*iterator);
         }
         return Entity{};
+    }
+    if (bindings.atlas != nullptr && bindings.atlas->used())
+    {
+        const std::vector<std::uint8_t>& pixels = bindings.atlas->pixels();
+        const ecs::BlobHandle page = world.createBlob(entity, pixels.size(), pixels.data());
+        if (!page.valid() ||
+            world.add(entity, TextAtlasPage{bindings.atlas->width(), bindings.atlas->height(), 1U,
+                                            page}) == nullptr)
+        {
+            report(world, document, root, "the font atlas page could not be attached");
+            for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)
+            {
+                world.destroy(*iterator);
+            }
+            return Entity{};
+        }
     }
     if (!bindings.records.empty())
     {

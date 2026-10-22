@@ -32,6 +32,7 @@
 #include <resonate/render/canvas.h>
 #include <resonate/render/offscreen.hpp>
 #include <resonate/renderer/renderer.h>
+#include <resonate/text/font.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/binding.h>
 #include <resonate/ui/document_schema.h>
@@ -173,7 +174,8 @@ std::string findContentFile(const std::string& relative)
 /* The configured UI document, instantiated into the world. A missing default
    document falls back to the built-in HUD; a configured one or a broken one
    ends the run with the reason. */
-ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool required)
+ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool required,
+                        std::shared_ptr<const text::Font> font)
 {
     /* A host that stages its assets elsewhere (Android) names the document
        directly; the setting and the content walk cover desktop runs. */
@@ -216,7 +218,8 @@ ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool r
         }
         return ecs::Entity{};
     }
-    const ecs::Entity canvas = ui::instantiate(world, *document, &contentComponents());
+    const ecs::Entity canvas =
+        ui::instantiate(world, *document, &contentComponents(), std::move(font));
     if (!canvas.valid())
     {
         return ecs::Entity{};
@@ -619,7 +622,19 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
                 host.capabilities(), detail::CapabilityTraits<ResonateInput>::id.value(),
                 detail::CapabilityTraits<ResonateInput>::version, &input_version);
             ui_frame.input = static_cast<const ResonateInput*>(input);
-            ui_frame.canvas = loadDemoHud(world, ui_document, ui_document_required);
+            std::shared_ptr<const text::Font> ui_font;
+            const std::string font_path =
+                findContentFile("content/ui/fonts/ResonateSansSC-Subset.ttf");
+            if (!font_path.empty())
+            {
+                std::string font_error;
+                ui_font = text::Font::loadFile(font_path, font_error);
+                if (ui_font == nullptr)
+                {
+                    std::fprintf(stderr, "resonate: ui font: %s\n", font_error.c_str());
+                }
+            }
+            ui_frame.canvas = loadDemoHud(world, ui_document, ui_document_required, ui_font);
             if (!ui_frame.canvas.valid())
             {
                 return RESONATE_E_INVALID;
