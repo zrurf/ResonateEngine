@@ -52,6 +52,7 @@ struct FakeInput
     bool k = false;
     bool south = false;
     bool trigger = false;
+    float left_x = 0.0F;
     ResonateInput input{};
 
     FakeInput()
@@ -107,24 +108,30 @@ struct FakeInput
         {
             return 0.8F;
         }
+        if (pad == 0 && axis == RESONATE_GAMEPAD_AXIS_LEFT_X)
+        {
+            return fake->left_x;
+        }
         return 0.0F;
     }
 };
 
 const char* kDocument =
     "<?xml version=\"1.0\"?>\n"
-    "<!-- two actions; each is bound on more than one device -->\n"
+    "<!-- three actions; each is bound on more than one device where it fits -->\n"
     "<action-map>\n"
     "  <action name=\"fire\" value=\"button\">\n"
     "    <phase name=\"pressed\"/>\n"
     "    <phase name=\"released\"/>\n"
     "  </action>\n"
     "  <action name=\"aim\"/>\n"
+    "  <action name=\"move\" value=\"axis\"/>\n"
     "  <binding action=\"fire\" device=\"keyboard\" control=\"space\"/>\n"
     "  <binding action=\"fire\" device=\"mouse\" control=\"left-button\"/>\n"
     "  <binding action=\"fire\" device=\"gamepad\" control=\"south\"/>\n"
     "  <binding action=\"aim\" device=\"keyboard\" control=\"j\"/>\n"
     "  <binding action=\"aim\" device=\"gamepad\" control=\"right-trigger\"/>\n"
+    "  <binding action=\"move\" device=\"gamepad\" control=\"left-stick-x\"/>\n"
     "</action-map>\n";
 
 } // namespace
@@ -137,7 +144,7 @@ TEST_CASE("action map: bindings drive pressed, held and released", "[action-map]
     resonate::gameplay::ActionMap map;
     std::string error;
     REQUIRE(map.load(file.path(), error));
-    CHECK(map.actionCount() == 2U);
+    CHECK(map.actionCount() == 3U);
 
     FakeInput fake;
     map.update(&fake.input);
@@ -207,6 +214,52 @@ TEST_CASE("action map: bindings drive pressed, held and released", "[action-map]
     CHECK(aim->released);
 }
 
+TEST_CASE("action map: an axis action reports its binding's value", "[action-map]")
+{
+    TempMap file;
+    file.write(kDocument);
+    resonate::gameplay::ActionMap map;
+    std::string error;
+    REQUIRE(map.load(file.path(), error));
+
+    const auto* move = map.state("move");
+    REQUIRE(move != nullptr);
+    FakeInput fake;
+
+    /* A stick past halfway is down; the value is the raw axis, sign included. */
+    fake.left_x = 0.75F;
+    map.update(&fake.input);
+    CHECK(move->pressed);
+    CHECK(move->held);
+    CHECK(move->value > 0.74F);
+    CHECK(move->value < 0.76F);
+
+    fake.left_x = -0.8F;
+    map.update(&fake.input);
+    CHECK(move->held);
+    CHECK(move->value > -0.81F);
+    CHECK(move->value < -0.79F);
+
+    /* Below the threshold it is not held, but the axis still reports. */
+    fake.left_x = 0.3F;
+    map.update(&fake.input);
+    CHECK_FALSE(move->held);
+    CHECK(move->released);
+    CHECK(move->value > 0.29F);
+    CHECK(move->value < 0.31F);
+
+    /* A button action reports 1 while held, 0 otherwise. */
+    fake.left_x = 0.0F;
+    const auto* fire = map.state("fire");
+    REQUIRE(fire != nullptr);
+    fake.space = true;
+    map.update(&fake.input);
+    CHECK(fire->value > 0.99F);
+    fake.space = false;
+    map.update(&fake.input);
+    CHECK(fire->value < 0.01F);
+}
+
 TEST_CASE("action map: invalid documents fail and leave the map unchanged", "[action-map]")
 {
     TempMap file;
@@ -237,7 +290,7 @@ TEST_CASE("action map: invalid documents fail and leave the map unchanged", "[ac
         file.write(document);
         CHECK_FALSE(map.load(file.path(), error));
         CHECK_FALSE(error.empty());
-        CHECK(map.actionCount() == 2U);
+        CHECK(map.actionCount() == 3U);
         CHECK(map.state("fire") != nullptr);
     }
 }

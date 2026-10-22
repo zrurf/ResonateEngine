@@ -139,6 +139,7 @@ extern "C" std::int32_t readAction(void* host_api, const char* name, void* out_s
     state->pressed = found->pressed ? 1 : 0;
     state->held = found->held ? 1 : 0;
     state->released = found->released ? 1 : 0;
+    state->value = found->value;
     return 0;
 }
 

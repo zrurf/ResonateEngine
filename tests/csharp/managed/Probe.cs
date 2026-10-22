@@ -73,7 +73,7 @@ public static unsafe class Probe
         else if (counters[8] == 4)
         {
             counters[9] = Actions.TryRead(frame, "fire"u8, out ActionState action) &&
-                                  action.Held != 0
+                                  action.Held != 0 && action.Value > 0.5F
                               ? 1
                               : 0;
             counters[8] = 0;

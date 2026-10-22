@@ -189,6 +189,10 @@
         {
           "name": "released",
           "type": "i32"
+        },
+        {
+          "name": "value",
+          "type": "f32"
         }
       ]
     }

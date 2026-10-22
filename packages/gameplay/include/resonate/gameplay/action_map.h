@@ -25,6 +25,10 @@ struct ActionState
     bool pressed = false;  /* down now, up in the previous update */
     bool held = false;     /* down now through any binding */
     bool released = false; /* up now, down in the previous update */
+    /* Axis actions report the strongest binding's raw value (sticks -1..1,
+       triggers 0..1); button actions report 1 while held and 0 otherwise. The
+       digital flags above still use the halfway threshold for axis bindings. */
+    float value = 0.0F;
 };
 
 class ActionMap final

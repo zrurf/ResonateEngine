@@ -437,19 +437,29 @@ struct GamepadBinding
 bool gamepadFromName(const std::string& name, GamepadKind& kind, ResonateGamepadButton& button,
                      ResonateGamepadAxis& axis)
 {
-    /* Triggers are analog, but an action is digital for now: a trigger past the
-       halfway point counts as down. */
-    if (name == "left-trigger")
+    /* Axes carry their raw value; the digital flags threshold them at halfway.
+       Sticks are signed, triggers are 0..1. */
+    struct AxisNamed
     {
-        kind = GamepadKind::Axis;
-        axis = RESONATE_GAMEPAD_AXIS_LEFT_TRIGGER;
-        return true;
-    }
-    if (name == "right-trigger")
+        const char* name;
+        ResonateGamepadAxis axis;
+    };
+    static const AxisNamed kAxes[] = {
+        {"left-stick-x", RESONATE_GAMEPAD_AXIS_LEFT_X},
+        {"left-stick-y", RESONATE_GAMEPAD_AXIS_LEFT_Y},
+        {"right-stick-x", RESONATE_GAMEPAD_AXIS_RIGHT_X},
+        {"right-stick-y", RESONATE_GAMEPAD_AXIS_RIGHT_Y},
+        {"left-trigger", RESONATE_GAMEPAD_AXIS_LEFT_TRIGGER},
+        {"right-trigger", RESONATE_GAMEPAD_AXIS_RIGHT_TRIGGER},
+    };
+    for (const AxisNamed& named : kAxes)
     {
-        kind = GamepadKind::Axis;
-        axis = RESONATE_GAMEPAD_AXIS_RIGHT_TRIGGER;
-        return true;
+        if (name == named.name)
+        {
+            kind = GamepadKind::Axis;
+            axis = named.axis;
+            return true;
+        }
     }
 
     struct Named
@@ -489,6 +499,7 @@ bool gamepadFromName(const std::string& name, GamepadKind& kind, ResonateGamepad
 struct ActionData
 {
     std::string name;
+    bool axis = false;
     std::vector<GamepadBinding> gamepad;
 };
 
@@ -617,13 +628,17 @@ bool parseAction(Reader& reader, const Element& element, std::vector<ActionData>
     {
         return describe(path, element.line, "an action needs a name", error);
     }
-    if (const Attribute* value = findAttribute(element, "value");
-        value != nullptr && value->value != "button" && value->value != "axis")
+    bool axis = false;
+    if (const Attribute* value = findAttribute(element, "value"))
     {
-        return describe(path, element.line,
-                        "action '" + name->value + "' has value '" + value->value +
-                            "'; expected button or axis",
-                        error);
+        if (value->value != "button" && value->value != "axis")
+        {
+            return describe(path, element.line,
+                            "action '" + name->value + "' has value '" + value->value +
+                                "'; expected button or axis",
+                            error);
+        }
+        axis = value->value == "axis";
     }
     for (const ActionData& action : actions)
     {
@@ -679,7 +694,7 @@ bool parseAction(Reader& reader, const Element& element, std::vector<ActionData>
         }
     }
 
-    actions.push_back(ActionData{name->value, {}});
+    actions.push_back(ActionData{name->value, axis, {}});
     return true;
 }
 
@@ -997,6 +1012,7 @@ struct ActionMap::Impl
     struct Action
     {
         std::string name;
+        bool axis = false;
         std::vector<ResonateKey> keys;
         std::vector<ResonateMouseButton> buttons;
         std::vector<GamepadBinding> gamepad;
@@ -1106,6 +1122,7 @@ bool ActionMap::load(const std::string& path, std::string& error)
     {
         Impl::Action action;
         action.name = std::move(parsed.name);
+        action.axis = parsed.axis;
         impl_->actions.push_back(std::move(action));
     }
     for (const Binding& binding : bindings)
@@ -1139,44 +1156,70 @@ void ActionMap::update(const ResonateInput* input)
     for (Impl::Action& action : impl_->actions)
     {
         bool down = false;
+        float value = 0.0F;
+        float magnitude = 0.0F;
+        /* The strongest binding supplies an axis action's value; a digital
+           binding counts as 1. */
+        auto consider = [&value, &magnitude](const float candidate)
+        {
+            const float size = candidate < 0.0F ? -candidate : candidate;
+            if (size > magnitude)
+            {
+                magnitude = size;
+                value = candidate;
+            }
+        };
+        auto press = [&down, &consider]()
+        {
+            down = true;
+            consider(1.0F);
+        };
+
         if (input != nullptr && input->key_down != nullptr)
         {
             for (const ResonateKey key : action.keys)
             {
                 if (input->key_down(input->self, key) != 0)
                 {
-                    down = true;
+                    press();
                     break;
                 }
             }
         }
-        if (!down && input != nullptr && input->mouse_down != nullptr)
+        if (input != nullptr && input->mouse_down != nullptr)
         {
             for (const ResonateMouseButton button : action.buttons)
             {
                 if (input->mouse_down(input->self, button) != 0)
                 {
-                    down = true;
+                    press();
                     break;
                 }
             }
         }
-        if (!down && input != nullptr && input->gamepad_count != nullptr &&
+        if (input != nullptr && input->gamepad_count != nullptr &&
             input->gamepad_button_down != nullptr && input->gamepad_axis != nullptr)
         {
             const int32_t pads = input->gamepad_count(input->self);
-            for (int32_t pad = 0; pad < pads && !down; ++pad)
+            for (int32_t pad = 0; pad < pads; ++pad)
             {
                 for (const GamepadBinding& binding : action.gamepad)
                 {
-                    const bool pressed =
-                        binding.kind == GamepadKind::Button
-                            ? input->gamepad_button_down(input->self, pad, binding.button) != 0
-                            : input->gamepad_axis(input->self, pad, binding.axis) >= 0.5F;
-                    if (pressed)
+                    if (binding.kind == GamepadKind::Button)
+                    {
+                        if (input->gamepad_button_down(input->self, pad, binding.button) != 0)
+                        {
+                            press();
+                        }
+                        continue;
+                    }
+                    const float axis = input->gamepad_axis(input->self, pad, binding.axis);
+                    consider(axis);
+                    /* The digital flags still threshold an axis binding: an
+                       action bound to a stick is down past halfway. */
+                    if (axis >= 0.5F || axis <= -0.5F)
                     {
                         down = true;
-                        break;
                     }
                 }
             }
@@ -1185,6 +1228,7 @@ void ActionMap::update(const ResonateInput* input)
         action.state.pressed = down && !action.was_held;
         action.state.held = down;
         action.state.released = !down && action.was_held;
+        action.state.value = action.axis ? value : (down ? 1.0F : 0.0F);
         action.was_held = down;
     }
 }
