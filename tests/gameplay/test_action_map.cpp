@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -57,6 +58,7 @@ struct FakeInput
 
     FakeInput()
     {
+        input.header.struct_size = sizeof(ResonateInput);
         input.self = this;
         input.key_down = &FakeInput::keyDown;
         input.mouse_down = &FakeInput::mouseDown;
@@ -258,6 +260,32 @@ TEST_CASE("action map: an axis action reports its binding's value", "[action-map
     fake.space = false;
     map.update(&fake.input);
     CHECK(fire->value < 0.01F);
+}
+
+TEST_CASE("action map: a capability without the gamepad tail still drives keyboards",
+          "[action-map]")
+{
+    TempMap file;
+    file.write(kDocument);
+    resonate::gameplay::ActionMap map;
+    std::string error;
+    REQUIRE(map.load(file.path(), error));
+
+    FakeInput fake;
+    fake.j = true;
+    fake.south = true;
+    /* The writer stops before the tail: the gamepad callbacks are unreadable. */
+    fake.input.header.struct_size =
+        static_cast<std::uint32_t>(offsetof(ResonateInput, gamepad_count));
+
+    map.update(&fake.input);
+    CHECK(map.state("aim")->held);
+    CHECK_FALSE(map.state("fire")->held);
+
+    /* The same input with a complete capability carries the pad. */
+    fake.input.header.struct_size = sizeof(ResonateInput);
+    map.update(&fake.input);
+    CHECK(map.state("fire")->held);
 }
 
 TEST_CASE("action map: invalid documents fail and leave the map unchanged", "[action-map]")

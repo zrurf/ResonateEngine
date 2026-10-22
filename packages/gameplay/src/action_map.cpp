@@ -1,6 +1,7 @@
 #include <resonate/gameplay/action_map.h>
 
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <iterator>
@@ -1197,8 +1198,9 @@ void ActionMap::update(const ResonateInput* input)
                 }
             }
         }
-        if (input != nullptr && input->gamepad_count != nullptr &&
-            input->gamepad_button_down != nullptr && input->gamepad_axis != nullptr)
+        if (input != nullptr && input->header.struct_size >= sizeof(ResonateInput) &&
+            input->gamepad_count != nullptr && input->gamepad_button_down != nullptr &&
+            input->gamepad_axis != nullptr)
         {
             const int32_t pads = input->gamepad_count(input->self);
             for (int32_t pad = 0; pad < pads; ++pad)

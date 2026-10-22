@@ -355,17 +355,18 @@ typedef struct ResonateInput
     /* Movement since the previous frame. */
     void (*pointer_delta)(void* self, ResonateVec2* out_delta);
 
-    /* Connected gamepads, indexed 0 .. count-1. The engine's own numbering keeps
-       a pad index stable for the run; a disconnected pad disappears from the
-       count. */
+    /* Provider state. Every call above receives this as its first argument; the
+       host never interprets it. */
+    void* self;
+
+    /* Tail: gamepad fields, read only when header.struct_size covers them. A
+       provider that predates them answers count 0. Connected pads are indexed
+       0 .. count-1; an unplugged pad leaves the count, so later pads may shift
+       down into its index. */
     int32_t (*gamepad_count)(void* self);
     int32_t (*gamepad_button_down)(void* self, int32_t pad, ResonateGamepadButton button);
     /* -1..1 for sticks, 0..1 for triggers. */
     float (*gamepad_axis)(void* self, int32_t pad, ResonateGamepadAxis axis);
-
-    /* Provider state. Every call above receives this as its first argument; the
-       host never interprets it. */
-    void* self;
 } ResonateInput;
 
 #ifdef __cplusplus

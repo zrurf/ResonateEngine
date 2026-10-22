@@ -164,10 +164,10 @@ ResonateInput g_input = {
     &mouseDown,
     &pointerPosition,
     &pointerDelta,
+    nullptr,
     &gamepadCount,
     &gamepadButtonDown,
     &gamepadAxis,
-    nullptr,
 };
 
 } // namespace
