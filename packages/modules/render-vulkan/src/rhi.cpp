@@ -565,6 +565,20 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
     VkPipelineColorBlendAttachmentState blend_attachment{};
     blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    const bool blended = desc.struct_size >=
+                             offsetof(ResonateRenderGraphicsPipelineDesc, blend) +
+                                 sizeof(desc.blend) &&
+                         desc.blend != 0U;
+    if (blended)
+    {
+        blend_attachment.blendEnable = VK_TRUE;
+        blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+        blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    }
     /* A depth-only pass has no color attachment, so the blend state names
        none either. */
     const bool colorless = desc.color_format == RESONATE_RENDER_FORMAT_NONE;

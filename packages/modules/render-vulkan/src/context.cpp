@@ -1476,6 +1476,8 @@ VkFormat Context::formatOf(ResonateRenderFormat format) const
             return VK_FORMAT_R32G32_SFLOAT;
         case RESONATE_RENDER_FORMAT_R32G32B32_SFLOAT:
             return VK_FORMAT_R32G32B32_SFLOAT;
+        case RESONATE_RENDER_FORMAT_R32G32B32A32_SFLOAT:
+            return VK_FORMAT_R32G32B32A32_SFLOAT;
         case RESONATE_RENDER_FORMAT_D32_SFLOAT:
             return VK_FORMAT_D32_SFLOAT;
         case RESONATE_RENDER_FORMAT_UNKNOWN:

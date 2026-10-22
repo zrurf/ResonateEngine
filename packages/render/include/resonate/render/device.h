@@ -79,6 +79,7 @@ typedef enum ResonateRenderFormat : uint8_t
     RESONATE_RENDER_FORMAT_R32G32_SFLOAT,
     RESONATE_RENDER_FORMAT_R32G32B32_SFLOAT,
     RESONATE_RENDER_FORMAT_D32_SFLOAT,
+    RESONATE_RENDER_FORMAT_R32G32B32A32_SFLOAT, /* vertex colors, UI overlays */
     /* A pipeline marker, not a real format: a pipeline whose color format is
        NONE has no color outputs (depth-only). */
     RESONATE_RENDER_FORMAT_NONE = 0xFF,
@@ -208,6 +209,9 @@ typedef struct ResonateRenderGraphicsPipelineDesc
     uint32_t cull_back;
     uint32_t depth_test;
     uint32_t depth_write;
+    /* Tail: 1 enables source-alpha blending over the color target — UI
+       overlays; 0, and a struct_size that stops before this, writes opaque. */
+    uint32_t blend;
 } ResonateRenderGraphicsPipelineDesc;
 
 /* The pass's targets. color {0} means the canvas's swapchain (the windowed or
