@@ -118,6 +118,9 @@ private:
     std::string component_name_;
     ecs::ComponentIndex component_ = ecs::kInvalidComponent;
     ecs::Query query_;
+    /* The world the cached query belongs to; a run that hands over another
+       world rebuilds it instead of iterating memory it no longer owns. */
+    const ecs::World* query_world_ = nullptr;
     bool query_ready_ = false;
     bindings::HostApi api_{};
     const gameplay::ActionMap* actions_ = nullptr;

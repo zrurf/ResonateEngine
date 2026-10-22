@@ -318,6 +318,7 @@ void ManagedSystems::unload()
     frames_ = 0U;
     frame_ = bindings::SystemContext{};
     component_ = ecs::kInvalidComponent;
+    query_world_ = nullptr;
     query_ready_ = false;
     query_ = ecs::Query{};
     chunk_spans_.clear();
@@ -467,6 +468,11 @@ void ManagedSystems::set_component(const char* name)
 {
     component_name_ = name != nullptr ? name : "";
     component_ = ecs::kInvalidComponent;
+    /* The name decides the query's component; the old one is stale even when
+       it would still name a registered type. */
+    query_ = ecs::Query{};
+    query_world_ = nullptr;
+    query_ready_ = false;
 }
 
 void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer& commands,
@@ -522,12 +528,13 @@ void ManagedSystems::invokeStage(ResonateStage stage, void* context, ecs::World&
         if (self->component_ != ecs::kInvalidComponent)
         {
             self->api_.component = self->component_;
-            if (!self->query_ready_)
+            if (!self->query_ready_ || self->query_world_ != &world)
             {
                 const ecs::ComponentIndex all[] = {self->component_};
                 ecs::QueryDesc desc;
                 desc.all = resonate::Span<const ecs::ComponentIndex>(all, 1U);
                 self->query_ = world.createQuery(desc);
+                self->query_world_ = &world;
                 self->query_ready_ = self->query_.valid();
             }
             if (self->query_ready_)

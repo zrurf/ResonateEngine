@@ -581,6 +581,49 @@ TEST_CASE("csharp: a managed read sees another entity's component", "[csharp]")
     CHECK(counters[9] == 10);
 }
 
+TEST_CASE("csharp: the component query follows the world handed to the stage", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
+    systems.set_component("resonate.hierarchy.LocalTransform");
+
+    int counters[kCounterWords] = {};
+    systems.set_user(counters);
+
+    resonate::ecs::World first(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(first));
+    const resonate::ecs::Entity one = first.create();
+    first.add(one, resonate::hierarchy::LocalTransform{
+                       resonate::Vec3{1.0F, 0.0F, 0.0F}, resonate::Quat{},
+                       resonate::Vec3{1.0F, 1.0F, 1.0F}});
+    resonate::ecs::CommandBuffer first_commands(first);
+    resonate::csharp::ManagedSystems::invoke(&systems, first, first_commands, 0.016F);
+    REQUIRE(counters[3] == 1);
+    REQUIRE(counters[2] == 10);
+
+    /* The same system object, a second world: the cached query was created on
+       the first and must not hand over its chunks. */
+    resonate::ecs::World second(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(second));
+    for (float x = 0.0F; x < 2.0F; x += 1.0F)
+    {
+        const resonate::ecs::Entity entity = second.create();
+        second.add(entity, resonate::hierarchy::LocalTransform{
+                               resonate::Vec3{2.5F, 0.0F, 0.0F}, resonate::Quat{},
+                               resonate::Vec3{1.0F, 1.0F, 1.0F}});
+    }
+    int second_counters[kCounterWords] = {};
+    systems.set_user(second_counters);
+    resonate::ecs::CommandBuffer second_commands(second);
+    resonate::csharp::ManagedSystems::invoke(&systems, second, second_commands, 0.016F);
+    CHECK(second_counters[3] == 2);
+    CHECK(second_counters[2] == 50);
+}
+
 TEST_CASE("csharp: an entry runs only in the stage it declares", "[csharp]")
 {
     const Fixture fixture;
