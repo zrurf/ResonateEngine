@@ -29,10 +29,12 @@
 #include <resonate/render/device.h>
 #include <resonate/render/executor.h>
 #include <resonate/render/graph.h>
+#include <resonate/ui/display_list.h>
 
 #include "frame_math.h"
 #include "meshes.h"
 #include "resonate.render/components.gen.h"
+#include "resonate.ui/components.gen.h"
 
 namespace resonate::renderer
 {
@@ -127,9 +129,35 @@ struct FrameConstants
 /* The block the post shaders read: 32 bytes. */
 struct PostConstants
 {
-    std::uint32_t slots[2]; /* input image, second input (bloom) */
+    std::uint32_t slots[4]; /* input image, second input (bloom), UI overlay */
     Vec4 params;
 };
+
+/* One UI overlay vertex: a target-pixel position and a straight-alpha color.
+   Six per quad, so the pipeline needs no index buffer. */
+struct UiVertex
+{
+    float x = 0.0F;
+    float y = 0.0F;
+    float r = 0.0F;
+    float g = 0.0F;
+    float b = 0.0F;
+    float a = 0.0F;
+};
+
+/* The overlay's push block: the target extent the pixels divide by. */
+struct UiConstants
+{
+    float viewport_width = 1.0F;
+    float viewport_height = 1.0F;
+    float pad[2] = {};
+};
+
+/* A frame's overlay is bounded by one vertex buffer; a larger list is
+   truncated rather than resized mid-frame. */
+constexpr std::uint32_t kMaxUiQuads = 4096U;
+static_assert(sizeof(UiVertex) == 24U);
+static_assert(sizeof(PostConstants) == 32U);
 
 /* The frame one extract produces; the draw callback walks it. */
 struct DrawInstance
@@ -142,6 +170,13 @@ struct DrawInstance
     float metallic = 0.0F;
 };
 
+/* The first entity carrying Canvas is the overlay's root this frame. */
+struct UiRoot
+{
+    ecs::Entity entity{};
+    bool found = false;
+};
+
 /* One extracted frame, handed to the render thread. The producer fills a
    scratch snapshot and publishes it into the double buffer; the render thread
    executes the published one. */
@@ -150,6 +185,7 @@ struct FrameSnapshot
     ShaderFrameData frame_data{};
     std::vector<ShaderLight> lights;
     std::vector<DrawInstance> instances;
+    ui::DisplayList ui;
     std::uint32_t target_width = 0U;
     std::uint32_t target_height = 0U;
 };
@@ -285,6 +321,8 @@ struct RenderSystem::Impl
     ecs::Query cameras;
     ecs::Query point_lights;
     ecs::Query directional_lights;
+    ecs::Query ui_canvases;
+    bool ui_enabled = false;
     bool queries_ready = false;
 
     /* Producer state: the extract fills a scratch snapshot, then publishes it.
@@ -324,6 +362,7 @@ struct RenderSystem::Impl
     ResourceId canvas_resource = 0;
     ResourceId depth_resource = 0;
     ResourceId hdr_resource = 0;
+    ResourceId ui_resource = 0;
     ResourceId ldr_resource = 0;
     ResourceId bright_resource = 0;
     ResourceId blur_a_resource = 0;
@@ -349,6 +388,7 @@ struct RenderSystem::Impl
     ResonateRenderPipeline blur_pipeline{};
     ResonateRenderPipeline composite_pipeline{};
     ResonateRenderPipeline fxaa_pipeline{};
+    ResonateRenderPipeline ui_pipeline{};
     bool pipelines_ready = false;
     bool pipelines_failed = false;
     bool ready_noted = false;
@@ -362,6 +402,13 @@ struct RenderSystem::Impl
     /* The fullscreen triangle of the post chain; a vertex buffer keeps the
        vertex stage free of the base-vertex builtin. */
     ResonateRenderBuffer post_vertex_buffer{};
+
+    /* The overlay's quad vertices, rewritten every frame the list is non-empty.
+       The render thread owns the buffer and the scratch. */
+    ResonateRenderBuffer ui_vertices{};
+    std::vector<UiVertex> ui_vertex_scratch;
+    std::uint32_t ui_drawn_vertices = 0U;
+    UiConstants ui_constants{};
 
     /* The two albedo textures v1 ships: a white 1x1 (material id 0) and an
        8x8 checker (id 1). Created once; their table slots ride the push
@@ -414,8 +461,10 @@ struct RenderSystem::Impl
     void runClusters(GraphExecuteContext& commands, ResonateRenderPipeline pipeline);
     void runShadows(GraphExecuteContext& commands, std::uint32_t cascade);
     void drawScene(GraphExecuteContext& commands);
+    void drawUi(GraphExecuteContext& commands);
     void runPost(GraphExecuteContext& commands, ResourceId target, ResonateRenderPipeline pipeline,
-                 std::uint32_t input_slot, std::uint32_t bloom_slot, const Vec4& params);
+                 std::uint32_t input_slot, std::uint32_t bloom_slot, std::uint32_t ui_slot,
+                 const Vec4& params);
     static void prepareEntry(void* context, GraphExecuteContext& commands);
     static void clusterBuildEntry(void* context, GraphExecuteContext& commands);
     static void clusterCullEntry(void* context, GraphExecuteContext& commands);
@@ -423,6 +472,7 @@ struct RenderSystem::Impl
     static void shadow1Entry(void* context, GraphExecuteContext& commands);
     static void shadow2Entry(void* context, GraphExecuteContext& commands);
     static void drawSceneEntry(void* context, GraphExecuteContext& commands);
+    static void uiEntry(void* context, GraphExecuteContext& commands);
     static void brightEntry(void* context, GraphExecuteContext& commands);
     static void blurHEntry(void* context, GraphExecuteContext& commands);
     static void blurVEntry(void* context, GraphExecuteContext& commands);
@@ -446,6 +496,12 @@ bool RenderSystem::Impl::initialize()
                                         target_height, RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT);
     hdr_resource = graph.declareImage(
         "hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, target_width, target_height,
+        RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
+    /* The UI overlay is straight-alpha color the composite blends over the
+       tonemapped frame; it is always declared, even with no widgets, so the
+       pass can clear a reused target. */
+    ui_resource = graph.declareImage(
+        "ui", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
         RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
 
     /* Resources a feature does not ask for stay invalid: no pass names them and
@@ -641,21 +697,44 @@ bool RenderSystem::Impl::initialize()
         graph.addPass(blur_v);
     }
 
+    /* The overlay pass comes after the scene's post chain and before the
+       composite: it clears its own target and every quad blends into it in
+       paint order. */
+    Use ui_write{};
+    ui_write.resource = ui_resource;
+    ui_write.stages = resonate::render::kStageColorOutput;
+    ui_write.access = resonate::render::kAccessColorWrite;
+    ui_write.layout = kLayoutColorAttachment;
+    resonate::render::PassDesc ui{};
+    ui.name = "ui";
+    ui.writes = &ui_write;
+    ui.write_count = 1U;
+    ui.context = this;
+    ui.execute = &Impl::uiEntry;
+    graph.addPass(ui);
+
     /* Without an AA pass the composite owns the canvas; with one it writes the
        LDR target FXAA reads. */
     const ResourceId composite_target = fxaa ? ldr_resource : canvas_resource;
-    Use composite_reads[2]{};
+    Use composite_reads[3]{};
     composite_reads[0].resource = hdr_resource;
     composite_reads[0].stages = resonate::render::kStageFragment;
     composite_reads[0].access = resonate::render::kAccessShaderRead;
     composite_reads[0].layout = kLayoutShaderReadOnly;
+    std::uint32_t composite_read_count = 1U;
     if (bloom)
     {
-        composite_reads[1].resource = blur_b_resource;
-        composite_reads[1].stages = resonate::render::kStageFragment;
-        composite_reads[1].access = resonate::render::kAccessShaderRead;
-        composite_reads[1].layout = kLayoutShaderReadOnly;
+        composite_reads[composite_read_count].resource = blur_b_resource;
+        composite_reads[composite_read_count].stages = resonate::render::kStageFragment;
+        composite_reads[composite_read_count].access = resonate::render::kAccessShaderRead;
+        composite_reads[composite_read_count].layout = kLayoutShaderReadOnly;
+        ++composite_read_count;
     }
+    composite_reads[composite_read_count].resource = ui_resource;
+    composite_reads[composite_read_count].stages = resonate::render::kStageFragment;
+    composite_reads[composite_read_count].access = resonate::render::kAccessShaderRead;
+    composite_reads[composite_read_count].layout = kLayoutShaderReadOnly;
+    ++composite_read_count;
     Use composite_write{};
     composite_write.resource = composite_target;
     composite_write.stages = resonate::render::kStageColorOutput;
@@ -664,7 +743,7 @@ bool RenderSystem::Impl::initialize()
     resonate::render::PassDesc composite{};
     composite.name = "composite";
     composite.reads = composite_reads;
-    composite.read_count = bloom ? 2U : 1U;
+    composite.read_count = composite_read_count;
     composite.writes = &composite_write;
     composite.write_count = 1U;
     composite.context = this;
@@ -805,10 +884,15 @@ bool RenderSystem::Impl::ensurePipelines()
         readFile(std::filesystem::path(directory) / "post.compositeFragment.spv");
     const std::vector<char> fxaa_spirv =
         readFile(std::filesystem::path(directory) / "post.fxaaFragment.spv");
+    const std::vector<char> ui_vertex_spirv =
+        readFile(std::filesystem::path(directory) / "ui.uiVertex.spv");
+    const std::vector<char> ui_fragment_spirv =
+        readFile(std::filesystem::path(directory) / "ui.uiFragment.spv");
     if (vertex_spirv.empty() || fragment_spirv.empty() || shadow_vertex_spirv.empty() ||
         shadow_fragment_spirv.empty() || build_spirv.empty() || cull_spirv.empty() ||
         post_vertex_spirv.empty() || bright_spirv.empty() || blur_spirv.empty() ||
-        composite_spirv.empty() || fxaa_spirv.empty())
+        composite_spirv.empty() || fxaa_spirv.empty() || ui_vertex_spirv.empty() ||
+        ui_fragment_spirv.empty())
     {
         complain("shader files missing; run `xmake slang`");
         pipelines_failed = true;
@@ -826,6 +910,8 @@ bool RenderSystem::Impl::ensurePipelines()
     ResonateRenderShader blur{};
     ResonateRenderShader composite{};
     ResonateRenderShader fxaa{};
+    ResonateRenderShader ui_vertex{};
+    ResonateRenderShader ui_fragment{};
     if (device->create_shader(device->self, RESONATE_RENDER_SHADER_VERTEX, vertex_spirv.data(),
                               vertex_spirv.size(), &vertex) != RESONATE_OK ||
         device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, fragment_spirv.data(),
@@ -849,7 +935,12 @@ bool RenderSystem::Impl::ensurePipelines()
         device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, composite_spirv.data(),
                               composite_spirv.size(), &composite) != RESONATE_OK ||
         device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, fxaa_spirv.data(),
-                              fxaa_spirv.size(), &fxaa) != RESONATE_OK)
+                              fxaa_spirv.size(), &fxaa) != RESONATE_OK ||
+        device->create_shader(device->self, RESONATE_RENDER_SHADER_VERTEX, ui_vertex_spirv.data(),
+                              ui_vertex_spirv.size(), &ui_vertex) != RESONATE_OK ||
+        device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT,
+                              ui_fragment_spirv.data(), ui_fragment_spirv.size(),
+                              &ui_fragment) != RESONATE_OK)
     {
         complain("shader creation failed");
         pipelines_failed = true;
@@ -994,6 +1085,49 @@ bool RenderSystem::Impl::ensurePipelines()
         }
     }
 
+    /* The overlay: target-pixel positions and straight-alpha colors, blended
+       into the UI image. */
+    ResonateRenderVertexAttribute ui_attributes[2] = {};
+    ui_attributes[0].location = 0U;
+    ui_attributes[0].format = RESONATE_RENDER_FORMAT_R32G32_SFLOAT;
+    ui_attributes[0].offset_bytes = 0U;
+    ui_attributes[1].location = 1U;
+    ui_attributes[1].format = RESONATE_RENDER_FORMAT_R32G32B32A32_SFLOAT;
+    ui_attributes[1].offset_bytes = 8U;
+    ResonateRenderVertexStream ui_stream{};
+    ui_stream.stride_bytes = sizeof(UiVertex);
+    ui_stream.attribute_count = 2U;
+    ui_stream.attributes = ui_attributes;
+
+    ResonateRenderGraphicsPipelineDesc ui_desc{};
+    ui_desc.struct_size = sizeof(ui_desc);
+    ui_desc.vertex_shader = ui_vertex;
+    ui_desc.fragment_shader = ui_fragment;
+    ui_desc.stream_count = 1U;
+    ui_desc.streams = &ui_stream;
+    ui_desc.color_format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+    ui_desc.depth_format = RESONATE_RENDER_FORMAT_UNKNOWN;
+    ui_desc.blend = 1U;
+    if (device->create_pipeline(device->self, &ui_desc, &ui_pipeline) != RESONATE_OK)
+    {
+        complain("ui pipeline creation failed");
+        pipelines_failed = true;
+        return false;
+    }
+
+    ResonateRenderBufferDesc ui_buffer{};
+    ui_buffer.struct_size = sizeof(ui_buffer);
+    ui_buffer.size_bytes = sizeof(UiVertex) * 6U * kMaxUiQuads;
+    ui_buffer.usage = RESONATE_RENDER_BUFFER_VERTEX;
+    ui_buffer.host_visible = 0U;
+    if (device->create_buffer(device->self, &ui_buffer, &ui_vertices) != RESONATE_OK)
+    {
+        complain("the UI vertex buffer was not created");
+        pipelines_failed = true;
+        return false;
+    }
+    ui_vertex_scratch.reserve(static_cast<std::size_t>(kMaxUiQuads) * 6U);
+
     cube = buildCube(*device);
     ground = buildGround(*device, 12.0F);
     /* Device-local: the extract writes them through update_buffer, recorded
@@ -1002,7 +1136,8 @@ bool RenderSystem::Impl::ensurePipelines()
     light_list =
         GpuMesh{uploadStorage(kMaxLights * sizeof(ShaderLight), false), ResonateRenderBuffer{}, 0U};
     if (cube.vertices.value == 0U || ground.vertices.value == 0U ||
-        frame_data.vertices.value == 0U || light_list.vertices.value == 0U)
+        frame_data.vertices.value == 0U || light_list.vertices.value == 0U ||
+        ui_vertices.value == 0U)
     {
         complain("buffer upload failed");
         pipelines_failed = true;
@@ -1107,6 +1242,15 @@ void RenderSystem::Impl::bindQueries(ecs::World& world)
     const ecs::ComponentIndex directional_all[] = {
         ecs::ComponentTraits<render::DirectionalLight>::index};
     directional_lights = world.createQuery(ecs::QueryDesc{directional_all, {}, {}});
+    /* A run without the UI components (a unit test or a headless tool that
+       never registers them) renders the scene and no overlay. */
+    ui_enabled = ecs::ComponentTraits<ui::Canvas>::index != ecs::kInvalidComponent;
+    if (ui_enabled)
+    {
+        const ecs::ComponentIndex ui_all[] = {ecs::ComponentTraits<ui::Canvas>::index};
+        ui_canvases = world.createQuery(ecs::QueryDesc{ui_all, {}, {}});
+        ui_enabled = ui_canvases.valid();
+    }
     queries_ready =
         instances.valid() && cameras.valid() && point_lights.valid() && directional_lights.valid();
     if (!queries_ready)
@@ -1144,6 +1288,7 @@ bool RenderSystem::Impl::extract(ecs::World& world)
     extract_world = &world;
     scratch.instances.clear();
     scratch.lights.clear();
+    scratch.ui.clear();
     have_camera = false;
     scratch.target_width = canvas != nullptr ? canvas->width(canvas->self) : 0U;
     scratch.target_height = canvas != nullptr ? canvas->height(canvas->self) : 0U;
@@ -1328,6 +1473,28 @@ bool RenderSystem::Impl::extract(ecs::World& world)
     }
     scratch.frame_data.split_distances =
         Vec4{split_values[0], split_values[1], split_values[2], 0.0F};
+
+    /* The retained tree's paint order is the UI system's business; the frame
+       carries the resolved quads and the render thread only uploads them. */
+    if (ui_enabled && ui_canvases.valid())
+    {
+        UiRoot root;
+        ui_canvases.forEachChunk(
+            [](void* context, ChunkView view)
+            {
+                auto* out = static_cast<UiRoot*>(context);
+                if (!out->found && view.count > 0U)
+                {
+                    out->entity = view.entities[0];
+                    out->found = true;
+                }
+            },
+            &root);
+        if (root.found)
+        {
+            ui::buildDisplayList(world, root.entity, scratch.ui);
+        }
+    }
     return true;
 }
 
@@ -1346,7 +1513,7 @@ void RenderSystem::Impl::publish()
             {
                 continue;
             }
-            snapshots[slot] = std::move(scratch);
+            std::swap(snapshots[slot], scratch);
             pending_snapshot = slot;
             snapshot_pending = true;
             lock.unlock();
@@ -1390,6 +1557,55 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
     {
         barrier.buffer = light_list.vertices;
         frame_device.barrier(frame_device.self, &barrier);
+    }
+
+    ui_drawn_vertices = 0U;
+    ui_constants.viewport_width = static_cast<float>(active->target_width);
+    ui_constants.viewport_height = static_cast<float>(active->target_height);
+    if (!active->ui.empty())
+    {
+        const auto quads = active->ui.quads();
+        const std::size_t count = std::min<std::size_t>(quads.size(), kMaxUiQuads);
+        if (quads.size() > count)
+        {
+            complain("the UI display list was truncated to the vertex buffer");
+        }
+
+        ui_vertex_scratch.clear();
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const ui::Quad& quad = quads[index];
+            const float right = quad.x + quad.width;
+            const float bottom = quad.y + quad.height;
+            const UiVertex color{0.0F, 0.0F, quad.color.x, quad.color.y, quad.color.z,
+                                 quad.color.w};
+            const UiVertex top_left{quad.x, quad.y, color.r, color.g, color.b, color.a};
+            const UiVertex top_right{right, quad.y, color.r, color.g, color.b, color.a};
+            const UiVertex bottom_right{right, bottom, color.r, color.g, color.b, color.a};
+            const UiVertex bottom_left{quad.x, bottom, color.r, color.g, color.b, color.a};
+            ui_vertex_scratch.push_back(top_left);
+            ui_vertex_scratch.push_back(top_right);
+            ui_vertex_scratch.push_back(bottom_right);
+            ui_vertex_scratch.push_back(top_left);
+            ui_vertex_scratch.push_back(bottom_right);
+            ui_vertex_scratch.push_back(bottom_left);
+        }
+
+        const auto* bytes = reinterpret_cast<const std::uint8_t*>(ui_vertex_scratch.data());
+        const std::size_t total_bytes = ui_vertex_scratch.size() * sizeof(UiVertex);
+        constexpr std::size_t kUploadBytes = 60U * 1024U;
+        for (std::size_t offset = 0; offset < total_bytes; offset += kUploadBytes)
+        {
+            const std::size_t size = std::min(kUploadBytes, total_bytes - offset);
+            frame_device.update_buffer(frame_device.self, ui_vertices, offset, bytes + offset,
+                                       size);
+        }
+
+        barrier.buffer = ui_vertices;
+        barrier.after_stages = RESONATE_RENDER_STAGE_VERTEX;
+        barrier.after_access = RESONATE_RENDER_ACCESS_SHADER_READ;
+        frame_device.barrier(frame_device.self, &barrier);
+        ui_drawn_vertices = static_cast<std::uint32_t>(count * 6U);
     }
 }
 
@@ -1513,9 +1729,34 @@ void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
     device.end_pass(device.self);
 }
 
+void RenderSystem::Impl::drawUi(GraphExecuteContext& commands)
+{
+    ResonateRenderDevice& device = *commands.device;
+
+    /* Clear even when the list is empty: the target is a reused transient and
+       the composite samples it every frame. */
+    ResonateRenderPassDesc pass{};
+    pass.struct_size = sizeof(pass);
+    pass.color = commands.image(ui_resource);
+    pass.clear_color = ResonateVec4{0.0F, 0.0F, 0.0F, 0.0F};
+    if (device.begin_pass(device.self, &pass) != RESONATE_OK)
+    {
+        return;
+    }
+    if (ui_drawn_vertices != 0U &&
+        device.bind_pipeline(device.self, ui_pipeline) == RESONATE_OK)
+    {
+        device.set_constants(device.self, &ui_constants, sizeof(ui_constants));
+        device.bind_vertex_buffer(device.self, ui_vertices, 0U);
+        device.draw(device.self, ui_drawn_vertices, 1U);
+    }
+    device.end_pass(device.self);
+}
+
 void RenderSystem::Impl::runPost(GraphExecuteContext& commands, ResourceId target,
                                  ResonateRenderPipeline pipeline, std::uint32_t input_slot,
-                                 std::uint32_t bloom_slot, const Vec4& params)
+                                 std::uint32_t bloom_slot, std::uint32_t ui_slot,
+                                 const Vec4& params)
 {
     ResonateRenderDevice& device = *commands.device;
 
@@ -1534,6 +1775,8 @@ void RenderSystem::Impl::runPost(GraphExecuteContext& commands, ResourceId targe
     }
     post_constants.slots[0] = input_slot;
     post_constants.slots[1] = bloom_slot;
+    post_constants.slots[2] = ui_slot;
+    post_constants.slots[3] = 0U;
     post_constants.params = params;
     device.set_constants(device.self, &post_constants, sizeof(post_constants));
     device.bind_vertex_buffer(device.self, post_vertex_buffer, 0U);
@@ -1574,6 +1817,11 @@ void RenderSystem::Impl::drawSceneEntry(void* context, GraphExecuteContext& comm
     self->drawScene(commands);
 }
 
+void RenderSystem::Impl::uiEntry(void* context, GraphExecuteContext& commands)
+{
+    static_cast<RenderSystem::Impl*>(context)->drawUi(commands);
+}
+
 void RenderSystem::Impl::prepareEntry(void* context, GraphExecuteContext& commands)
 {
     static_cast<RenderSystem::Impl*>(context)->prepareFrame(commands);
@@ -1583,7 +1831,7 @@ void RenderSystem::Impl::brightEntry(void* context, GraphExecuteContext& command
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
     self->runPost(commands, self->bright_resource, self->bright_pipeline,
-                  commands.imageSlot(self->hdr_resource), 0U,
+                  commands.imageSlot(self->hdr_resource), 0U, 0U,
                   Vec4{self->features.bloom_threshold, 0.0F, 0.0F, 0.0F});
 }
 
@@ -1591,7 +1839,7 @@ void RenderSystem::Impl::blurHEntry(void* context, GraphExecuteContext& commands
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
     self->runPost(commands, self->blur_a_resource, self->blur_pipeline,
-                  commands.imageSlot(self->bright_resource), 0U,
+                  commands.imageSlot(self->bright_resource), 0U, 0U,
                   Vec4{1.0F / static_cast<float>(self->bloom_width), 0.0F, 0.0F, 0.0F});
 }
 
@@ -1599,7 +1847,7 @@ void RenderSystem::Impl::blurVEntry(void* context, GraphExecuteContext& commands
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
     self->runPost(commands, self->blur_b_resource, self->blur_pipeline,
-                  commands.imageSlot(self->blur_a_resource), 0U,
+                  commands.imageSlot(self->blur_a_resource), 0U, 0U,
                   Vec4{0.0F, 1.0F / static_cast<float>(self->bloom_height), 0.0F, 0.0F});
 }
 
@@ -1612,6 +1860,7 @@ void RenderSystem::Impl::compositeEntry(void* context, GraphExecuteContext& comm
     self->runPost(commands, target, self->composite_pipeline,
                   commands.imageSlot(self->hdr_resource),
                   bloom ? commands.imageSlot(self->blur_b_resource) : 0U,
+                  commands.imageSlot(self->ui_resource),
                   Vec4{0.0F, 0.0F, bloom ? 1.0F : 0.0F, 0.0F});
 }
 
@@ -1619,7 +1868,7 @@ void RenderSystem::Impl::fxaaEntry(void* context, GraphExecuteContext& commands)
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
     self->runPost(commands, self->canvas_resource, self->fxaa_pipeline,
-                  commands.imageSlot(self->ldr_resource), 0U,
+                  commands.imageSlot(self->ldr_resource), 0U, 0U,
                   Vec4{1.0F / static_cast<float>(self->target_width),
                        1.0F / static_cast<float>(self->target_height), 0.0F, 0.0F});
 }

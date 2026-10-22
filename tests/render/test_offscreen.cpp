@@ -13,9 +13,11 @@
 #include <resonate/render/device.h>
 #include <resonate/render/offscreen.hpp>
 #include <resonate/renderer/renderer.h>
+#include <resonate/ui/layout.h>
 
 #include "paths.h"
 #include "resonate.render/components.gen.h"
+#include "resonate.ui/components.gen.h"
 
 namespace
 {
@@ -73,6 +75,7 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
     resonate::ecs::World world(resonate::systemAllocator());
     REQUIRE(resonate::hierarchy::registerComponents(world));
     REQUIRE(resonate::renderer::RenderSystem::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
 
     const auto camera = world.create();
     world.add(camera, resonate::hierarchy::WorldTransform{translation(0.0F, 2.5F, -7.0F)});
@@ -86,6 +89,40 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
     const auto sun = world.create();
     world.add(sun, resonate::render::DirectionalLight{Vec3{0.0F, 0.0F, 1.0F},
                                                       Vec3{1.0F, 1.0F, 1.0F}, 2.0F});
+
+    /* A red overlay quadrant over the top-left corner: the UI pass and the
+       composite's blend are visible in the readback. */
+    const auto ui_canvas = world.create();
+    world.add(ui_canvas, resonate::ui::Canvas{});
+    world.add(ui_canvas, resonate::ui::ComputedRect{});
+    const auto ui_quad = world.create();
+    resonate::ui::RectTransform ui_rect;
+    ui_rect.x = 8.0F;
+    ui_rect.y = 8.0F;
+    ui_rect.width = 140.0F;
+    ui_rect.height = 48.0F;
+    world.add(ui_quad, ui_rect);
+    world.add(ui_quad, resonate::ui::ComputedRect{});
+    world.add(ui_quad, resonate::ui::Background{resonate::Vec4{1.0F, 0.0F, 0.0F, 1.0F}});
+
+    /* A half-transparent blue over the red half: the overlay target keeps
+       straight-alpha color, so the composite shows the blend. */
+    const auto ui_blend = world.create();
+    resonate::ui::RectTransform blend_rect;
+    blend_rect.x = 80.0F;
+    blend_rect.y = 8.0F;
+    blend_rect.width = 60.0F;
+    blend_rect.height = 48.0F;
+    world.add(ui_blend, blend_rect);
+    world.add(ui_blend, resonate::ui::ComputedRect{});
+    world.add(ui_blend, resonate::ui::Background{resonate::Vec4{0.0F, 0.0F, 1.0F, 0.5F}});
+    {
+        resonate::ecs::CommandBuffer commands(world);
+        resonate::hierarchy::setParent(commands, ui_quad, ui_canvas);
+        resonate::hierarchy::setParent(commands, ui_blend, ui_canvas);
+        world.play(commands);
+    }
+    REQUIRE(resonate::ui::layout(world, ui_canvas, 320.0F, 240.0F));
 
     resonate::renderer::RenderSystem render_system;
     render_system.setRegistry(host->capabilities());
@@ -129,6 +166,22 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
     }
     INFO("lit=" << lit);
     CHECK(lit > 400U);
+
+    /* The overlay is opaque red inside its rectangle. */
+    const std::size_t ui_index = (static_cast<std::size_t>(20U) * width + 20U) * 4U;
+    CHECK(pixels[ui_index] > 200U);
+    CHECK(pixels[ui_index + 1U] < 40U);
+    CHECK(pixels[ui_index + 2U] < 40U);
+
+    /* Half-transparent blue over the red is purple: the UI pass blended the
+       second quad into the first and the composite saw the result. The canvas
+       is sRGB, so the linear 0.5 lands around 188 in the readback. */
+    const std::size_t blend_index = (static_cast<std::size_t>(30U) * width + 110U) * 4U;
+    CHECK(pixels[blend_index] > 160U);
+    CHECK(pixels[blend_index] < 220U);
+    CHECK(pixels[blend_index + 1U] < 40U);
+    CHECK(pixels[blend_index + 2U] > 160U);
+    CHECK(pixels[blend_index + 2U] < 220U);
 
     render_system.release();
     host->detachAll();

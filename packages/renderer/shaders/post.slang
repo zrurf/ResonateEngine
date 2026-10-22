@@ -81,7 +81,12 @@ float4 compositeFragment(VertexOutput input) : SV_Target
     float3 bloom = push.params.z > 0.5
                        ? image_table[push.slots.y].Sample(input.uv).rgb
                        : float3(0.0, 0.0, 0.0);
-    return float4(tonemap(hdr + bloom * 0.35), 1.0);
+    float3 mapped = tonemap(hdr + bloom * 0.35);
+    // The UI image holds premultiplied color (the overlay pass blends with
+    // source-alpha), blended after tonemapping so authored UI colors survive.
+    float4 ui = image_table[push.slots.z].Sample(input.uv);
+    mapped = mapped * (1.0 - ui.a) + ui.rgb;
+    return float4(mapped, 1.0);
 }
 
 [shader("fragment")]

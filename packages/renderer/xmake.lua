@@ -30,7 +30,7 @@ target("Resonate.Renderer")
     -- The cook tool runs itself after it links; the renderer needs the cooked
     -- textures at runtime, not to compile, so this is an order-only dep.
     add_deps("Resonate.Render", "Resonate.Render.Graph", "Resonate.ECS",
-             "Resonate.Hierarchy", "Resonate.Core.Math")
+             "Resonate.Hierarchy", "Resonate.UI", "Resonate.Core.Math")
     if not get_config("engine_only") then
         add_deps("Resonate.Tools.TexCook", {links = false, inherit = false})
     end

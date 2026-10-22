@@ -2,10 +2,12 @@
 #define RESONATE_UI_DISPLAY_LIST_H
 
 #include <cstddef>
-#include <memory>
+#include <cstdint>
+#include <vector>
 
 #include <resonate/core/math.h>
 #include <resonate/core/span.h>
+#include <resonate/ecs/entity.h>
 #include <resonate/ecs/world.h>
 
 /*
@@ -32,11 +34,11 @@ struct Quad
 class DisplayList
 {
   public:
-    DisplayList();
-    ~DisplayList();
+    DisplayList() = default;
+    ~DisplayList() = default;
 
-    DisplayList(DisplayList&&) noexcept;
-    DisplayList& operator=(DisplayList&&) noexcept;
+    DisplayList(DisplayList&&) noexcept = default;
+    DisplayList& operator=(DisplayList&&) noexcept = default;
     DisplayList(const DisplayList&) = delete;
     DisplayList& operator=(const DisplayList&) = delete;
 
@@ -48,12 +50,17 @@ class DisplayList
     [[nodiscard]] Span<const Quad> quads() const noexcept;
 
   private:
-    struct Impl;
+    struct OrderEntry
+    {
+        ecs::Entity entity;
+        std::int32_t z = 0;
+    };
 
     bool paint(ecs::World& world, ecs::Entity entity, std::uint32_t depth);
     friend bool buildDisplayList(ecs::World& world, ecs::Entity root, DisplayList& out);
 
-    std::unique_ptr<Impl> impl_;
+    std::vector<Quad> quads_;
+    std::vector<OrderEntry> order_;
 };
 
 /* Fills `out` with the subtree rooted at `root` in paint order. The root may be
