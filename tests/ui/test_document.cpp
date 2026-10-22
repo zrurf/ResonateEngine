@@ -125,6 +125,42 @@ TEST_CASE("ui document: implicit node types instantiate into widget entities", "
     CHECK(near(list.quads()[1].y, 52.0F));
 }
 
+TEST_CASE("ui document: a Picture emits a textured quad", "[ui][document]")
+{
+    const char* const text = R"xml(<document version="1">
+  <Screen key="hud">
+    <Picture key="icon" texture="1" x="10" y="20" width="32" height="24"
+             uv_min="0.25 0.5" uv_max="0.75 0.75" tint="1 0.5 0.25 1"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(text, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+    REQUIRE(list.size() == 1U);
+    const resonate::ui::Quad& quad = list.quads()[0];
+    CHECK(quad.texture == resonate::ui::kTextureChecker);
+    CHECK(near(quad.x, 10.0F));
+    CHECK(near(quad.y, 20.0F));
+    CHECK(near(quad.width, 32.0F));
+    CHECK(near(quad.height, 24.0F));
+    CHECK(near(quad.uv_min.x, 0.25F));
+    CHECK(near(quad.uv_min.y, 0.5F));
+    CHECK(near(quad.uv_max.x, 0.75F));
+    CHECK(near(quad.uv_max.y, 0.75F));
+    CHECK(near(quad.color.y, 0.5F));
+    CHECK(near(quad.color.z, 0.25F));
+}
+
 TEST_CASE("ui document: an authored derived component is refused", "[ui][document]")
 {
     const char* const text = R"xml(<document version="1">
@@ -172,11 +208,13 @@ TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]
 
     resonate::ui::DisplayList list;
     REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
-    CHECK(list.size() == 5U);
+    CHECK(list.size() == 6U);
     CHECK(near(list.quads()[0].width, 360.0F));
     CHECK(near(list.quads()[0].height, 180.0F));
     CHECK(near(list.quads()[2].width, 240.0F));
     CHECK(near(list.quads()[3].width, 90.0F));
     CHECK(near(list.quads()[4].width, 140.0F));
     CHECK(near(list.quads()[4].height, 36.0F));
+    CHECK(list.quads()[5].texture == resonate::ui::kTextureChecker);
+    CHECK(near(list.quads()[5].width, 48.0F));
 }

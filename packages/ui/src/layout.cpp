@@ -256,6 +256,7 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<LayoutGroup>() != ecs::kInvalidComponent &&
            world.registerComponent<ComputedRect>() != ecs::kInvalidComponent &&
            world.registerComponent<Background>() != ecs::kInvalidComponent &&
+           world.registerComponent<Image>() != ecs::kInvalidComponent &&
            world.registerComponent<DataContext>() != ecs::kInvalidComponent &&
            world.registerComponent<Bindings>() != ecs::kInvalidComponent &&
            world.registerComponent<Input>() != ecs::kInvalidComponent &&

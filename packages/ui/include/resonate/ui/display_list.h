@@ -15,12 +15,18 @@
  *
  * The list is the boundary between the retained tree and a renderer: widgets
  * are walked parent first, siblings by ascending RectTransform::z and then
- * hierarchy order, and every widget carrying Background contributes one
+ * hierarchy order, and every widget carrying Background or Image contributes a
  * rectangle. The caller reuses one list across frames; the scratch the walk
  * needs grows to the tree once and is then allocation-free.
  */
 namespace resonate::ui
 {
+
+/* Engine-owned texture ids that need no asset registry. 0 is the white texel
+   solid quads sample; 1 is the built-in checker; 2 is the font atlas. */
+inline constexpr std::uint32_t kTextureWhite = 0U;
+inline constexpr std::uint32_t kTextureChecker = 1U;
+inline constexpr std::uint32_t kTextureFont = 2U;
 
 struct Quad
 {
@@ -29,6 +35,9 @@ struct Quad
     float width = 0.0F;
     float height = 0.0F;
     Vec4 color{1.0F, 1.0F, 1.0F, 1.0F};
+    std::uint32_t texture = kTextureWhite;
+    Vec2 uv_min{0.0F, 0.0F};
+    Vec2 uv_max{1.0F, 1.0F};
 };
 
 class DisplayList

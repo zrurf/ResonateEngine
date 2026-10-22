@@ -38,6 +38,8 @@
       <Label key="bar.ammo" name="Ammo" class="bar ammo" height="16"
              bind-width="DataContext.ammo"/>
       <Button key="action" name="Action" class="action" width="140" height="36"/>
+      <Picture key="icon" name="Icon" texture="1" x="276" y="96" width="48" height="48"
+               position="Absolute"/>
     </Panel>
   </Screen>
 </document>

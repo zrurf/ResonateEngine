@@ -133,8 +133,8 @@ struct PostConstants
     Vec4 params;
 };
 
-/* One UI overlay vertex: a target-pixel position and a straight-alpha color.
-   Six per quad, so the pipeline needs no index buffer. */
+/* One UI overlay vertex: a target-pixel position, a straight-alpha color and
+   the sampled UV. Six per quad, so the pipeline needs no index buffer. */
 struct UiVertex
 {
     float x = 0.0F;
@@ -143,20 +143,35 @@ struct UiVertex
     float g = 0.0F;
     float b = 0.0F;
     float a = 0.0F;
+    float u = 0.0F;
+    float v = 0.0F;
 };
 
-/* The overlay's push block: the target extent the pixels divide by. */
+/* The overlay's push block: the target extent the pixels divide by and the
+   sampled-image slot for the batch being drawn. A solid batch names no slot,
+   so it never depends on the sampled table being populated. */
 struct UiConstants
 {
     float viewport_width = 1.0F;
     float viewport_height = 1.0F;
     float pad[2] = {};
+    std::uint32_t texture_slot = 0U;
+};
+
+/* A contiguous vertex range sharing one sampled texture. */
+constexpr std::uint32_t kSolidUiTextureSlot = 0xFFFFFFFFU;
+
+struct UiBatch
+{
+    std::uint32_t first_vertex = 0U;
+    std::uint32_t vertex_count = 0U;
+    std::uint32_t texture = 0U;
 };
 
 /* A frame's overlay is bounded by one vertex buffer; a larger list is
    truncated rather than resized mid-frame. */
 constexpr std::uint32_t kMaxUiQuads = 4096U;
-static_assert(sizeof(UiVertex) == 24U);
+static_assert(sizeof(UiVertex) == 32U);
 static_assert(sizeof(PostConstants) == 32U);
 
 /* The frame one extract produces; the draw callback walks it. */
@@ -407,6 +422,7 @@ struct RenderSystem::Impl
        The render thread owns the buffer and the scratch. */
     ResonateRenderBuffer ui_vertices{};
     std::vector<UiVertex> ui_vertex_scratch;
+    std::vector<UiBatch> ui_batches;
     std::uint32_t ui_drawn_vertices = 0U;
     UiConstants ui_constants{};
 
@@ -449,6 +465,7 @@ struct RenderSystem::Impl
     ResonateRenderBuffer uploadUniform(std::uint64_t size_bytes);
     std::uint32_t slotOf(ResonateRenderBuffer handle) const;
     std::uint32_t slotOf(ResonateRenderImage handle) const;
+    std::uint32_t uiTextureSlot(std::uint32_t texture) const;
     void bindQueries(ecs::World& world);
     void resolveCapabilities();
     void ensureThread();
@@ -834,6 +851,19 @@ std::uint32_t RenderSystem::Impl::slotOf(ResonateRenderImage handle) const
     return static_cast<std::uint32_t>(handle.value & 0xFFFFFFFFU);
 }
 
+std::uint32_t RenderSystem::Impl::uiTextureSlot(std::uint32_t texture) const
+{
+    if (texture == ui::kTextureWhite)
+    {
+        return kSolidUiTextureSlot;
+    }
+    if (!albedo_ready)
+    {
+        return kSolidUiTextureSlot;
+    }
+    return texture == ui::kTextureChecker ? checker_texture_slot : white_texture_slot;
+}
+
 bool RenderSystem::Impl::ensurePipelines()
 {
     if (pipelines_ready)
@@ -1085,18 +1115,21 @@ bool RenderSystem::Impl::ensurePipelines()
         }
     }
 
-    /* The overlay: target-pixel positions and straight-alpha colors, blended
-       into the UI image. */
-    ResonateRenderVertexAttribute ui_attributes[2] = {};
+    /* The overlay: target-pixel positions, straight-alpha colors and sampled
+       UVs, blended into the UI image. */
+    ResonateRenderVertexAttribute ui_attributes[3] = {};
     ui_attributes[0].location = 0U;
     ui_attributes[0].format = RESONATE_RENDER_FORMAT_R32G32_SFLOAT;
     ui_attributes[0].offset_bytes = 0U;
     ui_attributes[1].location = 1U;
     ui_attributes[1].format = RESONATE_RENDER_FORMAT_R32G32B32A32_SFLOAT;
     ui_attributes[1].offset_bytes = 8U;
+    ui_attributes[2].location = 2U;
+    ui_attributes[2].format = RESONATE_RENDER_FORMAT_R32G32_SFLOAT;
+    ui_attributes[2].offset_bytes = 24U;
     ResonateRenderVertexStream ui_stream{};
     ui_stream.stride_bytes = sizeof(UiVertex);
-    ui_stream.attribute_count = 2U;
+    ui_stream.attribute_count = 3U;
     ui_stream.attributes = ui_attributes;
 
     ResonateRenderGraphicsPipelineDesc ui_desc{};
@@ -1560,6 +1593,7 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
     }
 
     ui_drawn_vertices = 0U;
+    ui_batches.clear();
     ui_constants.viewport_width = static_cast<float>(active->target_width);
     ui_constants.viewport_height = static_cast<float>(active->target_height);
     if (!active->ui.empty())
@@ -1572,17 +1606,28 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
         }
 
         ui_vertex_scratch.clear();
+        ui_batches.clear();
         for (std::size_t index = 0; index < count; ++index)
         {
             const ui::Quad& quad = quads[index];
             const float right = quad.x + quad.width;
             const float bottom = quad.y + quad.height;
-            const UiVertex color{0.0F, 0.0F, quad.color.x, quad.color.y, quad.color.z,
-                                 quad.color.w};
-            const UiVertex top_left{quad.x, quad.y, color.r, color.g, color.b, color.a};
-            const UiVertex top_right{right, quad.y, color.r, color.g, color.b, color.a};
-            const UiVertex bottom_right{right, bottom, color.r, color.g, color.b, color.a};
-            const UiVertex bottom_left{quad.x, bottom, color.r, color.g, color.b, color.a};
+            const UiVertex top_left{quad.x,  quad.y,   quad.color.x, quad.color.y,
+                                    quad.color.z, quad.color.w, quad.uv_min.x, quad.uv_min.y};
+            const UiVertex top_right{right, quad.y, quad.color.x, quad.color.y, quad.color.z,
+                                     quad.color.w, quad.uv_max.x, quad.uv_min.y};
+            const UiVertex bottom_right{right, bottom, quad.color.x, quad.color.y, quad.color.z,
+                                        quad.color.w, quad.uv_max.x, quad.uv_max.y};
+            const UiVertex bottom_left{quad.x, bottom, quad.color.x, quad.color.y, quad.color.z,
+                                       quad.color.w, quad.uv_min.x, quad.uv_max.y};
+
+            const std::uint32_t first = static_cast<std::uint32_t>(ui_vertex_scratch.size());
+            if (ui_batches.empty() || ui_batches.back().texture != quad.texture)
+            {
+                ui_batches.push_back(UiBatch{first, 0U, quad.texture});
+            }
+            ui_batches.back().vertex_count += 6U;
+
             ui_vertex_scratch.push_back(top_left);
             ui_vertex_scratch.push_back(top_right);
             ui_vertex_scratch.push_back(bottom_right);
@@ -1746,9 +1791,15 @@ void RenderSystem::Impl::drawUi(GraphExecuteContext& commands)
     if (ui_drawn_vertices != 0U &&
         device.bind_pipeline(device.self, ui_pipeline) == RESONATE_OK)
     {
-        device.set_constants(device.self, &ui_constants, sizeof(ui_constants));
-        device.bind_vertex_buffer(device.self, ui_vertices, 0U);
-        device.draw(device.self, ui_drawn_vertices, 1U);
+        for (const UiBatch& batch : ui_batches)
+        {
+            ui_constants.texture_slot = uiTextureSlot(batch.texture);
+            device.set_constants(device.self, &ui_constants, sizeof(ui_constants));
+            device.bind_vertex_buffer(device.self, ui_vertices,
+                                      static_cast<std::uint64_t>(batch.first_vertex) *
+                                          sizeof(UiVertex));
+            device.draw(device.self, batch.vertex_count, 1U);
+        }
     }
     device.end_pass(device.self);
 }

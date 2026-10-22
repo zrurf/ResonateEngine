@@ -422,9 +422,55 @@ bool applyBackground(const dom::Document& document, const dom::Component& compon
     return true;
 }
 
-bool applyStyleRef(const dom::Document& document, const dom::Component& component,
-                   StyleRef& style, std::string& error)
+bool applyImage(const dom::Document& document, const dom::Component& component, Image& image,
+                std::string& error)
 {
+    for (const dom::Field& field : component.fields)
+    {
+        const std::string_view name = document.text(field.name);
+        if (name == "texture")
+        {
+            if (!parseU32(field.value, image.texture))
+            {
+                error = "Image.texture is not a u32";
+                return false;
+            }
+        }
+        else if (name == "uv_min")
+        {
+            if (!parseVec2(field.value, image.uv_min))
+            {
+                error = "Image.uv_min is not a vec2";
+                return false;
+            }
+        }
+        else if (name == "uv_max")
+        {
+            if (!parseVec2(field.value, image.uv_max))
+            {
+                error = "Image.uv_max is not a vec2";
+                return false;
+            }
+        }
+        else if (name == "tint")
+        {
+            if (!parseVec4(field.value, image.tint))
+            {
+                error = "Image.tint is not a vec4";
+                return false;
+            }
+        }
+        else
+        {
+            error = "unknown Image field '" + std::string(name) + "'";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool applyStyleRef(const dom::Document& document, const dom::Component& component,
+                   StyleRef& style, std::string& error){
     for (const dom::Field& field : component.fields)
     {
         const std::string_view name = document.text(field.name);
@@ -894,6 +940,12 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
         {
             Background value;
             applied = applyBackground(document, component, value, error) &&
+                      world.add(entity, value) != nullptr;
+        }
+        else if (name == "Image")
+        {
+            Image value;
+            applied = applyImage(document, component, value, error) &&
                       world.add(entity, value) != nullptr;
         }
         else if (name == "StyleRef")

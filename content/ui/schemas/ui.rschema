@@ -93,6 +93,16 @@
     <field name="color" type="vec4" default="1 1 1 1"/>
   </component>
 
+  <!-- A textured rectangle. `texture` names an engine texture id (0 = white,
+       1 = the built-in checker); the UV rect selects the sampled region and
+       tint multiplies the sample. -->
+  <component name="Image" version="1">
+    <field name="texture" type="u32" default="0"/>
+    <field name="uv_min" type="vec2" default="0 0"/>
+    <field name="uv_max" type="vec2" default="1 1"/>
+    <field name="tint" type="vec4" default="1 1 1 1"/>
+  </component>
+
   <!-- The HUD's view model: gameplay or the demo writes these values; widgets
        bind their RectTransform fields to them. A later slice can bind straight
        to gameplay components. -->
@@ -169,6 +179,16 @@
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color"/>
+    <field name="bind-x" type="binding"/>
+    <field name="bind-y" type="binding"/>
+    <field name="bind-width" type="binding"/>
+    <field name="bind-height" type="binding"/>
+  </node>
+
+  <node name="Picture" version="1">
+    <uses component="RectTransform"
+          expose="x y width height anchor_min anchor_max pivot z position"/>
+    <uses component="Image" expose="texture uv_min uv_max tint"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>
     <field name="bind-width" type="binding"/>

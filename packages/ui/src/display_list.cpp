@@ -37,6 +37,16 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         }
         quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, background->color});
     }
+    if (const Image* image = world.get<Image>(entity))
+    {
+        const ComputedRect* rect = world.get<ComputedRect>(entity);
+        if (rect == nullptr)
+        {
+            return report(world, entity, "has Image but no ComputedRect");
+        }
+        quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, image->tint,
+                              image->texture, image->uv_min, image->uv_max});
+    }
 
     const auto children = hierarchy::children(world, entity);
     const std::size_t start = order_.size();
