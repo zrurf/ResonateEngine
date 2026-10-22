@@ -25,6 +25,8 @@
 namespace resonate::dom
 {
 
+class SchemaRegistry;
+
 using StringId = std::uint32_t;
 inline constexpr StringId kInvalidString = 0xFFFFFFFFU;
 
@@ -71,8 +73,9 @@ struct CloneOptions
 {
     /* A clone is a new node by default: no key/id, so the copy cannot collide
        with or silently retarget patches that name the original. Prefab
-       instancing, which wants the source keys preserved inside the instance,
-       passes true. */
+       instancing wants the source keys preserved inside its own scope; until
+       keys are scoped, a copy whose key is already taken in this document
+       fails. */
     bool copy_key = false;
     bool copy_id = false;
     bool copy_name = true;
@@ -191,8 +194,12 @@ class Document
     /* --- text codec --- */
 
     /* Parses the document grammar; returns null and fills diagnostics when
-       the text is not a valid document. */
+       the text is not a valid document. With a registry the implicit element
+       syntax and node-type compositions are resolved; without one only the
+       explicit and short-component forms are understood. */
     static std::unique_ptr<Document> parse(std::string_view xml,
+                                           std::vector<Diagnostic>& diagnostics);
+    static std::unique_ptr<Document> parse(std::string_view xml, const SchemaRegistry* schema,
                                            std::vector<Diagnostic>& diagnostics);
 
     /* Canonical explicit form: stable ordering and formatting. */

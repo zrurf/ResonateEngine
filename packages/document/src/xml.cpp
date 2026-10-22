@@ -1,5 +1,7 @@
 #include <resonate/dom/document.h>
 
+#include <resonate/dom/schema.h>
+
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -619,8 +621,126 @@ bool parseResources(Reader& reader, Document& document, const Tag& tag,
     }
 }
 
-bool parseComponent(Reader& reader, Document& document, NodeHandle node, const Tag& tag,
-                    bool explicit_form, std::vector<Diagnostic>& diagnostics)
+bool isCoreAttribute(std::string_view name)
+{
+    return name == "key" || name == "id" || name == "name" || name == "type" || name == "class";
+}
+
+bool mergeComponent(Document& document, NodeHandle node, Component next, bool overwrite,
+                    std::uint32_t line, std::uint32_t column,
+                    std::vector<Diagnostic>& diagnostics)
+{
+    if (const Component* existing = document.component(node, next.type))
+    {
+        Component merged = *existing;
+        for (const Field& field : next.fields)
+        {
+            bool found = false;
+            for (Field& target : merged.fields)
+            {
+                if (target.name == field.name)
+                {
+                    if (!overwrite)
+                    {
+                        return fail(diagnostics, line, column,
+                                    "two attributes map to the same field '" +
+                                        std::string(document.text(field.name)) + "'");
+                    }
+                    target.value = field.value;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                merged.fields.push_back(field);
+            }
+        }
+        if (!document.setComponent(node, std::move(merged)))
+        {
+            return fail(diagnostics, line, column, "component could not be recorded");
+        }
+        return true;
+    }
+    if (!document.setComponent(node, std::move(next)))
+    {
+        return fail(diagnostics, line, column, "component could not be recorded");
+    }
+    return true;
+}
+
+bool applyNodeType(Document& document, NodeHandle node, const NodeTypeDesc& type, const Tag& tag,
+                   const SchemaRegistry& schema, std::vector<Diagnostic>& diagnostics)
+{
+    for (const UsedComponent& used : type.components)
+    {
+        if (used.component == nullptr || !schema.isComponent(used.component))
+        {
+            return fail(diagnostics, tag.line, tag.column,
+                        "node type '" + std::string(type.name) + "' uses an unknown component");
+        }
+        const StringId component_type = document.intern(used.component);
+        if (!document.hasComponent(node, component_type))
+        {
+            Component component;
+            component.type = component_type;
+            if (!document.setComponent(node, std::move(component)))
+            {
+                return fail(diagnostics, tag.line, tag.column, "component could not be recorded");
+            }
+        }
+    }
+
+    for (const Attribute& attribute : tag.attributes)
+    {
+        if (isCoreAttribute(attribute.name))
+        {
+            continue;
+        }
+
+        const UsedComponent* owner = nullptr;
+        const ExposedField* match = nullptr;
+        std::uint32_t matches = 0U;
+        for (const UsedComponent& used : type.components)
+        {
+            for (const ExposedField& exposed : used.exposed)
+            {
+                if (attribute.name == exposed.attribute)
+                {
+                    owner = &used;
+                    match = &exposed;
+                    ++matches;
+                }
+            }
+        }
+        if (matches == 0U)
+        {
+            return fail(diagnostics, tag.line, tag.column,
+                        "unknown attribute '" + attribute.name + "' on <" +
+                            std::string(type.name) + ">");
+        }
+        if (matches > 1U)
+        {
+            return fail(diagnostics, tag.line, tag.column,
+                        "attribute '" + attribute.name + "' maps to more than one component field");
+        }
+
+        Component component;
+        component.type = document.intern(owner->component);
+        component.fields.push_back(Field{document.intern(match->field), attribute.value});
+        if (!mergeComponent(document, node, std::move(component), false, tag.line, tag.column,
+                            diagnostics))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool parseComponent(Reader& reader, Document& document, const SchemaRegistry* schema,
+                    NodeHandle node, const Tag& tag, bool explicit_form,
+                    std::vector<StringId>& explicit_components,
+                    std::vector<Diagnostic>& diagnostics)
 {
     Component component;
     if (explicit_form)
@@ -640,6 +760,18 @@ bool parseComponent(Reader& reader, Document& document, NodeHandle node, const T
     {
         return fail(diagnostics, tag.line, tag.column, "a component needs a type");
     }
+    if (schema != nullptr && !schema->isComponent(document.text(component.type)))
+    {
+        return fail(diagnostics, tag.line, tag.column,
+                    "unknown component '" + std::string(document.text(component.type)) + "'");
+    }
+    if (std::find(explicit_components.begin(), explicit_components.end(), component.type) !=
+        explicit_components.end())
+    {
+        return fail(diagnostics, tag.line, tag.column,
+                    "component '" + std::string(document.text(component.type)) + "' is repeated");
+    }
+    explicit_components.push_back(component.type);
 
     for (const Attribute& attribute : tag.attributes)
     {
@@ -652,17 +784,12 @@ bool parseComponent(Reader& reader, Document& document, NodeHandle node, const T
             return fail(diagnostics, tag.line, tag.column,
                         "attribute 'type' is reserved; use <component type=...> for a field named type");
         }
-        component.fields.push_back(
-            Field{document.intern(attribute.name), attribute.value});
+        component.fields.push_back(Field{document.intern(attribute.name), attribute.value});
     }
-    if (document.hasComponent(node, component.type))
+    if (!mergeComponent(document, node, std::move(component), true, tag.line, tag.column,
+                        diagnostics))
     {
-        return fail(diagnostics, tag.line, tag.column,
-                    "component '" + std::string(document.text(component.type)) + "' is repeated");
-    }
-    if (!document.setComponent(node, std::move(component)))
-    {
-        return fail(diagnostics, tag.line, tag.column, "component could not be recorded");
+        return false;
     }
 
     if (tag.self_closing)
@@ -679,8 +806,7 @@ bool parseComponent(Reader& reader, Document& document, NodeHandle node, const T
         }
         if (next == Reader::Next::End)
         {
-            return fail(diagnostics, tag.line, tag.column,
-                        "<" + tag.name + "> is not closed");
+            return fail(diagnostics, tag.line, tag.column, "<" + tag.name + "> is not closed");
         }
         if (child.closing)
         {
@@ -696,7 +822,8 @@ bool parseComponent(Reader& reader, Document& document, NodeHandle node, const T
     }
 }
 
-NodeHandle parseNode(Reader& reader, Document& document, const Tag& tag, std::uint32_t depth,
+NodeHandle parseNode(Reader& reader, Document& document, const SchemaRegistry* schema,
+                     const Tag& tag, const char* implied_type, std::uint32_t depth,
                      std::vector<Diagnostic>& diagnostics, bool& ok)
 {
     ok = false;
@@ -706,11 +833,51 @@ NodeHandle parseNode(Reader& reader, Document& document, const Tag& tag, std::ui
         return NodeHandle{};
     }
 
+    const Attribute* type_attribute = findAttribute(tag, "type");
+    std::string_view type_name;
+    if (implied_type != nullptr)
+    {
+        if (type_attribute != nullptr)
+        {
+            fail(diagnostics, tag.line, tag.column,
+                 "an implicit node element does not take a type attribute");
+            return NodeHandle{};
+        }
+        type_name = implied_type;
+    }
+    else if (type_attribute != nullptr)
+    {
+        type_name = type_attribute->value;
+    }
+
+    const NodeTypeDesc* node_type = nullptr;
+    if (!type_name.empty() && schema != nullptr)
+    {
+        node_type = schema->findNodeType(type_name);
+        if (node_type == nullptr)
+        {
+            fail(diagnostics, tag.line, tag.column,
+                 "unknown node type '" + std::string(type_name) + "'");
+            return NodeHandle{};
+        }
+    }
+
     const NodeHandle node = document.create();
     if (!node.valid())
     {
         fail(diagnostics, tag.line, tag.column, "a node could not be created");
         return NodeHandle{};
+    }
+
+    if (!type_name.empty())
+    {
+        const StringId type = document.intern(type_name);
+        if (type == kInvalidString)
+        {
+            fail(diagnostics, tag.line, tag.column, "type must not be empty");
+            return NodeHandle{};
+        }
+        document.setType(node, type);
     }
 
     for (const Attribute& attribute : tag.attributes)
@@ -739,16 +906,6 @@ NodeHandle parseNode(Reader& reader, Document& document, const Tag& tag, std::ui
         {
             document.setName(node, document.intern(attribute.value));
         }
-        else if (attribute.name == "type")
-        {
-            const StringId type = document.intern(attribute.value);
-            if (type == kInvalidString)
-            {
-                fail(diagnostics, tag.line, tag.column, "type must not be empty");
-                return NodeHandle{};
-            }
-            document.setType(node, type);
-        }
         else if (attribute.name == "class")
         {
             std::vector<StringId> classes;
@@ -768,11 +925,25 @@ NodeHandle parseNode(Reader& reader, Document& document, const Tag& tag, std::ui
                 return NodeHandle{};
             }
         }
-        else
+    }
+
+    if (node_type != nullptr)
+    {
+        if (!applyNodeType(document, node, *node_type, tag, *schema, diagnostics))
         {
-            fail(diagnostics, tag.line, tag.column,
-                 "unknown attribute '" + attribute.name + "' on <node>");
             return NodeHandle{};
+        }
+    }
+    else
+    {
+        for (const Attribute& attribute : tag.attributes)
+        {
+            if (!isCoreAttribute(attribute.name))
+            {
+                fail(diagnostics, tag.line, tag.column,
+                     "unknown attribute '" + attribute.name + "' on <node>");
+                return NodeHandle{};
+            }
         }
     }
 
@@ -782,6 +953,7 @@ NodeHandle parseNode(Reader& reader, Document& document, const Tag& tag, std::ui
         return node;
     }
 
+    std::vector<StringId> explicit_components;
     for (;;)
     {
         Tag child;
@@ -797,7 +969,7 @@ NodeHandle parseNode(Reader& reader, Document& document, const Tag& tag, std::ui
         }
         if (child.closing)
         {
-            if (child.name != "node")
+            if (child.name != tag.name)
             {
                 fail(diagnostics, child.line, child.column, "unexpected </" + child.name + ">");
                 return NodeHandle{};
@@ -809,7 +981,7 @@ NodeHandle parseNode(Reader& reader, Document& document, const Tag& tag, std::ui
         {
             bool child_ok = false;
             const NodeHandle child_node =
-                parseNode(reader, document, child, depth + 1U, diagnostics, child_ok);
+                parseNode(reader, document, schema, child, nullptr, depth + 1U, diagnostics, child_ok);
             if (!child_ok || !document.append(node, child_node))
             {
                 return NodeHandle{};
@@ -818,13 +990,49 @@ NodeHandle parseNode(Reader& reader, Document& document, const Tag& tag, std::ui
         }
         if (child.name == "component")
         {
-            if (!parseComponent(reader, document, node, child, true, diagnostics))
+            if (!parseComponent(reader, document, schema, node, child, true, explicit_components,
+                                diagnostics))
             {
                 return NodeHandle{};
             }
             continue;
         }
-        if (!parseComponent(reader, document, node, child, false, diagnostics))
+        if (schema != nullptr)
+        {
+            const NodeTypeDesc* child_type = schema->findNodeType(child.name);
+            const bool child_component = schema->isComponent(child.name);
+            if (child_type != nullptr && child_component)
+            {
+                fail(diagnostics, child.line, child.column,
+                     "element <" + child.name +
+                         "> is both a node type and a component; use <node> or <component>");
+                return NodeHandle{};
+            }
+            if (child_type != nullptr)
+            {
+                bool child_ok = false;
+                const NodeHandle child_node = parseNode(reader, document, schema, child, child.name.c_str(),
+                                                        depth + 1U, diagnostics, child_ok);
+                if (!child_ok || !document.append(node, child_node))
+                {
+                    return NodeHandle{};
+                }
+                continue;
+            }
+            if (child_component)
+            {
+                if (!parseComponent(reader, document, schema, node, child, false,
+                                    explicit_components, diagnostics))
+                {
+                    return NodeHandle{};
+                }
+                continue;
+            }
+            fail(diagnostics, child.line, child.column, "unknown element <" + child.name + ">");
+            return NodeHandle{};
+        }
+        if (!parseComponent(reader, document, schema, node, child, false, explicit_components,
+                            diagnostics))
         {
             return NodeHandle{};
         }
@@ -834,6 +1042,12 @@ NodeHandle parseNode(Reader& reader, Document& document, const Tag& tag, std::ui
 } // namespace
 
 std::unique_ptr<Document> Document::parse(std::string_view xml,
+                                          std::vector<Diagnostic>& diagnostics)
+{
+    return parse(xml, nullptr, diagnostics);
+}
+
+std::unique_ptr<Document> Document::parse(std::string_view xml, const SchemaRegistry* schema,
                                           std::vector<Diagnostic>& diagnostics)
 {
     diagnostics.clear();
@@ -897,19 +1111,34 @@ std::unique_ptr<Document> Document::parse(std::string_view xml,
             }
             continue;
         }
-        if (tag.name != "node")
-        {
-            fail(diagnostics, tag.line, tag.column,
-                 "unknown element <" + tag.name + "> in <document>");
-            return nullptr;
-        }
         if (have_root)
         {
             fail(diagnostics, tag.line, tag.column, "a document has one root node");
             return nullptr;
         }
+
+        const char* implied_type = nullptr;
+        if (tag.name != "node")
+        {
+            if (schema == nullptr || schema->findNodeType(tag.name) == nullptr)
+            {
+                fail(diagnostics, tag.line, tag.column,
+                     "unknown element <" + tag.name + "> in <document>; the root must be a node");
+                return nullptr;
+            }
+            if (schema->isComponent(tag.name))
+            {
+                fail(diagnostics, tag.line, tag.column,
+                     "element <" + tag.name +
+                         "> is both a node type and a component; use <node> or <component>");
+                return nullptr;
+            }
+            implied_type = tag.name.c_str();
+        }
+
         bool root_ok = false;
-        const NodeHandle root = parseNode(reader, *document, tag, 0U, diagnostics, root_ok);
+        const NodeHandle root =
+            parseNode(reader, *document, schema, tag, implied_type, 0U, diagnostics, root_ok);
         if (!root_ok || !document->setRoot(root))
         {
             return nullptr;
