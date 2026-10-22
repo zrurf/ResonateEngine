@@ -64,6 +64,21 @@ internal static class SchemaCompiler
                                         Diagnostics diagnostics)
     {
         HashSet<string> exposedNames = new(StringComparer.Ordinal);
+        HashSet<string> authoringNames = new(StringComparer.Ordinal);
+        foreach (FieldDecl field in type.Fields)
+        {
+            if (!field.Authoring)
+            {
+                continue;
+            }
+            if (field.Name is "key" or "id" or "name" or "type" or "class")
+            {
+                diagnostics.Error(type.File, field.Line, field.Column,
+                                  $"'{field.Name}' is a core node attribute and cannot be an "
+                                      + "authoring field");
+            }
+            authoringNames.Add(field.Name);
+        }
         foreach (NodeUse use in type.Uses)
         {
             if (!module.ByName.TryGetValue(use.Component, out TypeDecl? component)
@@ -123,6 +138,16 @@ internal static class SchemaCompiler
                 }
             }
         }
+
+        foreach (string name in exposedNames)
+        {
+            if (authoringNames.Contains(name))
+            {
+                diagnostics.Error(type.File, type.Line, type.Column,
+                                  $"'{name}' is both an exposed component field and an authoring "
+                                      + "field");
+            }
+        }
     }
 
     /* A type is owned by the module that declares it, so a second declaration of
@@ -148,6 +173,20 @@ internal static class SchemaCompiler
     {
         foreach (FieldDecl field in type.Fields)
         {
+            /* Document node types also carry authoring text the domain compiler
+               consumes; it never enters a chunk. */
+            if (type.Kind == TypeKind.Node
+                && (field.TypeName == "string" || field.TypeName == "tokens"
+                    || field.TypeName == "binding"))
+            {
+                field.Authoring = true;
+                if (field.DefaultText is null)
+                {
+                    field.DefaultText = field.Default?.Value.Trim();
+                }
+                continue;
+            }
+
             if (Primitives.Find(field.TypeName) is Primitive primitive)
             {
                 field.Primitive = primitive;

@@ -713,6 +713,38 @@ bool applyNodeType(Document& document, NodeHandle node, const NodeTypeDesc& type
                 }
             }
         }
+
+        const AuthoringField* authoring = nullptr;
+        std::uint32_t authoring_matches = 0U;
+        for (const AuthoringField& field : type.authoring)
+        {
+            if (attribute.name == field.name)
+            {
+                authoring = &field;
+                ++authoring_matches;
+            }
+        }
+        if (matches != 0U && authoring_matches != 0U)
+        {
+            return fail(diagnostics, tag.line, tag.column,
+                        "attribute '" + attribute.name +
+                            "' is exposed by a component and declared as an authoring field");
+        }
+        if (authoring_matches > 1U)
+        {
+            return fail(diagnostics, tag.line, tag.column,
+                        "authoring field '" + attribute.name + "' is declared twice");
+        }
+        if (authoring_matches != 0U)
+        {
+            if (!document.setProperty(node,
+                                      Field{document.intern(authoring->name), attribute.value}))
+            {
+                return fail(diagnostics, tag.line, tag.column,
+                            "authoring property could not be recorded");
+            }
+            continue;
+        }
         if (matches == 0U)
         {
             return fail(diagnostics, tag.line, tag.column,

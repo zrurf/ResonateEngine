@@ -25,6 +25,7 @@ struct Document::Impl
         NodeHandle prev;
         NodeHandle next;
         std::vector<Component> components;
+        std::vector<Field> properties;
         bool alive = false;
     };
 
@@ -120,6 +121,7 @@ struct Document::Impl
         slot.type = kInvalidString;
         slot.classes.clear();
         slot.components.clear();
+        slot.properties.clear();
         slot.alive = false;
         slot.self.generation += 1U;
         free_slots.push_back(slot.self.index);
@@ -267,6 +269,7 @@ struct Document::Impl
             target->classes = original.classes;
         }
         target->components = original.components;
+        target->properties = original.properties;
         if (options.copy_key)
         {
             if (!self.setKey(copy, original.key))
@@ -831,6 +834,72 @@ Span<const Component> Document::components(NodeHandle node) const noexcept
         return {};
     }
     return Span<const Component>(slot->components.data(), slot->components.size());
+}
+
+const Field* Document::property(NodeHandle node, StringId name) const noexcept
+{
+    const Impl::Slot* slot = impl_->slot(node);
+    if (slot == nullptr || name == kInvalidString)
+    {
+        return nullptr;
+    }
+    for (const Field& field : slot->properties)
+    {
+        if (field.name == name)
+        {
+            return &field;
+        }
+    }
+    return nullptr;
+}
+
+bool Document::setProperty(NodeHandle node, Field property)
+{
+    Impl::Slot* slot = impl_->slot(node);
+    if (slot == nullptr || property.name == kInvalidString)
+    {
+        return false;
+    }
+    for (Field& field : slot->properties)
+    {
+        if (field.name == property.name)
+        {
+            field.value = std::move(property.value);
+            impl_->touch();
+            return true;
+        }
+    }
+    slot->properties.push_back(std::move(property));
+    impl_->touch();
+    return true;
+}
+
+bool Document::removeProperty(NodeHandle node, StringId name)
+{
+    Impl::Slot* slot = impl_->slot(node);
+    if (slot == nullptr)
+    {
+        return false;
+    }
+    const auto found = std::find_if(slot->properties.begin(), slot->properties.end(),
+                                    [name](const Field& field) { return field.name == name; });
+    if (found == slot->properties.end())
+    {
+        return false;
+    }
+    slot->properties.erase(found);
+    impl_->touch();
+    return true;
+}
+
+Span<const Field> Document::properties(NodeHandle node) const noexcept
+{
+    const Impl::Slot* slot = impl_->slot(node);
+    if (slot == nullptr)
+    {
+        return {};
+    }
+    return Span<const Field>(slot->properties.data(), slot->properties.size());
 }
 
 NodeHandle Document::findKey(StringId key) const noexcept

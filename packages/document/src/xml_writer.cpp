@@ -119,10 +119,24 @@ void writeNode(const Document& document, NodeHandle node, std::uint32_t level, s
     {
         appendAttribute(out, "class", classes);
     }
+    const Span<const Field> properties = document.properties(node);
+    std::vector<const Field*> ordered_properties;
+    ordered_properties.reserve(properties.size());
+    for (const Field& property : properties)
+    {
+        ordered_properties.push_back(&property);
+    }
+    std::sort(ordered_properties.begin(), ordered_properties.end(),
+              [&document](const Field* left, const Field* right)
+              { return lessText(document, left->name, right->name); });
+    for (const Field* property : ordered_properties)
+    {
+        appendAttribute(out, std::string(document.text(property->name)).c_str(), property->value);
+    }
 
     const Span<const Component> components = document.components(node);
     const NodeHandle first_child = document.firstChild(node);
-    if (components.empty() && !first_child.valid())
+    if (components.empty() && properties.empty() && !first_child.valid())
     {
         out += "/>\n";
         return;

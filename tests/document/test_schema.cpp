@@ -13,6 +13,7 @@ namespace
 
 using resonate::Span;
 using resonate::dom::Document;
+using resonate::dom::AuthoringField;
 using resonate::dom::ExposedField;
 using resonate::dom::NodeTypeDesc;
 using resonate::dom::UsedComponent;
@@ -35,9 +36,15 @@ constexpr UsedComponent kLabelUses[] = {
     {"RectTransform", Span<const ExposedField>(kRectExposed, std::size(kRectExposed))},
 };
 
+constexpr AuthoringField kPanelAuthoring[] = {
+    {"selector", "string"},
+};
+
 constexpr NodeTypeDesc kTypes[] = {
-    {"Panel", "test.Panel", Span<const UsedComponent>(kPanelUses, std::size(kPanelUses))},
-    {"Label", "test.Label", Span<const UsedComponent>(kLabelUses, std::size(kLabelUses))},
+    {"Panel", "test.Panel", Span<const UsedComponent>(kPanelUses, std::size(kPanelUses)),
+     Span<const AuthoringField>(kPanelAuthoring, std::size(kPanelAuthoring))},
+    {"Label", "test.Label", Span<const UsedComponent>(kLabelUses, std::size(kLabelUses)),
+     Span<const AuthoringField>{}},
 };
 
 class TestSchema final : public resonate::dom::SchemaRegistry
@@ -91,7 +98,7 @@ TEST_CASE("document schema: implicit elements expand to node types and component
 {
     const TestSchema schema;
     const char* text = R"xml(<document version="1" schemas="test">
-  <Panel key="panel" id="p" x="10" width="100">
+  <Panel key="panel" id="p" selector=".panel" x="10" width="100">
     <component type="RectTransform" width="120"/>
     <Label key="title" x="4"/>
   </Panel>
@@ -105,6 +112,9 @@ TEST_CASE("document schema: implicit elements expand to node types and component
     const auto root = document->root();
     REQUIRE(root.valid());
     CHECK(document->type(root) == document->intern("Panel"));
+    const auto* selector = document->property(root, document->intern("selector"));
+    REQUIRE(selector != nullptr);
+    CHECK(selector->value == ".panel");
     CHECK(document->hasComponent(root, document->intern("RectTransform")));
     CHECK(document->hasComponent(root, document->intern("Background")));
     /* The exposed x and the explicit component's width share one component. */

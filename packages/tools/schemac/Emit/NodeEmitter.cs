@@ -41,6 +41,26 @@ internal static class NodeEmitter
 
         foreach (TypeDecl node in nodes)
         {
+            List<FieldDecl> authoring = [];
+            foreach (FieldDecl field in node.Fields)
+            {
+                if (field.Authoring)
+                {
+                    authoring.Add(field);
+                }
+            }
+            if (authoring.Count > 0)
+            {
+                text.Append("\ninline constexpr dom::AuthoringField k").Append(node.Name)
+                    .Append("Authoring[] = {\n");
+                foreach (FieldDecl field in authoring)
+                {
+                    text.Append("    {\"").Append(field.Name).Append("\", \"")
+                        .Append(field.TypeName).Append("\"},\n");
+                }
+                text.Append("};\n");
+            }
+
             for (int index = 0; index < node.Uses.Count; ++index)
             {
                 NodeUse use = node.Uses[index];
@@ -93,6 +113,14 @@ internal static class NodeEmitter
             text.Append("\ninline constexpr dom::NodeTypeDesc kNodeTypes[] = {\n");
             foreach (TypeDecl node in nodes)
             {
+                List<FieldDecl> authoring = [];
+                foreach (FieldDecl field in node.Fields)
+                {
+                    if (field.Authoring)
+                    {
+                        authoring.Add(field);
+                    }
+                }
                 text.Append("    {\"").Append(node.Name).Append("\", \"").Append(node.QualifiedName)
                     .Append("\", ");
                 if (node.Uses.Count == 0)
@@ -103,6 +131,16 @@ internal static class NodeEmitter
                 {
                     text.Append("resonate::Span<const dom::UsedComponent>(k").Append(node.Name)
                         .Append("Uses, std::size(k").Append(node.Name).Append("Uses))");
+                }
+                text.Append(", ");
+                if (authoring.Count == 0)
+                {
+                    text.Append("resonate::Span<const dom::AuthoringField>{}");
+                }
+                else
+                {
+                    text.Append("resonate::Span<const dom::AuthoringField>(k").Append(node.Name)
+                        .Append("Authoring, std::size(k").Append(node.Name).Append("Authoring))");
                 }
                 text.Append("},\n");
             }

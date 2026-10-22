@@ -174,6 +174,16 @@ class Document
     bool removeComponent(NodeHandle node, StringId type);
     [[nodiscard]] Span<const Component> components(NodeHandle node) const noexcept;
 
+    /* --- authoring properties --- */
+
+    /* Node-type fields that are not chunk data: selectors, binding expressions
+       and similar text the domain compiler consumes. They are distinct from
+       component fields and from the core attributes. */
+    [[nodiscard]] const Field* property(NodeHandle node, StringId name) const noexcept;
+    bool setProperty(NodeHandle node, Field property);
+    bool removeProperty(NodeHandle node, StringId name);
+    [[nodiscard]] Span<const Field> properties(NodeHandle node) const noexcept;
+
     /* --- queries --- */
 
     /* Detached nodes remain findable by key/id. */

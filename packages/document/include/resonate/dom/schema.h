@@ -31,6 +31,14 @@ struct UsedComponent
     Span<const ExposedField> exposed;
 };
 
+/* A node-type field the domain compiler consumes as text (a selector, a binding
+   expression). It is not chunk data and has no component mapping. */
+struct AuthoringField
+{
+    const char* name = nullptr;
+    const char* type = nullptr;
+};
+
 struct NodeTypeDesc
 {
     /* The element name used by implicit syntax and by `type=`. */
@@ -38,6 +46,7 @@ struct NodeTypeDesc
     /* The module-qualified name; null when the short name is the only one. */
     const char* qualified_name = nullptr;
     Span<const UsedComponent> components;
+    Span<const AuthoringField> authoring;
 };
 
 class SchemaRegistry

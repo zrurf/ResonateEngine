@@ -172,6 +172,10 @@ internal sealed class FieldDecl(string name, string typeName, int line, int colu
     internal Primitive? Primitive { get; set; }
     internal TypeDecl? Resolved { get; set; }
 
+    /* A node type's text field (selector, binding expression): metadata the
+       domain compiler consumes, not chunk data. */
+    internal bool Authoring { get; set; }
+
     /* Filled by the storage layout pass. */
     internal int Offset { get; set; }
     internal int Size { get; set; }
