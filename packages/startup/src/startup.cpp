@@ -3,6 +3,7 @@
 #include <array>
 #include <climits>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -25,10 +26,14 @@
 #include <resonate/hierarchy/system.h>
 #include <resonate/hierarchy/tree.h>
 #include <resonate/module/host.hpp>
+#include <resonate/render/canvas.h>
 #include <resonate/render/offscreen.hpp>
 #include <resonate/renderer/renderer.h>
+#include <resonate/ui/layout.h>
 #include <resonate/window/input.h>
 #include <resonate/window/session.hpp>
+
+#include "resonate.ui/components.gen.h"
 
 namespace resonate::startup
 {
@@ -48,6 +53,80 @@ struct ActionTick
         tick->map->update(tick->input);
     }
 };
+
+/* The layout system: the retained tree is resolved against the target the
+   renderer will draw into, once per frame before RENDER extracts it. */
+struct UiFrame
+{
+    ecs::Entity canvas{};
+    const ResonateRenderCanvas* target = nullptr;
+
+    static void invoke(void* context, ecs::World& world, ecs::CommandBuffer&, float)
+    {
+        auto* frame = static_cast<UiFrame*>(context);
+        if (frame == nullptr || frame->target == nullptr || !frame->canvas.valid())
+        {
+            return;
+        }
+        const std::uint32_t width = frame->target->width(frame->target->self);
+        const std::uint32_t height = frame->target->height(frame->target->self);
+        if (width == 0U || height == 0U)
+        {
+            return;
+        }
+        ui::layout(world, frame->canvas, static_cast<float>(width), static_cast<float>(height));
+    }
+};
+
+/* The start-up's demo HUD: a panel with three bars, laid out and painted every
+   frame. It is sample content, not a library default. */
+ecs::Entity composeDemoHud(ecs::World& world)
+{
+    const ecs::Entity canvas = world.create();
+    world.add(canvas, ui::Canvas{});
+    world.add(canvas, ui::ComputedRect{});
+
+    ecs::CommandBuffer commands(world);
+
+    ui::LayoutGroup column;
+    column.direction = ui::FlexDirection::Column;
+    column.align = ui::Align::Stretch;
+    column.gap = 8.0F;
+    column.padding_left = 12.0F;
+    column.padding_top = 12.0F;
+    column.padding_right = 12.0F;
+    column.padding_bottom = 12.0F;
+
+    ui::RectTransform panel_rect;
+    panel_rect.x = 40.0F;
+    panel_rect.y = 40.0F;
+    panel_rect.width = 360.0F;
+    panel_rect.height = 180.0F;
+
+    const ecs::Entity panel = world.create();
+    world.add(panel, panel_rect);
+    world.add(panel, ui::ComputedRect{});
+    world.add(panel, ui::Background{Vec4{0.06F, 0.07F, 0.10F, 0.92F}});
+    world.add(panel, column);
+    hierarchy::setParent(commands, panel, canvas);
+
+    const auto addBar = [&](float height, Vec4 color)
+    {
+        ui::RectTransform rect;
+        rect.height = height;
+        const ecs::Entity bar = world.create();
+        world.add(bar, rect);
+        world.add(bar, ui::ComputedRect{});
+        world.add(bar, ui::Background{color});
+        hierarchy::setParent(commands, bar, panel);
+    };
+    addBar(28.0F, Vec4{0.20F, 0.42F, 0.90F, 1.0F});
+    addBar(16.0F, Vec4{0.35F, 0.84F, 0.45F, 1.0F});
+    addBar(16.0F, Vec4{0.92F, 0.52F, 0.30F, 1.0F});
+
+    world.play(commands);
+    return canvas;
+}
 
 /* A value that is not a positive integer leaves the fallback alone, so a bad
    argument falls back to the default rather than to zero or a wrapped negative.
@@ -341,6 +420,11 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
 
     const EngineSystemDesc render_desc{"renderer.frame", RESONATE_STAGE_RENDER,
                                        &renderer::RenderSystem::invoke, &render_system};
+    /* The retained tree is laid out after the scene's transforms and before the
+       renderer extracts its paint list. */
+    UiFrame ui_frame;
+    const EngineSystemDesc ui_desc{"ui.layout", RESONATE_STAGE_LATE_UPDATE, &UiFrame::invoke,
+                                   &ui_frame};
 #if defined(RESONATE_WITH_CSHARP)
     /* Every stage the managed assembly may declare. The schedule reads these
        every frame and copies the names, so they live as long as the run; only
@@ -365,9 +449,19 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     config.systems = [&](ModuleHost& host, ecs::World& world)
     {
         if (!hierarchy::registerComponents(world) ||
-            !renderer::RenderSystem::registerComponents(world))
+            !renderer::RenderSystem::registerComponents(world) || !ui::registerComponents(world))
         {
             return RESONATE_E_INVALID;
+        }
+        /* The layout pass needs the target the renderer will draw into; the
+           capability is host-owned and outlives the run. */
+        {
+            std::uint32_t version = 0;
+            void* target = resonate_capability_find(
+                host.capabilities(), detail::CapabilityTraits<ResonateRenderCanvas>::id.value(),
+                1U, &version);
+            ui_frame.target = static_cast<const ResonateRenderCanvas*>(target);
+            ui_frame.canvas = composeDemoHud(world);
         }
         /* The level slices live on this system's stack. The parallel path has
            been seen running a slice after its wait returned on Android, so the
@@ -376,6 +470,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
         propagation.jobs = nullptr;
         render_system.setRegistry(host.capabilities());
         if (addEngineSystem(host, propagation_desc) != RESONATE_OK ||
+            addEngineSystem(host, ui_desc) != RESONATE_OK ||
             addEngineSystem(host, render_desc) != RESONATE_OK)
         {
             return RESONATE_E_INVALID;

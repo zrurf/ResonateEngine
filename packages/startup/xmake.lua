@@ -9,7 +9,8 @@ target("Resonate.Startup")
     add_files("src/**.cpp")
 
     add_deps("Resonate.Runtime", "Resonate.Window", "Resonate.Render",
-             "Resonate.Hierarchy", "Resonate.Renderer", "Resonate.Gameplay")
+             "Resonate.Hierarchy", "Resonate.Renderer", "Resonate.Gameplay",
+             "Resonate.UI")
 
     -- The managed runtime is host-only for now: the engine-only (Android)
     -- build compiles the startup without the C# host.
