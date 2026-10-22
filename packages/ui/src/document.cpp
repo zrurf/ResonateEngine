@@ -1,5 +1,7 @@
 #include <resonate/ui/document.h>
 
+#include <resonate/ui/style.h>
+
 #include <cctype>
 #include <cerrno>
 #include <cmath>
@@ -439,10 +441,10 @@ bool applyStyleRef(const dom::Document& document, const dom::Component& componen
 }
 
 bool applyComponents(World& world, const dom::Document& document, dom::NodeHandle node,
-                     Entity entity)
+                     Entity entity, const std::vector<dom::Component>& components)
 {
     const dom::Component* computed = nullptr;
-    for (const dom::Component& component : document.components(node))
+    for (const dom::Component& component : components)
     {
         const std::string_view name = baseName(document.text(component.type));
         if (name == "ComputedRect")
@@ -510,7 +512,8 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
 }
 
 Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Document& document,
-                       dom::NodeHandle node, std::vector<Entity>& created)
+                       dom::NodeHandle node, const StyleTable& styles,
+                       std::vector<Entity>& created)
 {
     const Entity entity = world.create();
     if (!entity.valid())
@@ -520,7 +523,7 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
     }
     created.push_back(entity);
 
-    if (!applyComponents(world, document, node, entity))
+    if (!applyComponents(world, document, node, entity, styles.resolve(document, node)))
     {
         return Entity{};
     }
@@ -528,7 +531,12 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
     for (dom::NodeHandle child = document.firstChild(node); child.valid();
          child = document.nextSibling(child))
     {
-        const Entity child_entity = instantiateNode(world, commands, document, child, created);
+        if (isStyleNode(document, child))
+        {
+            continue;
+        }
+        const Entity child_entity =
+            instantiateNode(world, commands, document, child, styles, created);
         if (!child_entity.valid())
         {
             return Entity{};
@@ -540,7 +548,7 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
 
 } // namespace
 
-Entity instantiate(World& world, const dom::Document& document)
+Entity instantiate(World& world, dom::Document& document)
 {
     const dom::NodeHandle root = document.root();
     if (!root.valid())
@@ -548,10 +556,26 @@ Entity instantiate(World& world, const dom::Document& document)
         world.report(World::Report::Error, "ui document: the document has no root node");
         return Entity{};
     }
+    if (isStyleNode(document, root))
+    {
+        world.report(World::Report::Error, "ui document: the root cannot be a style sheet");
+        return Entity{};
+    }
+
+    StyleTable styles;
+    std::vector<dom::Diagnostic> diagnostics;
+    if (!buildStyles(document, styles, diagnostics))
+    {
+        for (const dom::Diagnostic& diagnostic : diagnostics)
+        {
+            world.report(World::Report::Error, "ui style: %s", diagnostic.message.c_str());
+        }
+        return Entity{};
+    }
 
     CommandBuffer commands(world);
     std::vector<Entity> created;
-    const Entity entity = instantiateNode(world, commands, document, root, created);
+    const Entity entity = instantiateNode(world, commands, document, root, styles, created);
     if (!entity.valid())
     {
         for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)

@@ -126,6 +126,23 @@
         "  size 4 align 4",
         "  field style u32 @0 size 4 default=0"
       ]
+    },
+    {
+      "name": "StyleRule",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node StyleRule version 1",
+        "  field selector string"
+      ]
+    },
+    {
+      "name": "StyleSheet",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node StyleSheet version 1"
+      ]
     }
   ]
 }

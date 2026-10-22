@@ -118,4 +118,12 @@
     <uses component="Background" expose="color"/>
   </node>
 
+  <!-- Non-visual style data. The UI compiler consumes the sheet; instantiation
+       skips its subtree. A rule's component elements are declarations. -->
+  <node name="StyleSheet" version="1"/>
+
+  <node name="StyleRule" version="1">
+    <field name="selector" type="string"/>
+  </node>
+
 </schema>

@@ -13,7 +13,7 @@ namespace resonate::ui
    become hierarchy children and ComputedRect is attached as the derived
    layout output. The root must carry Canvas. Reports and answers an invalid
    entity on a malformed component value or an unknown component. */
-[[nodiscard]] ecs::Entity instantiate(ecs::World& world, const dom::Document& document);
+[[nodiscard]] ecs::Entity instantiate(ecs::World& world, dom::Document& document);
 
 } // namespace resonate::ui
 
