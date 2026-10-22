@@ -40,6 +40,10 @@ internal static class SchemaCompiler
             foreach (TypeDecl type in module.Types)
             {
                 ResolveFields(module, type, diagnostics);
+                if (type.Kind == TypeKind.Node)
+                {
+                    ResolveNodeUses(module, type, diagnostics);
+                }
                 CheckVersioning(type, diagnostics);
             }
             foreach (TypeDecl type in module.Types)
@@ -51,6 +55,74 @@ internal static class SchemaCompiler
             }
         }
         return modules;
+    }
+
+    /* A node type composes components of its own module. The composition is
+       flat: every used component must exist, exposed/defaulted field names must
+       exist on it, and one attribute cannot be exposed by two components. */
+    private static void ResolveNodeUses(ModuleUnit module, TypeDecl type,
+                                        Diagnostics diagnostics)
+    {
+        HashSet<string> exposedNames = new(StringComparer.Ordinal);
+        foreach (NodeUse use in type.Uses)
+        {
+            if (!module.ByName.TryGetValue(use.Component, out TypeDecl? component)
+                || component.Kind != TypeKind.Component)
+            {
+                diagnostics.Error(type.File, use.Line, use.Column,
+                                  $"'{use.Component}' is not a component in module '{module.Id}'");
+                continue;
+            }
+            if (component.Derived)
+            {
+                diagnostics.Error(type.File, use.Line, use.Column,
+                                  $"'{use.Component}' is derived; a node type cannot author it");
+                continue;
+            }
+
+            foreach (string field in use.Exposed)
+            {
+                bool exists = false;
+                foreach (FieldDecl declared in component.Fields)
+                {
+                    if (declared.Name == field)
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists)
+                {
+                    diagnostics.Error(type.File, use.Line, use.Column,
+                                      $"'{use.Component}' has no field '{field}' to expose");
+                    continue;
+                }
+                if (!exposedNames.Add(field))
+                {
+                    diagnostics.Error(type.File, use.Line, use.Column,
+                                      $"the attribute '{field}' is exposed by more than one "
+                                          + "component");
+                }
+            }
+
+            foreach (NodeUseDefault entry in use.Defaults)
+            {
+                bool exists = false;
+                foreach (FieldDecl declared in component.Fields)
+                {
+                    if (declared.Name == entry.Field)
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists)
+                {
+                    diagnostics.Error(type.File, entry.Line, entry.Column,
+                                      $"'{use.Component}' has no field '{entry.Field}'");
+                }
+            }
+        }
     }
 
     /* A type is owned by the module that declares it, so a second declaration of

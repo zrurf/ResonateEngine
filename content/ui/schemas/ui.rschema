@@ -73,7 +73,7 @@
 
   <!-- Written by the layout pass, in target pixels. Consumers (render, hit
        test) read this instead of repeating the anchor and flow math. -->
-  <component name="ComputedRect" version="1">
+  <component name="ComputedRect" version="1" derived="true">
     <field name="x" type="f32"/>
     <field name="y" type="f32"/>
     <field name="width" type="f32"/>
@@ -91,5 +91,31 @@
   <component name="StyleRef" version="1">
     <field name="style" type="u32" default="0"/>
   </component>
+
+  <!-- Named compositions. A node type is a flat set of components plus the
+       fields its implicit attributes may set; there is no inheritance. -->
+  <node name="Screen" version="1">
+    <uses component="Canvas" expose="scale"/>
+  </node>
+
+  <node name="Panel" version="1">
+    <uses component="RectTransform"
+          expose="x y width height anchor_min anchor_max pivot z position"/>
+    <uses component="Background" expose="color"/>
+    <uses component="LayoutGroup"
+          expose="direction justify align gap padding_left padding_top padding_right padding_bottom"/>
+  </node>
+
+  <node name="Label" version="1">
+    <uses component="RectTransform"
+          expose="x y width height anchor_min anchor_max pivot z position"/>
+    <uses component="Background" expose="color"/>
+  </node>
+
+  <node name="Box" version="1">
+    <uses component="RectTransform"
+          expose="x y width height anchor_min anchor_max pivot z position"/>
+    <uses component="Background" expose="color"/>
+  </node>
 
 </schema>

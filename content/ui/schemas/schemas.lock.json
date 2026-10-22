@@ -14,6 +14,16 @@
       ]
     },
     {
+      "name": "Box",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Box version 1",
+        "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
+        "  uses Background expose color"
+      ]
+    },
+    {
       "name": "Canvas",
       "kind": "component",
       "version": 1,
@@ -39,6 +49,16 @@
       ]
     },
     {
+      "name": "Label",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Label version 1",
+        "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
+        "  uses Background expose color"
+      ]
+    },
+    {
       "name": "LayoutGroup",
       "kind": "component",
       "version": 1,
@@ -59,6 +79,17 @@
       ]
     },
     {
+      "name": "Panel",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Panel version 1",
+        "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
+        "  uses Background expose color",
+        "  uses LayoutGroup expose align direction gap justify padding_bottom padding_left padding_right padding_top"
+      ]
+    },
+    {
       "name": "RectTransform",
       "kind": "component",
       "version": 1,
@@ -75,6 +106,15 @@
         "  field z i32 @40 size 4 default=0",
         "  field position resonate.ui.PositionMode @44 size 1 default=Relative",
         "  enum PositionMode u8 values Relative=0, Absolute=1"
+      ]
+    },
+    {
+      "name": "Screen",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Screen version 1",
+        "  uses Canvas expose scale"
       ]
     },
     {

@@ -89,10 +89,15 @@ internal static class Compilation
             {
                 types += module.Types.Count;
                 string header = Path.Combine(outDir, module.Id, "components.gen.h");
+                string nodes = Path.Combine(outDir, module.Id, "nodes.gen.h");
                 string metadata = Path.Combine(outDir, module.Id + ".schema.json");
                 string managed = Path.Combine(outDir, "csharp",
                                               CSharpEmitter.NamespaceOf(module.Id) + ".g.cs");
                 if (Output.WriteIfChanged(header, CppEmitter.Render(module)))
+                {
+                    ++written;
+                }
+                if (Output.WriteIfChanged(nodes, NodeEmitter.Render(module)))
                 {
                     ++written;
                 }

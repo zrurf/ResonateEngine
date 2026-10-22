@@ -125,7 +125,7 @@ TEST_CASE("a declaration outside the vocabulary is refused", "[schema]")
   </component>
 </schema>
 )xml",
-                "takes name, version; 'color' is not one of them");
+                "takes name, version, derived; 'color' is not one of them");
 }
 
 TEST_CASE("a type has one owner module", "[schema]")

@@ -180,6 +180,20 @@ internal sealed class FieldDecl(string name, string typeName, int line, int colu
 
 internal sealed record Layout(int Size, int Align);
 
+/* One component a document node type composes. Exposed fields become node
+   attributes in the implicit syntax; extra attributes on <uses> are default
+   field values. */
+internal sealed class NodeUse(string component, int line, int column)
+{
+    internal string Component { get; } = component;
+    internal List<string> Exposed { get; } = [];
+    internal List<NodeUseDefault> Defaults { get; } = [];
+    internal int Line { get; } = line;
+    internal int Column { get; } = column;
+}
+
+internal sealed record NodeUseDefault(string Field, string Value, int Line, int Column);
+
 internal sealed class TypeDecl
 {
     internal required string Name { get; init; }
@@ -202,6 +216,13 @@ internal sealed class TypeDecl
     internal List<BitmaskFlagDecl> Flags { get; } = [];
 
     internal List<FieldDecl> Fields { get; } = [];
+
+    /* Document node types: the components they compose, the child-type rule,
+       and authoring fields. Components marked derived are written by a domain
+       system, never authored. */
+    internal List<NodeUse> Uses { get; } = [];
+    internal string? ChildAllow { get; set; }
+    internal bool Derived { get; set; }
 
     /* Components and node types carry a version; the migrations between
        versions are declared on components. */

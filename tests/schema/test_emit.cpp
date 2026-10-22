@@ -90,7 +90,7 @@ TEST_CASE("the generated header carries the types, traits, versions and frozen l
     const ToolRun run = testCase.compile();
     INFO(run.output);
     REQUIRE(run.exitCode == 0);
-    REQUIRE(run.output.find("1 module(s), 5 type(s) from 1 schema file(s), 4 written") !=
+    REQUIRE(run.output.find("1 module(s), 5 type(s) from 1 schema file(s), 5 written") !=
             std::string::npos);
 
     const std::string header = testCase.header();
@@ -215,6 +215,51 @@ TEST_CASE("generated records follow the types they inline", "[schema][emit]")
     CHECK(late < early);
 }
 
+TEST_CASE("the generated node table carries compositions and exposed fields", "[schema][emit]")
+{
+    const std::string root = resonate::test::scratchDirectory("emit-node-table");
+    resonate::test::writeTextFile(root + "/case.rschema", R"xml(<schema module="resonate.compose">
+  <component name="Transform" version="1">
+    <field name="x" type="f32"/>
+    <field name="y" type="f32"/>
+  </component>
+
+  <node name="Panel" version="1">
+    <uses component="Transform" expose="x y"/>
+  </node>
+</schema>
+)xml");
+
+    const ToolRun run =
+        resonate::test::runSchemac("--root \"" + root + "\" --out \"" + root + "/gen\"");
+    INFO(run.output);
+    REQUIRE(run.exitCode == 0);
+
+    const std::string nodes =
+        resonate::test::readTextFile(root + "/gen/resonate.compose/nodes.gen.h");
+    requireContains(nodes, "kPanelUse0Exposed[]");
+    requireContains(nodes, "{\"x\", \"Transform\", \"x\"}");
+    requireContains(nodes, "{\"Panel\", \"resonate.compose.Panel\"");
+    requireContains(nodes, "inline constexpr const char* kComponents[]");
+    requireContains(nodes, "\"Transform\"");
+}
+
+TEST_CASE("a node type naming an unknown component is refused", "[schema][emit]")
+{
+    const std::string root = resonate::test::scratchDirectory("emit-node-unknown-use");
+    resonate::test::writeTextFile(root + "/case.rschema", R"xml(<schema module="resonate.compose">
+  <node name="Panel" version="1">
+    <uses component="Missing" expose="x"/>
+  </node>
+</schema>
+)xml");
+
+    const ToolRun run =
+        resonate::test::runSchemac("--root \"" + root + "\" --out \"" + root + "/gen\"");
+    CHECK(run.exitCode != 0);
+    CHECK(run.output.find("is not a component") != std::string::npos);
+}
+
 TEST_CASE("a module of document node types generates metadata and a header without types",
           "[schema][emit]")
 {
@@ -251,7 +296,7 @@ TEST_CASE("a run that changes nothing writes nothing", "[schema][emit]")
     const ToolRun first = testCase.compile();
     INFO(first.output);
     REQUIRE(first.exitCode == 0);
-    REQUIRE(first.output.find("4 written") != std::string::npos);
+    REQUIRE(first.output.find("5 written") != std::string::npos);
 
     const std::string header = testCase.header();
     const std::string metadata = testCase.metadata();

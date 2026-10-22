@@ -25,6 +25,9 @@ internal static class SchemaParser
     private static readonly string[] BitmaskAttributes = ["name", "width"];
     private static readonly string[] StructAttributes = ["name"];
     private static readonly string[] VersionedAttributes = ["name", "version"];
+    private static readonly string[] ComponentAttributes = ["name", "version", "derived"];
+    private static readonly string[] UseAttributes = ["component", "expose"];
+    private static readonly string[] ChildrenAttributes = ["allow"];
     private static readonly string[] ValueAttributes = ["name", "value"];
     private static readonly string[] FlagAttributes = ["name", "bit"];
     private static readonly string[] FieldAttributes = ["name", "type", "min", "max", "default"];
@@ -269,8 +272,13 @@ internal static class SchemaParser
                                          Diagnostics diagnostics)
     {
         string what = kind.Describe();
-        CheckAttributes(element, kind == TypeKind.Struct ? StructAttributes : VersionedAttributes,
-                        diagnostics, what);
+        string[] attributes = kind switch
+        {
+            TypeKind.Struct => StructAttributes,
+            TypeKind.Component => ComponentAttributes,
+            _ => VersionedAttributes,
+        };
+        CheckAttributes(element, attributes, diagnostics, what);
 
         XmlAttribute? name = Required(element, "name", diagnostics, what);
         if (name is null || !CheckTypeName(element, name, diagnostics))
@@ -305,6 +313,23 @@ internal static class SchemaParser
             type.Version = (int)parsed;
         }
 
+        if (kind == TypeKind.Component)
+        {
+            XmlAttribute? derived = element.Attribute("derived");
+            if (derived is not null)
+            {
+                if (derived.Value is "true" or "false")
+                {
+                    type.Derived = derived.Value == "true";
+                }
+                else
+                {
+                    diagnostics.Error(element.File, derived.Line, derived.Column,
+                                      $"derived is true or false; '{derived.Value}' is neither");
+                }
+            }
+        }
+
         HashSet<string> fieldNames = new(StringComparer.Ordinal);
         foreach (XmlElement child in element.Children)
         {
@@ -333,23 +358,127 @@ internal static class SchemaParser
                                       "a node type's migrations arrive with the document pipeline; "
                                           + "v0 declares migrations on components only");
                     break;
+                case "uses" when kind == TypeKind.Node:
+                {
+                    NodeUse? use = ParseUse(child, type, diagnostics);
+                    if (use is not null)
+                    {
+                        type.Uses.Add(use);
+                    }
+                    break;
+                }
+                case "children" when kind == TypeKind.Node:
+                    ParseChildren(child, type, diagnostics);
+                    break;
                 default:
                     diagnostics.Error(child.File, child.Line, child.Column,
                                       kind == TypeKind.Component
                                           ? $"a component holds 'field' and 'migrate' elements; "
                                                 + $"'{child.Name}' is not one"
-                                          : $"{what} holds 'field' elements; '{child.Name}' is not one");
+                                          : kind == TypeKind.Node
+                                              ? "a node type holds 'field', 'uses' and 'children' "
+                                                    + $"elements; '{child.Name}' is not one"
+                                              : $"{what} holds 'field' elements; '{child.Name}' is not one");
                     break;
             }
         }
 
-        if (type.Fields.Count == 0)
+        if (kind == TypeKind.Component && type.Fields.Count == 0)
         {
             diagnostics.Error(element.File, element.Line, element.Column,
                               $"{what} '{name.Value}' declares no fields");
             return null;
         }
         return type;
+    }
+
+    private static NodeUse? ParseUse(XmlElement element, TypeDecl owner,
+                                     Diagnostics diagnostics)
+    {
+        XmlAttribute? component = Required(element, "component", diagnostics, "a uses element");
+        if (component is null
+            || !Names.Check(component.Value, "a used component name", element.File, component.Line,
+                            component.Column, diagnostics))
+        {
+            return null;
+        }
+        foreach (NodeUse existing in owner.Uses)
+        {
+            if (existing.Component == component.Value)
+            {
+                diagnostics.Error(element.File, component.Line, component.Column,
+                                  $"the component '{component.Value}' is used twice");
+                return null;
+            }
+        }
+
+        NodeUse use = new(component.Value, element.Line, element.Column);
+        XmlAttribute? expose = element.Attribute("expose");
+        if (expose is not null)
+        {
+            HashSet<string> exposed = new(StringComparer.Ordinal);
+            foreach (string field in expose.Value.Split((char[]?)null,
+                                                        StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!Names.Check(field, "an exposed field name", element.File, expose.Line,
+                                 expose.Column, diagnostics))
+                {
+                    continue;
+                }
+                if (!exposed.Add(field))
+                {
+                    diagnostics.Error(element.File, expose.Line, expose.Column,
+                                      $"the field '{field}' is exposed twice");
+                    continue;
+                }
+                use.Exposed.Add(field);
+            }
+        }
+
+        foreach (XmlAttribute attribute in element.Attributes)
+        {
+            if (attribute.Name is "component" or "expose")
+            {
+                continue;
+            }
+            if (!Names.Check(attribute.Name, "a default field name", element.File, attribute.Line,
+                             attribute.Column, diagnostics))
+            {
+                continue;
+            }
+            use.Defaults.Add(new NodeUseDefault(attribute.Name, attribute.Value, attribute.Line,
+                                                attribute.Column));
+        }
+
+        if (element.Children.Count != 0)
+        {
+            diagnostics.Error(element.Children[0].File, element.Children[0].Line,
+                              element.Children[0].Column, "<uses> has no content");
+            return null;
+        }
+        return use;
+    }
+
+    private static void ParseChildren(XmlElement element, TypeDecl owner,
+                                      Diagnostics diagnostics)
+    {
+        CheckAttributes(element, ChildrenAttributes, diagnostics, "a children element");
+        if (owner.ChildAllow is not null)
+        {
+            diagnostics.Error(element.File, element.Line, element.Column,
+                              "a node type declares the children rule once");
+            return;
+        }
+        XmlAttribute? allow = Required(element, "allow", diagnostics, "a children element");
+        if (allow is not null)
+        {
+            owner.ChildAllow = allow.Value;
+        }
+        if (element.Children.Count != 0)
+        {
+            diagnostics.Error(element.Children[0].File, element.Children[0].Line,
+                              element.Children[0].Column, "<children> has no content");
+        }
     }
 
     private static FieldDecl? ParseField(XmlElement element, Diagnostics diagnostics,

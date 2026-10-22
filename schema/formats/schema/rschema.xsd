@@ -123,14 +123,32 @@
     </xs:choice>
     <xs:attribute name="name" type="Identifier" use="required"/>
     <xs:attribute name="version" type="xs:positiveInteger" use="required"/>
+    <!-- A component layout/geometry writes; the document compiler refuses
+         authoring it. -->
+    <xs:attribute name="derived" type="xs:boolean"/>
   </xs:complexType>
 
-  <!-- A document node type. Its migrations arrive with the document pipeline,
-       so only fields are declared here. -->
+  <!-- One component a node type includes. Extra attributes are default field
+       values; the compiler checks their names against the component. -->
+  <xs:complexType name="Use">
+    <xs:attribute name="component" type="Identifier" use="required"/>
+    <xs:attribute name="expose" type="xs:string"/>
+    <xs:anyAttribute processContents="lax"/>
+  </xs:complexType>
+
+  <xs:complexType name="ChildrenRule">
+    <xs:attribute name="allow" type="xs:string" use="required"/>
+  </xs:complexType>
+
+  <!-- A document node type: a named composition of components, the fields it
+       exposes to implicit attributes, and optionally a child-type rule. It has
+       no inheritance; uses are flattened at compile time. -->
   <xs:complexType name="Node">
-    <xs:sequence>
-      <xs:element name="field" type="Field" minOccurs="1" maxOccurs="unbounded"/>
-    </xs:sequence>
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="field" type="Field"/>
+      <xs:element name="uses" type="Use"/>
+      <xs:element name="children" type="ChildrenRule"/>
+    </xs:choice>
     <xs:attribute name="name" type="Identifier" use="required"/>
     <xs:attribute name="version" type="xs:positiveInteger" use="required"/>
   </xs:complexType>

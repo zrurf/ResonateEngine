@@ -25,6 +25,28 @@ internal static class AcceptedShape
         {
             lines.Add("  " + FieldLine(field, type.Kind));
         }
+        foreach (NodeUse use in type.Uses)
+        {
+            System.Text.StringBuilder text = new();
+            text.Append("  uses ").Append(use.Component);
+            if (use.Exposed.Count > 0)
+            {
+                List<string> exposed = [.. use.Exposed];
+                exposed.Sort(StringComparer.Ordinal);
+                text.Append(" expose ").Append(string.Join(' ', exposed));
+            }
+            List<NodeUseDefault> defaults = [.. use.Defaults];
+            defaults.Sort((left, right) => string.CompareOrdinal(left.Field, right.Field));
+            foreach (NodeUseDefault entry in defaults)
+            {
+                text.Append(" default ").Append(entry.Field).Append('=').Append(entry.Value);
+            }
+            lines.Add(text.ToString());
+        }
+        if (type.ChildAllow is not null)
+        {
+            lines.Add($"  children allow {type.ChildAllow}");
+        }
 
         SortedDictionary<string, TypeDecl> inlined = new(StringComparer.Ordinal);
         foreach (FieldDecl field in type.Fields)
