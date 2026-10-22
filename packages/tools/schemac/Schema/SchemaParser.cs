@@ -6,10 +6,12 @@ using Resonate.Tools.Schemac.Xml;
 
 namespace Resonate.Tools.Schemac.Schema;
 
-internal sealed class SchemaFile(string path, string module)
+internal sealed class SchemaFile(string path, string module, int moduleLine, int moduleColumn)
 {
     internal string Path { get; } = path;
     internal string Module { get; } = module;
+    internal int ModuleLine { get; } = moduleLine;
+    internal int ModuleColumn { get; } = moduleColumn;
     internal List<TypeDecl> Types { get; } = [];
 }
 
@@ -57,7 +59,7 @@ internal static class SchemaParser
             return null;
         }
 
-        SchemaFile file = new(path, module.Value);
+        SchemaFile file = new(path, module.Value, module.Line, module.Column);
         foreach (XmlElement element in root.Children)
         {
             TypeDecl? type = element.Name switch

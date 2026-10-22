@@ -49,6 +49,31 @@ TEST_CASE("every schema file under a root is discovered", "[schema]")
     REQUIRE(run.output.find("2 schema file(s)") != std::string::npos);
 }
 
+TEST_CASE("a schema in a module directory is owned by that module", "[schema]")
+{
+    const std::string root = scratchDirectory("ownership");
+    writeTextFile(root + "/gameplay/schemas/traps.rschema",
+                  "<schema module=\"resonate.gameplay\"/>\n");
+    writeTextFile(root + "/gameplay/schemas/traps/deep.rschema",
+                  "<schema module=\"resonate.gameplay.traps\"/>\n");
+
+    const resonate::test::ToolRun run =
+        requireSchemac("--root \"" + root + "\" --out \"" + root + "/out\"", 0);
+    REQUIRE(run.output.find("2 schema file(s)") != std::string::npos);
+}
+
+TEST_CASE("a schema claiming another module's directory fails", "[schema]")
+{
+    const std::string root = scratchDirectory("ownership-mismatch");
+    writeTextFile(root + "/gameplay/schemas/traps.rschema",
+                  "<schema module=\"resonate.render\"/>\n");
+
+    const resonate::test::ToolRun run =
+        requireSchemac("--root \"" + root + "\" --out \"" + root + "/out\"", 1);
+    REQUIRE(run.output.find("that directory's module owns these types") != std::string::npos);
+    REQUIRE(run.output.find("resonate.gameplay") != std::string::npos);
+}
+
 TEST_CASE("a root that is not a directory fails", "[schema]")
 {
     const resonate::test::ToolRun run =

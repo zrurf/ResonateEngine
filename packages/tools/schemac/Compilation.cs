@@ -37,6 +37,7 @@ internal static class Compilation
                 SchemaFile? file = SchemaParser.Parse(path, diagnostics);
                 if (file is not null)
                 {
+                    CheckOwnership(file, diagnostics);
                     files.Add(file);
                 }
             }
@@ -116,6 +117,32 @@ internal static class Compilation
 
         return new CompileResult(diagnostics.Items, modules.Count, types, schemas.Count, written,
                                  locks);
+    }
+
+    /* A schema under <owner>/schemas belongs to <owner>: the module id is the
+       ownership claim the runtime and the C# side use, so a file in another
+       module's directory claiming a different id would move the types without
+       moving the file. A nested submodule (resonate.gameplay.traps) is still
+       owned by the enclosing directory. Roots without a schemas/ level are
+       ad-hoc test trees and are left alone. */
+    private static void CheckOwnership(SchemaFile file, Diagnostics diagnostics)
+    {
+        string[] segments = file.Path.Replace('\\', '/').Split('/');
+        int schemas = Array.LastIndexOf(segments, "schemas");
+        if (schemas <= 0)
+        {
+            return;
+        }
+        string owner = segments[schemas - 1];
+        string expected = "resonate." + owner;
+        if (file.Module == expected ||
+            file.Module.StartsWith(expected + ".", StringComparison.Ordinal))
+        {
+            return;
+        }
+        diagnostics.Error(file.Path, file.ModuleLine, file.ModuleColumn,
+                          $"'{file.Module}' is declared in {owner}/schemas; that directory's "
+                              + $"module owns these types ('{expected}')");
     }
 
     /* A root that is not a directory is a build-configuration mistake, not an
