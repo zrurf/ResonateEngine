@@ -2,6 +2,7 @@
 #define RESONATE_DOM_SCHEMA_H
 
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 #include <resonate/core/span.h>
@@ -49,6 +50,26 @@ struct NodeTypeDesc
     Span<const AuthoringField> authoring;
 };
 
+/* One field of a storage component: enough for a generic authoring binder to
+   parse the text and place the bytes. */
+struct ComponentFieldDesc
+{
+    const char* name = nullptr;
+    const char* type = nullptr;
+    std::uint32_t offset = 0;
+    std::uint32_t size = 0;
+};
+
+struct ComponentDesc
+{
+    const char* name = nullptr;
+    const char* qualified_name = nullptr;
+    std::uint32_t size = 0;
+    std::uint32_t align = 0;
+    std::uint32_t derived = 0;
+    Span<const ComponentFieldDesc> fields;
+};
+
 class SchemaRegistry
 {
   public:
@@ -62,6 +83,69 @@ class SchemaRegistry
     [[nodiscard]] virtual const NodeTypeDesc* findNodeType(std::string_view name) const = 0;
     /* Resolves a short or qualified component type name. */
     [[nodiscard]] virtual bool isComponent(std::string_view name) const = 0;
+};
+
+/* The table a generated module header exposes; the registry only reads it. */
+class TableSchemaRegistry final : public SchemaRegistry
+{
+  public:
+    TableSchemaRegistry(Span<const NodeTypeDesc> node_types,
+                        Span<const char* const> components);
+
+    [[nodiscard]] const NodeTypeDesc* findNodeType(std::string_view name) const override;
+    [[nodiscard]] bool isComponent(std::string_view name) const override;
+
+  private:
+    Span<const NodeTypeDesc> node_types_;
+    Span<const char* const> components_;
+};
+
+/* Several modules' tables behind one registry; first match wins. */
+class CompositeSchemaRegistry final : public SchemaRegistry
+{
+  public:
+    explicit CompositeSchemaRegistry(Span<const SchemaRegistry* const> registries);
+
+    [[nodiscard]] const NodeTypeDesc* findNodeType(std::string_view name) const override;
+    [[nodiscard]] bool isComponent(std::string_view name) const override;
+
+  private:
+    Span<const SchemaRegistry* const> registries_;
+};
+
+/* The component-side table: field layouts for the generic authoring binder. */
+class ComponentRegistry
+{
+  public:
+    ComponentRegistry() = default;
+    virtual ~ComponentRegistry() = default;
+
+    ComponentRegistry(const ComponentRegistry&) = delete;
+    ComponentRegistry& operator=(const ComponentRegistry&) = delete;
+
+    [[nodiscard]] virtual const ComponentDesc* find(std::string_view name) const = 0;
+};
+
+class TableComponentRegistry final : public ComponentRegistry
+{
+  public:
+    explicit TableComponentRegistry(Span<const ComponentDesc> components);
+
+    [[nodiscard]] const ComponentDesc* find(std::string_view name) const override;
+
+  private:
+    Span<const ComponentDesc> components_;
+};
+
+class CompositeComponentRegistry final : public ComponentRegistry
+{
+  public:
+    explicit CompositeComponentRegistry(Span<const ComponentRegistry* const> registries);
+
+    [[nodiscard]] const ComponentDesc* find(std::string_view name) const override;
+
+  private:
+    Span<const ComponentRegistry* const> registries_;
 };
 
 } // namespace resonate::dom

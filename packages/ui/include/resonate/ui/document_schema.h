@@ -6,10 +6,11 @@
 namespace resonate::ui
 {
 
-/* The UI document vocabulary: node types as named component compositions and
-   the component names the adapter knows. It is the bridge until schemac emits
-   this table from content/ui/schemas/ui.rschema. */
+/* The UI document vocabulary: node types as named component compositions,
+   component names and their field layouts. Both registries read the tables
+   schemac emits; a mixed content document composes this with other modules. */
 [[nodiscard]] const dom::SchemaRegistry& documentSchema();
+[[nodiscard]] const dom::ComponentRegistry& documentComponents();
 
 } // namespace resonate::ui
 

@@ -6,9 +6,9 @@ using Resonate.Tools.Schemac.Schema;
 namespace Resonate.Tools.Schemac.Emit;
 
 /* The document-side counterpart of the storage emitters: the node types'
-   compositions, exposed fields and the component names a document adapter can
-   resolve. The tables are plain data; the DOM parser and domain adapters read
-   them without knowing any vocabulary of their own. */
+   compositions, exposed fields, component names and field layouts a document
+   adapter can resolve. The tables are plain data; the DOM parser and domain
+   adapters read them without knowing any vocabulary of their own. */
 internal static class NodeEmitter
 {
     internal static string Render(ModuleUnit module)
@@ -146,6 +146,55 @@ internal static class NodeEmitter
             }
             text.Append("};\n");
             text.Append("inline constexpr std::size_t kNodeTypeCount = std::size(kNodeTypes);\n");
+        }
+
+        foreach (TypeDecl component in components)
+        {
+            if (component.Fields.Count == 0)
+            {
+                continue;
+            }
+            text.Append("\ninline constexpr dom::ComponentFieldDesc k").Append(component.Name)
+                .Append("Fields[] = {\n");
+            foreach (FieldDecl field in component.Fields)
+            {
+                text.Append("    {\"").Append(field.Name).Append("\", \"")
+                    .Append(field.TypeName).Append("\", ").Append(field.Offset)
+                    .Append("U, ").Append(field.Size).Append("U},\n");
+            }
+            text.Append("};\n");
+        }
+
+        if (components.Count == 0)
+        {
+            text.Append("\ninline constexpr dom::ComponentDesc kComponentDescs[1] = {};\n");
+            text.Append("inline constexpr std::size_t kComponentDescCount = 0U;\n");
+        }
+        else
+        {
+            text.Append("\ninline constexpr dom::ComponentDesc kComponentDescs[] = {\n");
+            foreach (TypeDecl component in components)
+            {
+                Layout layout = component.Layout!;
+                text.Append("    {\"").Append(component.Name).Append("\", \"")
+                    .Append(component.QualifiedName).Append("\", ").Append(layout.Size)
+                    .Append("U, ").Append(layout.Align).Append("U, ")
+                    .Append(component.Derived ? 1 : 0).Append("U, ");
+                if (component.Fields.Count == 0)
+                {
+                    text.Append("resonate::Span<const dom::ComponentFieldDesc>{}");
+                }
+                else
+                {
+                    text.Append("resonate::Span<const dom::ComponentFieldDesc>(k")
+                        .Append(component.Name).Append("Fields, std::size(k")
+                        .Append(component.Name).Append("Fields))");
+                }
+                text.Append("},\n");
+            }
+            text.Append("};\n");
+            text.Append("inline constexpr std::size_t kComponentDescCount = ")
+                .Append("std::size(kComponentDescs);\n");
         }
 
         if (components.Count == 0)
