@@ -14,10 +14,23 @@
 
 #include "paths.h"
 
+/* The component the patch adds. The patch carries its own C# mirror, so a new
+   entity composition is created at runtime without a base-assembly change. */
+struct ReloadEntity
+{
+    float value = 0.0F;
+};
+
+namespace resonate::ecs
+{
+RESONATE_COMPONENT(ReloadEntity, "bench.ReloadEntity");
+}
+
 namespace
 {
 
 using resonate::ecs::CommandBuffer;
+using resonate::ecs::Entity;
 using resonate::ecs::World;
 
 /* The acceptance bar: write code, rebuild, swap the patch in, see the new
@@ -50,6 +63,11 @@ bool writeSource(const std::string& path, const int version)
               "\n"
               "namespace Resonate.Tests.Reload;\n"
               "\n"
+              "public struct ReloadEntity\n"
+              "{\n"
+              "    public float Value;\n"
+              "}\n"
+              "\n"
               "public static unsafe class PatchBehaviour\n"
               "{\n"
               "    [UpdateIn(ResonateStage.Update)]\n"
@@ -59,6 +77,16 @@ bool writeSource(const std::string& path, const int version)
               "        counters[1] = "
            << version
            << ";\n"
+              "        Commands commands = Commands.For(frame);\n"
+              "        if (commands.Spawn(out EntityHandle entity) &&\n"
+              "            commands.Add(entity, \"bench.ReloadEntity\"u8,\n"
+              "                         new ReloadEntity { Value = "
+           << version
+           << " }))\n"
+              "        {\n"
+              "            counters[2] = (int)entity.Index;\n"
+              "            counters[3] = (int)entity.Generation;\n"
+              "        }\n"
               "    }\n"
               "}\n";
     return source.good();
@@ -94,6 +122,11 @@ int main()
     }
 
     World world(resonate::systemAllocator());
+    if (world.registerComponent<ReloadEntity>() == resonate::ecs::kInvalidComponent)
+    {
+        std::printf("[csharp-reload] cannot register bench.ReloadEntity\n");
+        return 1;
+    }
     CommandBuffer commands(world);
     int counters[4] = {0, -1, 0, 0};
     systems.set_user(counters);
@@ -133,12 +166,25 @@ int main()
         }
 
         counters[1] = -1;
+        counters[2] = 0;
+        counters[3] = 0;
         resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.016F);
+        /* The new entity composition becomes alive at the frame's sync point,
+           which is part of "visible". */
+        world.play(commands);
         const double elapsed = millisecondsSince(start);
         if (counters[1] != version)
         {
             std::printf("[csharp-reload] version %d is not visible (counter %d)\n", version,
                         counters[1]);
+            return 1;
+        }
+        const Entity spawned{static_cast<std::uint32_t>(counters[2]),
+                             static_cast<std::uint32_t>(counters[3])};
+        const auto* added = world.get<ReloadEntity>(spawned);
+        if (added == nullptr || added->value != static_cast<float>(version))
+        {
+            std::printf("[csharp-reload] version %d did not spawn its entity\n", version);
             return 1;
         }
         times.push_back(elapsed);
