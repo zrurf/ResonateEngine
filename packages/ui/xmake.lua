@@ -17,7 +17,7 @@ target("Resonate.UI")
     add_includedirs("include", {public = true})
     add_files("src/**.cpp")
 
-    add_deps("Resonate.ECS", "Resonate.Hierarchy")
+    add_deps("Resonate.ECS", "Resonate.Hierarchy", "Resonate.Document")
 
     -- The widget components are schema-declared in content/ui. This library is
     -- usually reached as a dependency, so its own hook runs the compiler; the
