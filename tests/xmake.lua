@@ -65,7 +65,7 @@ target("Resonate.Tests")
 
     add_files("main.cpp", "render/**.cpp", "core/**.cpp", "module/**.cpp", "pal/**.cpp",
               "runtime/**.cpp", "window/**.cpp", "ecs/**.cpp", "gameplay/**.cpp",
-              "hierarchy/**.cpp", "schema/**.cpp", "csharp/**.cpp")
+              "hierarchy/**.cpp", "ui/**.cpp", "schema/**.cpp", "csharp/**.cpp")
     add_tests("default")
 
     -- The schema rule builds and runs the compiler before this target compiles,
@@ -96,7 +96,7 @@ target("Resonate.Tests")
     add_deps("Resonate.Module", "Resonate.Window", "Resonate.Render",
              "Resonate.UI.Abi", "Resonate.PAL", "Resonate.Runtime",
              "Resonate.Core.Container", "Resonate.Core.Math", "Resonate.Core.Job",
-             "Resonate.ECS", "Resonate.Gameplay", "Resonate.Hierarchy",
+             "Resonate.ECS", "Resonate.Gameplay", "Resonate.Hierarchy", "Resonate.UI",
              "Resonate.Renderer", "Resonate.CSharp")
 
     -- The C# host test loads a managed fixture; publishing it is a build step,
