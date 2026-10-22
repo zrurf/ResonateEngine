@@ -113,6 +113,17 @@ for _, shader in ipairs(shaders) do
     os.cp(shader, path.join(staging, "assets", "shaders"))
 end
 
+-- The UI document is source text for now; it needs no cook step. The host
+-- extracts this directory and points the startup at the document.
+local ui_source = path.join(os.projectdir(), "content", "ui")
+local ui_documents = os.files(path.join(ui_source, "*.rui"))
+if #ui_documents > 0 then
+    os.mkdir(path.join(staging, "assets", "ui"))
+    for _, document in ipairs(ui_documents) do
+        os.cp(document, path.join(staging, "assets", "ui"))
+    end
+end
+
 local base = path.join(staging, "base.apk")
 local aligned = path.join(staging, "aligned.apk")
 local output = path.join(build, "resonate.apk")

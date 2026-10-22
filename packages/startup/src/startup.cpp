@@ -112,14 +112,19 @@ std::string findContentFile(const std::string& relative)
    ends the run with the reason. */
 ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool required)
 {
-    if (configured.empty())
+    /* A host that stages its assets elsewhere (Android) names the document
+       directly; the setting and the content walk cover desktop runs. */
+    const char* const from_environment = std::getenv("RESONATE_UI_DOCUMENT");
+    const bool overridden = from_environment != nullptr && *from_environment != '\0';
+    if (configured.empty() && !overridden)
     {
         return composeBuiltinHud(world);
     }
-    const std::string path = findContentFile(configured);
+    const std::string path =
+        overridden ? std::string(from_environment) : findContentFile(configured);
     if (path.empty())
     {
-        if (required)
+        if (required || overridden)
         {
             std::fprintf(stderr, "resonate: ui document: cannot find %s\n", configured.c_str());
             return ecs::Entity{};

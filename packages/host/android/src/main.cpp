@@ -280,5 +280,15 @@ void android_main(android_app* app)
         setenv("RESONATE_SHADER_PATH", shaders.c_str(), 1);
     }
 
+    const std::string ui = stageAssets(app, "ui");
+    if (!ui.empty())
+    {
+        const std::string document = ui + "/demo.rui";
+        if (access(document.c_str(), R_OK) == 0)
+        {
+            setenv("RESONATE_UI_DOCUMENT", document.c_str(), 1);
+        }
+    }
+
     resonate::startup::run(arguments, "Resonate");
 }
