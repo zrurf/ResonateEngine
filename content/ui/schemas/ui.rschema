@@ -86,6 +86,22 @@
     <field name="color" type="vec4" default="1 1 1 1"/>
   </component>
 
+  <!-- The HUD's view model: gameplay or the demo writes these values; widgets
+       bind their RectTransform fields to them. A later slice can bind straight
+       to gameplay components. -->
+  <component name="DataContext" version="1">
+    <field name="health" type="f32" default="0"/>
+    <field name="max_health" type="f32" default="1"/>
+    <field name="ammo" type="f32" default="0"/>
+    <field name="max_ammo" type="f32" default="1"/>
+  </component>
+
+  <!-- Compiled binding records, written by the UI adapter; a blob on the
+       canvas so the binding system reads one dense range. -->
+  <component name="Bindings" version="1" derived="true">
+    <field name="records" type="blob"/>
+  </component>
+
   <!-- Reserved for the style compiler: the interned table entry a widget's
        class set resolves to. Layout does not read it. -->
   <component name="StyleRef" version="1">
@@ -96,6 +112,7 @@
        fields its implicit attributes may set; there is no inheritance. -->
   <node name="Screen" version="1">
     <uses component="Canvas" expose="scale"/>
+    <uses component="DataContext" expose="health max_health ammo max_ammo"/>
   </node>
 
   <node name="Panel" version="1">
@@ -104,18 +121,30 @@
     <uses component="Background" expose="color"/>
     <uses component="LayoutGroup"
           expose="direction justify align gap padding_left padding_top padding_right padding_bottom"/>
+    <field name="bind-x" type="binding"/>
+    <field name="bind-y" type="binding"/>
+    <field name="bind-width" type="binding"/>
+    <field name="bind-height" type="binding"/>
   </node>
 
   <node name="Label" version="1">
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color"/>
+    <field name="bind-x" type="binding"/>
+    <field name="bind-y" type="binding"/>
+    <field name="bind-width" type="binding"/>
+    <field name="bind-height" type="binding"/>
   </node>
 
   <node name="Box" version="1">
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color"/>
+    <field name="bind-x" type="binding"/>
+    <field name="bind-y" type="binding"/>
+    <field name="bind-width" type="binding"/>
+    <field name="bind-height" type="binding"/>
   </node>
 
   <!-- Non-visual style data. The UI compiler consumes the sheet; instantiation

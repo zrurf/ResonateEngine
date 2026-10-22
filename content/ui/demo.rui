@@ -3,7 +3,7 @@
   <!-- The start-up HUD: a panel with a title and two bars, all implicit node
        types. The layout pass resolves the exposed attributes into the default
        RectTransform/Background/LayoutGroup components. -->
-  <Screen key="hud" name="HUD">
+  <Screen key="hud" name="HUD" health="240" max_health="336" ammo="90" max_ammo="336">
     <StyleSheet key="styles">
       <StyleRule selector=".panel">
         <Background color="0.06 0.07 0.10 0.92"/>
@@ -21,11 +21,13 @@
 
     <Panel key="panel" id="hud-panel" name="Panel" class="panel"
            x="40" y="40" width="360" height="180"
-           direction="Column" align="Stretch" gap="8"
+           direction="Column" align="Start" gap="8"
            padding_left="12" padding_top="12" padding_right="12" padding_bottom="12">
-      <Label key="title" name="Title" class="title" height="28"/>
-      <Label key="bar.health" name="Health" class="bar" height="16"/>
-      <Label key="bar.ammo" name="Ammo" class="bar ammo" height="16"/>
+      <Label key="title" name="Title" class="title" width="336" height="28"/>
+      <Label key="bar.health" name="Health" class="bar" height="16"
+             bind-width="DataContext.health"/>
+      <Label key="bar.ammo" name="Ammo" class="bar ammo" height="16"
+             bind-width="DataContext.ammo"/>
     </Panel>
   </Screen>
 </document>

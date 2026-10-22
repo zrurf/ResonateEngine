@@ -33,6 +33,7 @@
 #include <resonate/render/offscreen.hpp>
 #include <resonate/renderer/renderer.h>
 #include <resonate/ui/document.h>
+#include <resonate/ui/binding.h>
 #include <resonate/ui/document_schema.h>
 #include <resonate/ui/layout.h>
 #include <resonate/window/input.h>
@@ -79,6 +80,7 @@ struct UiFrame
         {
             return;
         }
+        ui::updateBindings(world, frame->canvas);
         ui::layout(world, frame->canvas, static_cast<float>(width), static_cast<float>(height));
     }
 };

@@ -13,6 +13,7 @@
 #include <resonate/hierarchy/tree.h>
 #include <resonate/ui/display_list.h>
 #include <resonate/ui/document.h>
+#include <resonate/ui/binding.h>
 #include <resonate/ui/document_schema.h>
 #include <resonate/ui/layout.h>
 
@@ -166,6 +167,7 @@ TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]
     Fixture fixture;
     const Entity root = resonate::ui::instantiate(fixture.world, *document);
     REQUIRE(root.valid());
+    resonate::ui::updateBindings(fixture.world, root);
     REQUIRE(resonate::ui::layout(fixture.world, root, 1600.0F, 900.0F));
 
     resonate::ui::DisplayList list;
@@ -173,4 +175,6 @@ TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]
     CHECK(list.size() == 4U);
     CHECK(near(list.quads()[0].width, 360.0F));
     CHECK(near(list.quads()[0].height, 180.0F));
+    CHECK(near(list.quads()[2].width, 240.0F));
+    CHECK(near(list.quads()[3].width, 90.0F));
 }

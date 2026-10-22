@@ -2,6 +2,8 @@
 
 #include <resonate/ui/style.h>
 
+#include "binding_internal.h"
+
 #include <cctype>
 #include <cerrno>
 #include <cmath>
@@ -440,16 +442,190 @@ bool applyStyleRef(const dom::Document& document, const dom::Component& componen
     return true;
 }
 
+bool applyDataContext(const dom::Document& document, const dom::Component& component,
+                       DataContext& context, std::string& error)
+{
+    for (const dom::Field& field : component.fields)
+    {
+        const std::string_view name = document.text(field.name);
+        if (name == "health")
+        {
+            if (!parseFloat(field.value, context.health))
+            {
+                error = "DataContext.health is not a number";
+                return false;
+            }
+        }
+        else if (name == "max_health")
+        {
+            if (!parseFloat(field.value, context.max_health))
+            {
+                error = "DataContext.max_health is not a number";
+                return false;
+            }
+        }
+        else if (name == "ammo")
+        {
+            if (!parseFloat(field.value, context.ammo))
+            {
+                error = "DataContext.ammo is not a number";
+                return false;
+            }
+        }
+        else if (name == "max_ammo")
+        {
+            if (!parseFloat(field.value, context.max_ammo))
+            {
+                error = "DataContext.max_ammo is not a number";
+                return false;
+            }
+        }
+        else
+        {
+            error = "unknown DataContext field '" + std::string(name) + "'";
+            return false;
+        }
+    }
+    return true;
+}
+
+struct BindingContext
+{
+    Entity canvas{};
+    ecs::ComponentIndex data_component = ecs::kInvalidComponent;
+    std::vector<detail::BindingRecord> records;
+};
+
+bool collectBindings(World& world, const dom::Document& document, dom::NodeHandle node,
+                     Entity entity, BindingContext& context)
+{
+    for (const dom::Field& property : document.properties(node))
+    {
+        const std::string_view name = document.text(property.name);
+        if (name.rfind("bind-", 0U) != 0U)
+        {
+            continue;
+        }
+
+        const std::string_view target = name.substr(5U);
+        std::uint32_t target_offset = 0;
+        if (target == "x")
+        {
+            target_offset = offsetof(RectTransform, x);
+        }
+        else if (target == "y")
+        {
+            target_offset = offsetof(RectTransform, y);
+        }
+        else if (target == "width")
+        {
+            target_offset = offsetof(RectTransform, width);
+        }
+        else if (target == "height")
+        {
+            target_offset = offsetof(RectTransform, height);
+        }
+        else
+        {
+            return report(world, document, node,
+                          "unknown binding target '" + std::string(target) + "'");
+        }
+        if (world.get<RectTransform>(entity) == nullptr)
+        {
+            return report(world, document, node,
+                          "bind-" + std::string(target) + " needs a RectTransform");
+        }
+        for (const dom::Component& component : document.components(node))
+        {
+            if (baseName(document.text(component.type)) != "RectTransform")
+            {
+                continue;
+            }
+            for (const dom::Field& field : component.fields)
+            {
+                if (document.text(field.name) == target)
+                {
+                    return report(world, document, node,
+                                  "both " + std::string(target) + " and bind-" +
+                                      std::string(target) + " are authored");
+                }
+            }
+        }
+
+        const std::string_view expression = property.value;
+        const std::size_t dot = expression.find('.');
+        if (dot == std::string_view::npos || dot == 0U || dot + 1U >= expression.size())
+        {
+            return report(world, document, node, "a binding expression is Component.field");
+        }
+        const std::string_view component_name = expression.substr(0U, dot);
+        const std::string_view field_name = expression.substr(dot + 1U);
+        if (baseName(component_name) != "DataContext")
+        {
+            return report(world, document, node,
+                          "only DataContext fields can be bound in this version");
+        }
+        std::uint32_t source_offset = 0;
+        if (field_name == "health")
+        {
+            source_offset = offsetof(DataContext, health);
+        }
+        else if (field_name == "max_health")
+        {
+            source_offset = offsetof(DataContext, max_health);
+        }
+        else if (field_name == "ammo")
+        {
+            source_offset = offsetof(DataContext, ammo);
+        }
+        else if (field_name == "max_ammo")
+        {
+            source_offset = offsetof(DataContext, max_ammo);
+        }
+        else
+        {
+            return report(world, document, node,
+                          "unknown DataContext field '" + std::string(field_name) + "'");
+        }
+        if (context.data_component == ecs::kInvalidComponent || !context.canvas.valid())
+        {
+            return report(world, document, node, "bindings need a DataContext on the canvas");
+        }
+        if (ecs::ComponentTraits<RectTransform>::index == ecs::kInvalidComponent)
+        {
+            return report(world, document, node, "RectTransform is not registered");
+        }
+
+        detail::BindingRecord record;
+        record.source = context.canvas;
+        record.target = entity;
+        record.source_component = context.data_component;
+        record.target_component = ecs::ComponentTraits<RectTransform>::index;
+        record.source_offset = source_offset;
+        record.target_offset = target_offset;
+        record.kind = 0U;
+        context.records.push_back(record);
+    }
+    return true;
+}
+
 bool applyComponents(World& world, const dom::Document& document, dom::NodeHandle node,
-                     Entity entity, const std::vector<dom::Component>& components)
+                     Entity entity, const std::vector<dom::Component>& components,
+                     BindingContext& bindings)
 {
     const dom::Component* computed = nullptr;
+    const dom::Component* authored_bindings = nullptr;
     for (const dom::Component& component : components)
     {
         const std::string_view name = baseName(document.text(component.type));
         if (name == "ComputedRect")
         {
             computed = &component;
+            continue;
+        }
+        if (name == "Bindings")
+        {
+            authored_bindings = &component;
             continue;
         }
 
@@ -485,6 +661,12 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
             applied = applyStyleRef(document, component, value, error) &&
                       world.add(entity, value) != nullptr;
         }
+        else if (name == "DataContext")
+        {
+            DataContext value;
+            applied = applyDataContext(document, component, value, error) &&
+                      world.add(entity, value) != nullptr;
+        }
         else
         {
             error = "unknown component '" + std::string(document.text(component.type)) + "'";
@@ -504,15 +686,24 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
         return report(world, document, node,
                       "ComputedRect is derived by layout and cannot be authored");
     }
+    if (authored_bindings != nullptr)
+    {
+        return report(world, document, node,
+                      "Bindings is derived by the adapter and cannot be authored");
+    }
     if (world.add(entity, ComputedRect{}) == nullptr)
     {
         return report(world, document, node, "ComputedRect could not be attached");
     }
-    return true;
+    if (entity == bindings.canvas)
+    {
+        bindings.data_component = ecs::ComponentTraits<DataContext>::index;
+    }
+    return collectBindings(world, document, node, entity, bindings);
 }
 
 Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Document& document,
-                       dom::NodeHandle node, const StyleTable& styles,
+                       dom::NodeHandle node, const StyleTable& styles, BindingContext& bindings,
                        std::vector<Entity>& created)
 {
     const Entity entity = world.create();
@@ -522,8 +713,12 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
         return Entity{};
     }
     created.push_back(entity);
+    if (!bindings.canvas.valid())
+    {
+        bindings.canvas = entity;
+    }
 
-    if (!applyComponents(world, document, node, entity, styles.resolve(document, node)))
+    if (!applyComponents(world, document, node, entity, styles.resolve(document, node), bindings))
     {
         return Entity{};
     }
@@ -536,7 +731,7 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
             continue;
         }
         const Entity child_entity =
-            instantiateNode(world, commands, document, child, styles, created);
+            instantiateNode(world, commands, document, child, styles, bindings, created);
         if (!child_entity.valid())
         {
             return Entity{};
@@ -575,7 +770,9 @@ Entity instantiate(World& world, dom::Document& document)
 
     CommandBuffer commands(world);
     std::vector<Entity> created;
-    const Entity entity = instantiateNode(world, commands, document, root, styles, created);
+    BindingContext bindings;
+    const Entity entity =
+        instantiateNode(world, commands, document, root, styles, bindings, created);
     if (!entity.valid())
     {
         for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)
@@ -592,6 +789,21 @@ Entity instantiate(World& world, dom::Document& document)
             world.destroy(*iterator);
         }
         return Entity{};
+    }
+    if (!bindings.records.empty())
+    {
+        const ecs::BlobHandle records =
+            world.createBlob(entity, bindings.records.size() * sizeof(detail::BindingRecord),
+                             bindings.records.data());
+        if (!records.valid() || world.add(entity, Bindings{records}) == nullptr)
+        {
+            report(world, document, root, "binding records could not be attached");
+            for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)
+            {
+                world.destroy(*iterator);
+            }
+            return Entity{};
+        }
     }
     world.play(commands);
     return entity;

@@ -14,11 +14,25 @@
       ]
     },
     {
+      "name": "Bindings",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Bindings version 1",
+        "  size 8 align 4",
+        "  field records blob @0 size 8"
+      ]
+    },
+    {
       "name": "Box",
       "kind": "node",
       "version": 1,
       "shape": [
         "node Box version 1",
+        "  field bind-x binding",
+        "  field bind-y binding",
+        "  field bind-width binding",
+        "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
         "  uses Background expose color"
       ]
@@ -49,11 +63,28 @@
       ]
     },
     {
+      "name": "DataContext",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component DataContext version 1",
+        "  size 16 align 4",
+        "  field health f32 @0 size 4 default=0",
+        "  field max_health f32 @4 size 4 default=1",
+        "  field ammo f32 @8 size 4 default=0",
+        "  field max_ammo f32 @12 size 4 default=1"
+      ]
+    },
+    {
       "name": "Label",
       "kind": "node",
       "version": 1,
       "shape": [
         "node Label version 1",
+        "  field bind-x binding",
+        "  field bind-y binding",
+        "  field bind-width binding",
+        "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
         "  uses Background expose color"
       ]
@@ -84,6 +115,10 @@
       "version": 1,
       "shape": [
         "node Panel version 1",
+        "  field bind-x binding",
+        "  field bind-y binding",
+        "  field bind-width binding",
+        "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
         "  uses Background expose color",
         "  uses LayoutGroup expose align direction gap justify padding_bottom padding_left padding_right padding_top"
@@ -114,7 +149,8 @@
       "version": 1,
       "shape": [
         "node Screen version 1",
-        "  uses Canvas expose scale"
+        "  uses Canvas expose scale",
+        "  uses DataContext expose ammo health max_ammo max_health"
       ]
     },
     {
