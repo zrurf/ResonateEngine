@@ -172,9 +172,11 @@ TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]
 
     resonate::ui::DisplayList list;
     REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
-    CHECK(list.size() == 4U);
+    CHECK(list.size() == 5U);
     CHECK(near(list.quads()[0].width, 360.0F));
     CHECK(near(list.quads()[0].height, 180.0F));
     CHECK(near(list.quads()[2].width, 240.0F));
     CHECK(near(list.quads()[3].width, 90.0F));
+    CHECK(near(list.quads()[4].width, 140.0F));
+    CHECK(near(list.quads()[4].height, 36.0F));
 }

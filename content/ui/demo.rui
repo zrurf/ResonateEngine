@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <document version="1" schemas="resonate.ui">
-  <!-- The start-up HUD: a panel with a title and two bars, all implicit node
-       types. The layout pass resolves the exposed attributes into the default
-       RectTransform/Background/LayoutGroup components. -->
+  <!-- The start-up HUD: a panel with a title, two bars and a button, all
+       implicit node types. The layout pass resolves the exposed attributes into
+       the default RectTransform/Background/LayoutGroup components. -->
   <Screen key="hud" name="HUD" health="240" max_health="336" ammo="90" max_ammo="336">
     <StyleSheet key="styles">
       <StyleRule selector=".panel">
@@ -17,6 +17,15 @@
       <StyleRule selector=".bar.ammo">
         <Background color="0.92 0.52 0.30 1"/>
       </StyleRule>
+      <StyleRule selector=".action">
+        <Background color="0.16 0.22 0.34 1"/>
+      </StyleRule>
+      <StyleRule selector=".action:hover">
+        <Background color="0.24 0.34 0.52 1"/>
+      </StyleRule>
+      <StyleRule selector=".action:pressed">
+        <Background color="0.10 0.15 0.25 1"/>
+      </StyleRule>
     </StyleSheet>
 
     <Panel key="panel" id="hud-panel" name="Panel" class="panel"
@@ -28,6 +37,7 @@
              bind-width="DataContext.health"/>
       <Label key="bar.ammo" name="Ammo" class="bar ammo" height="16"
              bind-width="DataContext.ammo"/>
+      <Button key="action" name="Action" class="action" width="140" height="36"/>
     </Panel>
   </Screen>
 </document>

@@ -35,6 +35,7 @@
 #include <resonate/ui/document.h>
 #include <resonate/ui/binding.h>
 #include <resonate/ui/document_schema.h>
+#include <resonate/ui/input.h>
 #include <resonate/ui/layout.h>
 #include <resonate/window/input.h>
 #include <resonate/window/session.hpp>
@@ -70,6 +71,7 @@ struct UiFrame
 {
     ecs::Entity canvas{};
     const ResonateRenderCanvas* target = nullptr;
+    const ResonateInput* input = nullptr;
 
     static void invoke(void* context, ecs::World& world, ecs::CommandBuffer&, float)
     {
@@ -83,6 +85,17 @@ struct UiFrame
         if (width == 0U || height == 0U)
         {
             return;
+        }
+        if (frame->input != nullptr)
+        {
+            ResonateVec2 position{};
+            frame->input->pointer_position(frame->input->self, &position);
+            const bool down =
+                frame->input->mouse_down(frame->input->self, RESONATE_MOUSE_LEFT) != 0;
+            if (!ui::updateInput(world, frame->canvas, position.x, position.y, down))
+            {
+                return;
+            }
         }
         ui::updateBindings(world, frame->canvas);
         ui::layout(world, frame->canvas, static_cast<float>(width), static_cast<float>(height));
@@ -601,6 +614,11 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
                 host.capabilities(), detail::CapabilityTraits<ResonateRenderCanvas>::id.value(),
                 1U, &version);
             ui_frame.target = static_cast<const ResonateRenderCanvas*>(target);
+            std::uint32_t input_version = 0;
+            void* input = resonate_capability_find(
+                host.capabilities(), detail::CapabilityTraits<ResonateInput>::id.value(),
+                detail::CapabilityTraits<ResonateInput>::version, &input_version);
+            ui_frame.input = static_cast<const ResonateInput*>(input);
             ui_frame.canvas = loadDemoHud(world, ui_document, ui_document_required);
             if (!ui_frame.canvas.valid())
             {
