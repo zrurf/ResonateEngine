@@ -137,6 +137,7 @@ class Context
     /* The table slot a shader names, or 0 for a resource outside the table. */
     uint32_t bufferSlot(ResonateRenderBuffer buffer) const;
     uint32_t imageSlot(ResonateRenderImage image) const;
+    ResonateStatus bindImageSlot(uint32_t slot, ResonateRenderImage image, bool nearest);
 
     /* --- RHI surface --- */
 

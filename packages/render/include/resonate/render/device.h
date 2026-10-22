@@ -365,6 +365,13 @@ typedef struct ResonateRenderDevice
        taking table slots. An older writer means the handle's low half. */
     uint32_t (*buffer_slot)(void* self, ResonateRenderBuffer buffer);
     uint32_t (*image_slot)(void* self, ResonateRenderImage image);
+
+    /* Tail: rebinds a sampled image to an explicit table slot, for an image
+       whose slot must be refreshed outside the create/upload path. An older
+       writer stops before this and callers fall back to the creation-time
+       binding. */
+    ResonateStatus (*bind_image_slot)(void* self, uint32_t slot, ResonateRenderImage image,
+                                      uint32_t nearest);
 } ResonateRenderDevice;
 
 /* The resource table is partially bound and sampled-image indices may differ

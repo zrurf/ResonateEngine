@@ -1623,6 +1623,23 @@ uint32_t Context::bufferSlot(ResonateRenderBuffer handle) const
     return slot != nullptr && slot->in_table ? slot->table_slot : 0U;
 }
 
+ResonateStatus Context::bindImageSlot(uint32_t slot, ResonateRenderImage handle, bool nearest)
+{
+    if (device_ == VK_NULL_HANDLE || slot >= kImageTableSize)
+    {
+        return RESONATE_E_INVALID;
+    }
+    const ImageSlot* image =
+        handle.value != 0 ? images_.live(handleIndex(handle.value), handleGeneration(handle.value))
+                          : nullptr;
+    if (image == nullptr || !image->in_table)
+    {
+        return RESONATE_E_INVALID;
+    }
+    writeImageSlot(slot, image->view, nearest);
+    return RESONATE_OK;
+}
+
 uint32_t Context::imageSlot(ResonateRenderImage handle) const
 {
     const ImageSlot* slot =

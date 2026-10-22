@@ -297,6 +297,14 @@ uint32_t imageSlot(void* self, ResonateRenderImage image)
     return state != nullptr && state->context != nullptr ? state->context->imageSlot(image) : 0U;
 }
 
+ResonateStatus bindImageSlot(void* self, uint32_t slot, ResonateRenderImage image, uint32_t nearest)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr
+               ? state->context->bindImageSlot(slot, image, nearest != 0U)
+               : RESONATE_E_STATE;
+}
+
 ResonateRenderDevice g_device = {
     RESONATE_CAPABILITY_HEADER_INIT(ResonateRenderDevice, RESONATE_THREAD_ANY),
     &attachSurface,
@@ -333,6 +341,7 @@ ResonateRenderDevice g_device = {
     &featureBits,
     &bufferSlot,
     &imageSlot,
+    &bindImageSlot,
 };
 
 } // namespace
