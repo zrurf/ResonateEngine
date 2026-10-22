@@ -331,6 +331,10 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             }
         }
     }
+
+    /* The map outlives the run and the input system samples it before gameplay;
+       managed reads resolve against that same instance. */
+    managed.set_actions(&action_map);
 #endif
 
     const EngineSystemDesc render_desc{"renderer.frame", RESONATE_STAGE_RENDER,
