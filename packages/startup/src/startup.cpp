@@ -7,12 +7,14 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #ifdef RESONATE_PLATFORM_WINDOWS
 #    include <Windows.h>
 #endif
 
 #include <resonate/application/application.h>
+#include <resonate/application/settings.h>
 #if defined(RESONATE_WITH_CSHARP)
 #    include <resonate/csharp/managed_systems.hpp>
 #endif
@@ -130,16 +132,49 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     }
     config.settings.load(config.config_file);
 
-    /* CLI beats configuration beats the default. */
-    const uint32_t width = static_cast<uint32_t>(
-        display.width.has_value()
-            ? *display.width
-            : static_cast<int>(config.settings.readUInt("resonate.window", "width", 1600U)));
-    const uint32_t height = static_cast<uint32_t>(
+    /* The project's settings contract sits beside the run's config. When it is
+       present, every key is checked before anything consumes it: an unknown key
+       is a warning, a wrong type or an out-of-range value ends the run. A
+       missing contract leaves the keys unchecked, so a game without one still
+       runs. */
+    SettingsSchema schema;
+    {
+        std::filesystem::path schema_path =
+            std::filesystem::path(config.config_file).parent_path() / "resonate.settings.toml";
+        if (!std::filesystem::is_regular_file(schema_path))
+        {
+            schema_path = "resonate.settings.toml";
+        }
+        if (std::filesystem::is_regular_file(schema_path))
+        {
+            std::string error;
+            if (!schema.load(schema_path.string(), error))
+            {
+                std::fprintf(stderr, "resonate: settings schema: %s\n", error.c_str());
+                return EXIT_FAILURE;
+            }
+            std::vector<std::string> warnings;
+            if (!schema.validate(config.settings, warnings, error))
+            {
+                std::fprintf(stderr, "resonate: config: %s\n", error.c_str());
+                return EXIT_FAILURE;
+            }
+            for (const std::string& warning : warnings)
+            {
+                std::fprintf(stderr, "resonate: config: %s\n", warning.c_str());
+            }
+        }
+    }
+
+    /* CLI beats configuration beats the schema default. */
+    const uint32_t width = display.width.has_value()
+                               ? *display.width
+                               : schema.readUInt(config.settings, "resonate.window.width", 1600U);
+    const uint32_t height =
         display.height.has_value()
             ? *display.height
-            : static_cast<int>(config.settings.readUInt("resonate.window", "height", 900U)));
-    config.max_fps = config.settings.readUInt("resonate.loop", "max-fps", 0U);
+            : schema.readUInt(config.settings, "resonate.window.height", 900U);
+    config.max_fps = schema.readUInt(config.settings, "resonate.loop.max-fps", 0U);
 
     /* The session outlives the run, and the capabilities it publishes outlive the
        modules that resolved them. */
@@ -161,9 +196,9 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     renderer::FeatureStack features = renderer::FeatureStack::defaults();
     {
         const std::string chain =
-            config.settings.value("resonate.render", "features").value_or("bloom, tonemap");
+            schema.readString(config.settings, "resonate.render.features", "bloom, tonemap");
         const std::string antialiasing =
-            config.settings.value("resonate.render", "antialiasing").value_or("fxaa");
+            schema.readString(config.settings, "resonate.render.antialiasing", "fxaa");
         std::string error;
         if (!renderer::parseFeatureStack(chain, antialiasing, features, error))
         {

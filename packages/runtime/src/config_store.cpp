@@ -4,13 +4,9 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
-#include <type_traits>
+#include <string>
 
-/* A bad config file is a stderr line, not an exception unwinding the run. The
-   macro has to precede the include, and every TU that includes toml++ must
-   agree on it — loader.cpp sets the same one for manifest parsing. */
-#define TOML_EXCEPTIONS 0
-#include <toml++/toml.hpp>
+#include "toml_text.h"
 
 namespace resonate
 {
@@ -19,6 +15,34 @@ struct ConfigStore::Table
 {
     toml::table value;
 };
+
+namespace
+{
+
+/* Nested tables flatten into dotted sections, which is the shape the store
+   reads by; arrays and date-times are not settings and are left out. */
+void visitTable(const toml::table& table, const std::string& prefix, void* user,
+                ConfigStore::ScalarVisitor visitor)
+{
+    for (const auto& [key, node] : table)
+    {
+        const std::string name(key.str());
+        const std::string path = prefix.empty() ? name : prefix + "." + name;
+        if (const toml::table* child = node.as_table())
+        {
+            visitTable(*child, path, user, visitor);
+            continue;
+        }
+
+        std::string text;
+        if (detail::scalarText(node, text))
+        {
+            visitor(user, prefix.c_str(), name.c_str(), text.c_str());
+        }
+    }
+}
+
+} // namespace
 
 ConfigStore::ConfigStore() = default;
 
@@ -62,29 +86,18 @@ std::optional<std::string> ConfigStore::value(const char* section, const char* k
         return std::nullopt;
     }
 
-    std::optional<std::string> out;
-    node->visit(
-        [&](auto&& value)
-        {
-            using Value = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<Value, toml::value<std::string>>)
-            {
-                out = value.get();
-            }
-            else if constexpr (std::is_same_v<Value, toml::value<std::int64_t>>)
-            {
-                out = std::to_string(value.get());
-            }
-            else if constexpr (std::is_same_v<Value, toml::value<double>>)
-            {
-                out = std::to_string(value.get());
-            }
-            else if constexpr (std::is_same_v<Value, toml::value<bool>>)
-            {
-                out = value.get() ? std::string("true") : std::string("false");
-            }
-        });
-    return out;
+    std::string text;
+    return detail::scalarText(*node, text) ? std::optional<std::string>(std::move(text))
+                                           : std::nullopt;
+}
+
+void ConfigStore::visitScalars(void* user, ScalarVisitor visitor) const
+{
+    if (table_ == nullptr || visitor == nullptr)
+    {
+        return;
+    }
+    visitTable(table_->value, std::string(), user, visitor);
 }
 
 bool ConfigStore::read(const char* section, const char* key, std::string& out) const

@@ -1,0 +1,94 @@
+# The project's settings contract, read beside resonate.toml. Every key the
+# engine consumes is declared here with its type, range and default; a value of
+# the wrong type or outside its range refuses to start, and an unknown key in
+# the config file is reported as a warning. Keys are reverse-DNS and the module
+# that owns the domain owns the declaration.
+
+[[setting]]
+key = "resonate.window.width"
+type = "int"
+range = [1, 16384]
+default = 1600
+description = "Initial window width in pixels; the command line wins."
+
+[[setting]]
+key = "resonate.window.height"
+type = "int"
+range = [1, 16384]
+default = 900
+description = "Initial window height in pixels; the command line wins."
+
+[[setting]]
+key = "resonate.loop.max-fps"
+type = "int"
+range = [0, 1000]
+default = 0
+description = "Frame rate cap; zero runs uncapped."
+
+[[setting]]
+key = "resonate.render.features"
+type = "string"
+default = "bloom, tonemap"
+description = "Comma-separated post chain; tonemap is required."
+
+[[setting]]
+key = "resonate.render.antialiasing"
+type = "enum"
+values = ["none", "fxaa"]
+default = "fxaa"
+description = "Antialiasing mode."
+
+[[setting]]
+key = "resonate.render.bloom-threshold"
+type = "float"
+range = [0.001, 100.0]
+default = 1.0
+description = "Brightness above which bloom picks a pixel up."
+
+[[setting]]
+key = "resonate.csharp.assembly"
+type = "string"
+default = ""
+description = "Managed behaviour assembly; empty runs without CoreCLR."
+
+[[setting]]
+key = "resonate.csharp.runtime-config"
+type = "string"
+default = ""
+description = "Runtime config path; derived from the assembly when empty."
+
+[[setting]]
+key = "resonate.csharp.entry-type"
+type = "string"
+default = ""
+description = "Assembly-qualified type holding the managed registration."
+
+[[setting]]
+key = "resonate.csharp.component"
+type = "string"
+default = ""
+description = "Component name handed to the managed entry as its self view."
+
+[[setting]]
+key = "resonate.csharp.patch"
+type = "string"
+default = ""
+description = "Optional patch assembly installed after the base assembly."
+
+[[setting]]
+key = "resonate.csharp.patch-host"
+type = "string"
+default = ""
+description = "Bootstrap assembly that loads and unloads the patch."
+
+[[setting]]
+key = "resonate.csharp.patch-host-type"
+type = "string"
+default = ""
+description = "Assembly-qualified bootstrap type."
+
+[[setting]]
+key = "resonate.csharp.patch-entry-type"
+type = "string"
+default = ""
+description = "Type holding the patch's registration, resolved inside the patch."

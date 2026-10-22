@@ -44,6 +44,13 @@ class ConfigStore final : public ConfigSource
     /* ConfigSource. */
     bool read(const char* section, const char* key, std::string& out) const override;
 
+    /* Visits every scalar as its text form: nested tables flatten into dotted
+       sections, which is the same shape value() reads. Arrays and date-times
+       are not settings and are skipped. */
+    using ScalarVisitor = void (*)(void* user, const char* section, const char* key,
+                                   const char* value);
+    void visitScalars(void* user, ScalarVisitor visitor) const;
+
     /* Typed reads over value(), with the same exact-spelling rule a module's
        typed reads follow. */
     [[nodiscard]] bool readBool(const char* section, const char* key, bool fallback) const;
