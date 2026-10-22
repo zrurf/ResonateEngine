@@ -10,6 +10,9 @@
 local PROJECT_DIR = os.projectdir()
 local SCRIPT = path.join(PROJECT_DIR, "scripts", "csharp_test.lua")
 local GENERATED_DIR = path.join(PROJECT_DIR, "build", "gen", "csharp")
+-- The analyzers and the registration generator are compiled into every
+-- behaviour assembly, so their sources are part of these publishes too.
+local TOOLS_DIR = path.join(PROJECT_DIR, "packages", "tools", "analyzers")
 
 -- The assets compile the generated ids and the schema's component views, so
 -- both exist before the publishes. The schema script runs here too, whatever
@@ -47,11 +50,23 @@ local function generated_is_newer(built_at)
     return false
 end
 
+-- The publish can legitimately leave the assembly untouched (MSBuild skips a
+-- copy when the content is unchanged), so the assembly's mtime cannot record
+-- that this exact input set was published. The stamp is written after every
+-- successful publish and is what the comparisons use.
+local function published_at(output)
+    local stamp = output .. ".stamp"
+    if os.isfile(stamp) then
+        return os.mtime(stamp)
+    end
+    return os.mtime(output)
+end
+
 local function publish_is_stale(project_dir, output, uses_generated)
     if not os.isfile(output) then
         return true
     end
-    local built_at = os.mtime(output)
+    local built_at = published_at(output)
     -- The command line is part of the output: a change to it (say, adding
     -- ReadyToRun) must republish even when the sources did not move.
     if os.mtime(SCRIPT) >= built_at then
@@ -59,6 +74,11 @@ local function publish_is_stale(project_dir, output, uses_generated)
     end
     if uses_generated and generated_is_newer(built_at) then
         return true
+    end
+    for _, file in ipairs(os.files(path.join(TOOLS_DIR, "**"))) do
+        if os.mtime(file) >= built_at then
+            return true
+        end
     end
     for _, file in ipairs(os.files(path.join(project_dir, "**"))) do
         if os.mtime(file) >= built_at then
@@ -86,9 +106,12 @@ local function publish(name, project, project_dir, out_dir, output, ready_to_run
         os.sleep(1000)
         code = os.execv("dotnet", args, {try = true})
     end
+    if code == 0 then
+        os.touch(output .. ".stamp")
+    end
     -- A failed publish must fail the build even when an older assembly is
     -- still on disk: the silent fallback once hid a compile error for a whole
-    -- test run. A concurrent publish that won the race has a fresh assembly,
+    -- test run. A concurrent publish that won the race has a fresh stamp,
     -- so the staleness check is what decides.
     if publish_is_stale(project_dir, output, uses_generated) then
         raise("csharp test: publishing " .. name .. " failed (dotnet publish exited " ..

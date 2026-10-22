@@ -50,6 +50,12 @@ struct Fixture
 };
 
 constexpr const char* kProbeType = "Resonate.Tests.Managed.Probe, Resonate.Tests.Managed";
+/* The type the registration generator emits: the fixture's unmanaged entry and
+   its reflect-callable Register live here. */
+constexpr const char* kRegistrationType =
+    "Resonate.CSharp.Generated.BehaviourRegistration, Resonate.Tests.Managed";
+constexpr const char* kPatchRegistrationType =
+    "Resonate.CSharp.Generated.BehaviourRegistration";
 constexpr const char* kBootstrapType =
     "Resonate.Tests.Bootstrap.PatchHost, Resonate.Tests.Bootstrap";
 
@@ -57,17 +63,21 @@ constexpr const char* kBootstrapType =
 
 /* The registration entry the managed side calls, holding the table in its
    opaque context. A managed function pointer arrives as void*, the same shape
-   dlsym hands back. */
-extern "C" std::int32_t registerEntry(void* context, std::uint32_t id, void* entry)
+   dlsym hands back. The stage rides along; this table serves all of them. */
+extern "C" std::int32_t registerEntry(void* context, std::uint32_t stage, std::uint32_t id,
+                                      void* entry)
 {
+    (void)stage;
     auto* table = static_cast<resonate::csharp::DispatchTable*>(context);
     const auto function = reinterpret_cast<resonate::csharp::DispatchEntry>(entry);
     return table->set(id, function) ? 0 : 1;
 }
 
 /* The patch path registers through replace: the slot is already taken. */
-extern "C" std::int32_t replaceEntry(void* context, std::uint32_t id, void* entry)
+extern "C" std::int32_t replaceEntry(void* context, std::uint32_t stage, std::uint32_t id,
+                                     void* entry)
 {
+    (void)stage;
     auto* table = static_cast<resonate::csharp::DispatchTable*>(context);
     const auto function = reinterpret_cast<resonate::csharp::DispatchEntry>(entry);
     return table->replace(id, function) ? 0 : 1;
@@ -131,23 +141,25 @@ TEST_CASE("csharp: managed code registers an entry into the dispatch table", "[c
     std::string error;
     REQUIRE(host.initialize(fixture.config, error));
 
-    void* function = host.load_function(fixture.assembly, kProbeType, "Register", error);
+    void* function =
+        host.load_function(fixture.assembly, kRegistrationType, "RegisterUnmanaged", error);
     REQUIRE(function != nullptr);
     const auto register_probe = reinterpret_cast<RegisterFn>(function);
 
-    resonate::csharp::DispatchTable table(16U);
+    resonate::csharp::DispatchTable table(32U);
     resonate::csharp::bindings::Registration registration{&table, &registerEntry};
     REQUIRE(register_probe(&registration) == 0);
 
-    int counters[6] = {0, -1, 0, 0, -1, 0};
+    int counters[8] = {0, -1, 0, 0, -1, 0, 0, 0};
     resonate::csharp::bindings::SystemContext context{};
     context.user = counters;
     context.frame_index = 5U;
-    REQUIRE(table.get(resonate::csharp::bindings::kSystemTick) != nullptr);
-    CHECK(table.invoke(resonate::csharp::bindings::kSystemTick, &context));
+    REQUIRE(table.get(resonate::csharp::bindings::kSystemUpdate) != nullptr);
+    CHECK(table.get(resonate::csharp::bindings::kSystemLateUpdate) != nullptr);
+    CHECK(table.invoke(resonate::csharp::bindings::kSystemUpdate, &context));
     CHECK(counters[0] == 1);
     CHECK(counters[1] == 5);
-    CHECK(table.invoke(resonate::csharp::bindings::kSystemTick, &context));
+    CHECK(table.invoke(resonate::csharp::bindings::kSystemUpdate, &context));
     CHECK(counters[0] == 2);
 }
 
@@ -217,7 +229,7 @@ TEST_CASE("csharp: the frame loop calls a managed system through the table", "[c
 
     resonate::csharp::ManagedSystems systems;
     std::string error;
-    REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
 
     int counters[6] = {0, -1, 0, 0, -1, 0};
     systems.set_user(counters);
@@ -242,7 +254,7 @@ TEST_CASE("csharp: a managed system reads a named component's chunk", "[csharp]"
 
     resonate::csharp::ManagedSystems systems;
     std::string error;
-    REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
     systems.set_component("resonate.hierarchy.LocalTransform");
 
     int counters[6] = {0, -1, 0, 0, -1, 0};
@@ -292,7 +304,7 @@ TEST_CASE("csharp: a large chunk set reaches managed code in one frame", "[cshar
 
     resonate::csharp::ManagedSystems systems;
     std::string error;
-    REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
     systems.set_component("resonate.hierarchy.LocalTransform");
 
     int counters[6] = {0, -1, 0, 0, -1, 0};
@@ -326,7 +338,7 @@ TEST_CASE("csharp: a managed spawn plays through the command buffer", "[csharp]"
 
     resonate::csharp::ManagedSystems systems;
     std::string error;
-    REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
     systems.set_component("resonate.hierarchy.LocalTransform");
 
     /* counters[6] = 1 asks the managed tick to spawn once on frame 0. */
@@ -378,6 +390,38 @@ TEST_CASE("csharp: a managed spawn plays through the command buffer", "[csharp]"
     CHECK(found);
 }
 
+TEST_CASE("csharp: an entry runs only in the stage it declares", "[csharp]")
+{
+    const Fixture fixture;
+    REQUIRE(!fixture.directory.empty());
+
+    resonate::csharp::ManagedSystems systems;
+    std::string error;
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
+    CHECK(systems.usesStage(RESONATE_STAGE_UPDATE));
+    CHECK(systems.usesStage(RESONATE_STAGE_LATE_UPDATE));
+    CHECK_FALSE(systems.usesStage(RESONATE_STAGE_RENDER));
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    resonate::ecs::CommandBuffer commands(world);
+    int counters[8] = {0, -1, 0, 0, -1, 0, 0, 0};
+    systems.set_user(counters);
+
+    resonate::csharp::ManagedSystems::invokeStage(RESONATE_STAGE_LATE_UPDATE, &systems, world,
+                                                  commands, 0.1F);
+    CHECK(counters[0] == 10);
+    CHECK(counters[1] == 3);
+
+    /* An empty stage is a no-op, not an error: the assembly need not fill
+       every stage it could declare. */
+    resonate::csharp::ManagedSystems::invokeStage(RESONATE_STAGE_RENDER, &systems, world,
+                                                  commands, 0.1F);
+    CHECK(counters[0] == 10);
+
+    resonate::csharp::ManagedSystems::invoke(&systems, world, commands, 0.1F);
+    CHECK(counters[0] == 11);
+}
+
 TEST_CASE("csharp: a collectible ALC patch replaces a dispatch slot", "[csharp]")
 {
     const Fixture fixture;
@@ -390,12 +434,12 @@ TEST_CASE("csharp: a collectible ALC patch replaces a dispatch slot", "[csharp]"
     REQUIRE(host.initialize(fixture.config, error));
 
     resonate::csharp::DispatchTable table(64U);
-    REQUIRE(table.set(resonate::csharp::bindings::kSystemTick, &v1Tick));
+    REQUIRE(table.set(resonate::csharp::bindings::kSystemUpdate, &v1Tick));
 
     resonate::csharp::bindings::SystemContext context{};
     int before[6] = {0, 0};
     context.user = before;
-    REQUIRE(table.invoke(resonate::csharp::bindings::kSystemTick, &context));
+    REQUIRE(table.invoke(resonate::csharp::bindings::kSystemUpdate, &context));
     CHECK(before[1] == 1);
 
     void* install = host.load_function(fixture.bootstrap, kBootstrapType, "Install", error);
@@ -404,14 +448,14 @@ TEST_CASE("csharp: a collectible ALC patch replaces a dispatch slot", "[csharp]"
     /* The patch assembly loads into its own collectible context and registers
        through replace; the engine keeps only the function pointer. */
     resonate::csharp::bindings::Registration registration{&table, &replaceEntry};
-    InstallRequest request{fixture.patch.c_str(), "Resonate.Tests.Patch.PatchBehaviour",
+    InstallRequest request{fixture.patch.c_str(), kPatchRegistrationType,
                            &registration, nullptr};
     CHECK(reinterpret_cast<int (*)(void*)>(install)(&request) == 0);
     CHECK(request.context != nullptr);
 
     int after[6] = {0, 0};
     context.user = after;
-    REQUIRE(table.invoke(resonate::csharp::bindings::kSystemTick, &context));
+    REQUIRE(table.invoke(resonate::csharp::bindings::kSystemUpdate, &context));
     CHECK(after[1] == 2);
 
     /* The slot is never called again after this: it pointed into the context
@@ -430,7 +474,7 @@ TEST_CASE("csharp: ManagedSystems installs and restores a patch", "[csharp]")
 
     resonate::csharp::ManagedSystems systems;
     std::string error;
-    REQUIRE(systems.load(fixture.config, fixture.assembly, kProbeType, error));
+    REQUIRE(systems.load(fixture.config, fixture.assembly, kRegistrationType, error));
 
     resonate::ecs::World world(resonate::systemAllocator());
     resonate::ecs::CommandBuffer commands(world);
@@ -442,7 +486,7 @@ TEST_CASE("csharp: ManagedSystems installs and restores a patch", "[csharp]")
     CHECK(base_counters[2] == -1);
 
     REQUIRE(systems.load_patch(fixture.bootstrap, kBootstrapType, fixture.patch,
-                               "Resonate.Tests.Patch.PatchBehaviour", error));
+                               kPatchRegistrationType, error));
     CHECK(systems.patched());
 
     int patched[6] = {0, -1, 0, 0, -1, 0};

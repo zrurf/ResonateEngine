@@ -7,6 +7,9 @@ local PROJECT = path.join(PROJECT_DIR, "content", "csharp", "demo", "Resonate.De
 local OUT_DIR = path.join(PROJECT_DIR, "build", "content", "csharp", "demo")
 local ASSEMBLY = path.join(OUT_DIR, "Resonate.Demo.Game.dll")
 local GENERATED_DIR = path.join(PROJECT_DIR, "build", "gen", "csharp")
+-- The registration generator and the laws are compiled into the demo, so a
+-- change there must republish even when the demo sources did not move.
+local TOOLS_DIR = path.join(PROJECT_DIR, "packages", "tools", "analyzers")
 
 -- The generated bindings and views are compiled in, so they exist first.
 local schema = os.execv(os.programfile(),
@@ -24,13 +27,22 @@ local function stale()
     if not os.isfile(ASSEMBLY) then
         return true
     end
-    local built_at = os.mtime(ASSEMBLY)
+    -- MSBuild skips the copy when the content is unchanged, so the assembly's
+    -- mtime cannot record the publish; the stamp written after a successful
+    -- one is the reference.
+    local stamp = ASSEMBLY .. ".stamp"
+    local built_at = os.isfile(stamp) and os.mtime(stamp) or os.mtime(ASSEMBLY)
     for _, file in ipairs(os.files(path.join(PROJECT_DIR, "content", "csharp", "demo", "**"))) do
         if os.mtime(file) >= built_at then
             return true
         end
     end
     for _, file in ipairs(os.files(path.join(GENERATED_DIR, "**", "*.g.cs"))) do
+        if os.mtime(file) >= built_at then
+            return true
+        end
+    end
+    for _, file in ipairs(os.files(path.join(TOOLS_DIR, "**"))) do
         if os.mtime(file) >= built_at then
             return true
         end
@@ -44,6 +56,9 @@ if stale() then
     if code ~= 0 then
         os.sleep(1000)
         code = os.execv("dotnet", publish, {try = true})
+    end
+    if code == 0 then
+        os.touch(ASSEMBLY .. ".stamp")
     end
     if stale() then
         raise("csharp demo: publishing the sample game failed (dotnet publish exited " ..

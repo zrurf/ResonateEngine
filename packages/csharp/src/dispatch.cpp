@@ -70,4 +70,16 @@ bool DispatchTable::invoke(std::uint32_t id, void* context) const
     return true;
 }
 
+bool DispatchTable::any() const
+{
+    for (std::size_t index = 0; index < capacity_; ++index)
+    {
+        if (entries_[index].load(std::memory_order_acquire) != nullptr)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace resonate::csharp

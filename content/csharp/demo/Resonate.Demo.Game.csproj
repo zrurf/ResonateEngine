@@ -8,8 +8,8 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <DebugType>embedded</DebugType>
-    <!-- The host calls Register through its unmanaged entry; Tick writes
-         through native pointers. -->
+    <!-- The host calls the generated unmanaged entry; Tick writes through
+         native pointers. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- hostfxr loads this as a component: the publish drops the
          runtimeconfig.json the initializer reads. -->
@@ -20,6 +20,9 @@
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)../../../build/gen/csharp/**/*.g.cs" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)../../../packages/tools/analyzers/Resonate.CSharp.Attributes/Resonate.CSharp.Attributes.csproj" />
+    <!-- The registration generator emits this assembly's entry. -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../../packages/tools/analyzers/Resonate.Analyzers/Resonate.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

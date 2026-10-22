@@ -1,8 +1,28 @@
 {
   "systems": [
     {
-      "name": "tick",
+      "name": "early_update",
+      "id": 11
+    },
+    {
+      "name": "update",
       "id": 7
+    },
+    {
+      "name": "physics",
+      "id": 13
+    },
+    {
+      "name": "late_update",
+      "id": 17
+    },
+    {
+      "name": "render",
+      "id": 19
+    },
+    {
+      "name": "present",
+      "id": 23
     }
   ],
   "handles": [
@@ -158,6 +178,7 @@
       "ret": "i32",
       "params": [
         "void_pointer",
+        "u32",
         "u32",
         "void_pointer"
       ]

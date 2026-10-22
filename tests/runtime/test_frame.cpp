@@ -582,7 +582,8 @@ TEST_CASE("a headless run calls a managed system every fixed step", "[runtime][f
     std::string error;
     REQUIRE(systems.load(fixture + "/Resonate.Tests.Managed.runtimeconfig.json",
                          fixture + "/Resonate.Tests.Managed.dll",
-                         "Resonate.Tests.Managed.Probe, Resonate.Tests.Managed", error));
+                         "Resonate.CSharp.Generated.BehaviourRegistration, "
+                         "Resonate.Tests.Managed", error));
 
     int counters[6] = {0, -1, 0, 0, -1, 0};
     systems.set_user(counters);

@@ -7,12 +7,13 @@ namespace resonate::csharp
 namespace
 {
 
-/* The engine hands this to the managed assembly; the table sits behind the
-   opaque context. */
-extern "C" std::int32_t managedSystemsRegisterEntry(void* context, std::uint32_t id, void* entry)
+/* The engine hands this to the managed assembly; the host sits behind the
+   opaque context and routes the entry to its stage's table. */
+extern "C" std::int32_t managedSystemsRegisterEntry(void* context, std::uint32_t stage,
+                                                    std::uint32_t id, void* entry)
 {
-    auto* table = static_cast<DispatchTable*>(context);
-    return table->set(id, reinterpret_cast<DispatchEntry>(entry)) ? 0 : 1;
+    auto* systems = static_cast<ManagedSystems*>(context);
+    return systems->register_entry(stage, id, reinterpret_cast<DispatchEntry>(entry)) ? 0 : 1;
 }
 
 extern "C" std::int32_t spawnEntity(void* host_api, std::uint64_t* out_entity)
@@ -83,13 +84,89 @@ struct PatchRequest
 
 /* The registration callback a patch reaches: the displaced entry is
    remembered, so an unload can put it back. */
-extern "C" std::int32_t patchEntry(void* context, std::uint32_t id, void* entry)
+extern "C" std::int32_t patchEntry(void* context, std::uint32_t stage, std::uint32_t id,
+                                   void* entry)
 {
     auto* systems = static_cast<ManagedSystems*>(context);
-    return systems->replace_tracked(id, reinterpret_cast<DispatchEntry>(entry)) ? 0 : 1;
+    return systems->replace_tracked(stage, id, reinterpret_cast<DispatchEntry>(entry)) ? 0 : 1;
 }
 
+/* The one system id a stage's table holds; the registration generator names
+   the same contract entry on the managed side. */
+std::uint32_t systemId(ResonateStage stage)
+{
+    switch (stage)
+    {
+    case RESONATE_STAGE_EARLY_UPDATE:
+        return bindings::kSystemEarlyUpdate;
+    case RESONATE_STAGE_UPDATE:
+        return bindings::kSystemUpdate;
+    case RESONATE_STAGE_PHYSICS:
+        return bindings::kSystemPhysics;
+    case RESONATE_STAGE_LATE_UPDATE:
+        return bindings::kSystemLateUpdate;
+    case RESONATE_STAGE_RENDER:
+        return bindings::kSystemRender;
+    case RESONATE_STAGE_PRESENT:
+        return bindings::kSystemPresent;
+    default:
+        return 0U;
+    }
+}
+
+void invokeEarlyUpdate(void* context, ecs::World& world, ecs::CommandBuffer& commands,
+                       float delta_seconds)
+{
+    ManagedSystems::invokeStage(RESONATE_STAGE_EARLY_UPDATE, context, world, commands,
+                                delta_seconds);
+}
+
+void invokeUpdate(void* context, ecs::World& world, ecs::CommandBuffer& commands,
+                  float delta_seconds)
+{
+    ManagedSystems::invokeStage(RESONATE_STAGE_UPDATE, context, world, commands, delta_seconds);
+}
+
+void invokePhysics(void* context, ecs::World& world, ecs::CommandBuffer& commands,
+                   float delta_seconds)
+{
+    ManagedSystems::invokeStage(RESONATE_STAGE_PHYSICS, context, world, commands, delta_seconds);
+}
+
+void invokeLateUpdate(void* context, ecs::World& world, ecs::CommandBuffer& commands,
+                      float delta_seconds)
+{
+    ManagedSystems::invokeStage(RESONATE_STAGE_LATE_UPDATE, context, world, commands,
+                                delta_seconds);
+}
+
+void invokeRender(void* context, ecs::World& world, ecs::CommandBuffer& commands,
+                  float delta_seconds)
+{
+    ManagedSystems::invokeStage(RESONATE_STAGE_RENDER, context, world, commands, delta_seconds);
+}
+
+void invokePresent(void* context, ecs::World& world, ecs::CommandBuffer& commands,
+                   float delta_seconds)
+{
+    ManagedSystems::invokeStage(RESONATE_STAGE_PRESENT, context, world, commands, delta_seconds);
+}
+
+const ManagedSystems::StageEntry kStageEntries[ManagedSystems::kStageEntryCount] = {
+    {RESONATE_STAGE_EARLY_UPDATE, "csharp.early_update", &invokeEarlyUpdate},
+    {RESONATE_STAGE_UPDATE, "csharp.update", &invokeUpdate},
+    {RESONATE_STAGE_PHYSICS, "csharp.physics", &invokePhysics},
+    {RESONATE_STAGE_LATE_UPDATE, "csharp.late_update", &invokeLateUpdate},
+    {RESONATE_STAGE_RENDER, "csharp.render", &invokeRender},
+    {RESONATE_STAGE_PRESENT, "csharp.present", &invokePresent},
+};
+
 } // namespace
+
+const ManagedSystems::StageEntry* ManagedSystems::stageEntries()
+{
+    return kStageEntries;
+}
 
 ManagedSystems::~ManagedSystems()
 {
@@ -113,9 +190,12 @@ bool ManagedSystems::load(const std::string& runtime_config, const std::string& 
         return false;
     }
 
-    table_.resize(64U);
+    for (DispatchTable& table : tables_)
+    {
+        table.resize(64U);
+    }
     const auto register_fn = reinterpret_cast<int (*)(void*)>(registration_);
-    bindings::Registration registration{&table_, &managedSystemsRegisterEntry};
+    bindings::Registration registration{this, &managedSystemsRegisterEntry};
     if (register_fn(&registration) != 0)
     {
         error = "the managed assembly refused to register its systems";
@@ -138,7 +218,10 @@ void ManagedSystems::unload()
     }
     bootstrap_unload_ = nullptr;
     registration_ = nullptr;
-    table_.resize(64U);
+    for (DispatchTable& table : tables_)
+    {
+        table.resize(64U);
+    }
     frames_ = 0U;
     frame_ = bindings::SystemContext{};
     component_ = ecs::kInvalidComponent;
@@ -220,17 +303,33 @@ bool ManagedSystems::unload_patch(std::string& error)
     return true;
 }
 
-bool ManagedSystems::replace_tracked(std::uint32_t id, DispatchEntry entry)
+bool ManagedSystems::register_entry(std::uint32_t stage, std::uint32_t id, DispatchEntry entry)
 {
-    if (patch_frames_.empty())
+    if (stage >= tables_.size() || stage == RESONATE_STAGE_LOADING)
+    {
+        return false;
+    }
+    return tables_[stage].set(id, entry);
+}
+
+bool ManagedSystems::usesStage(ResonateStage stage) const
+{
+    const std::size_t index = static_cast<std::size_t>(stage);
+    return index < tables_.size() && tables_[index].any();
+}
+
+bool ManagedSystems::replace_tracked(std::uint32_t stage, std::uint32_t id, DispatchEntry entry)
+{
+    if (patch_frames_.empty() || stage >= tables_.size() ||
+        stage == RESONATE_STAGE_LOADING)
     {
         return false;
     }
     PatchFrame& frame = patch_frames_.back();
     bool tracked = false;
-    for (const std::pair<std::uint32_t, DispatchEntry>& previous : frame.previous)
+    for (const PreviousEntry& previous : frame.previous)
     {
-        if (previous.first == id)
+        if (previous.stage == stage && previous.id == id)
         {
             tracked = true;
             break;
@@ -238,22 +337,23 @@ bool ManagedSystems::replace_tracked(std::uint32_t id, DispatchEntry entry)
     }
     if (!tracked)
     {
-        frame.previous.emplace_back(id, table_.get(id));
+        frame.previous.push_back(PreviousEntry{stage, id, tables_[stage].get(id)});
     }
-    return table_.replace(id, entry);
+    return tables_[stage].replace(id, entry);
 }
 
 void ManagedSystems::restoreFrame(PatchFrame& frame)
 {
     for (auto previous = frame.previous.rbegin(); previous != frame.previous.rend(); ++previous)
     {
-        if (previous->second != nullptr)
+        DispatchTable& table = tables_[previous->stage];
+        if (previous->entry != nullptr)
         {
-            table_.replace(previous->first, previous->second);
+            table.replace(previous->id, previous->entry);
         }
         else
         {
-            table_.clear(previous->first);
+            table.clear(previous->id);
         }
     }
 }
@@ -272,12 +372,21 @@ void ManagedSystems::set_component(const char* name)
 void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer& commands,
                             float delta_seconds)
 {
+    invokeStage(RESONATE_STAGE_UPDATE, context, world, commands, delta_seconds);
+}
+
+void ManagedSystems::invokeStage(ResonateStage stage, void* context, ecs::World& world,
+                                 ecs::CommandBuffer& commands, float delta_seconds)
+{
     auto* self = static_cast<ManagedSystems*>(context);
-    if (self == nullptr)
+    const std::size_t index = static_cast<std::size_t>(stage);
+    if (self == nullptr || index <= static_cast<std::size_t>(RESONATE_STAGE_LOADING) ||
+        index >= self->tables_.size() || !self->tables_[index].any())
     {
         return;
     }
 
+    const std::uint32_t id = systemId(stage);
     self->frame_.delta_seconds = delta_seconds;
     self->frame_.frame_index = self->frames_;
     self->api_.world = &world;
@@ -290,6 +399,13 @@ void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer
     /* The read path is the named component, one call per non-empty chunk: the
        body sees a dense array it wraps in a Span without copying. The query is
        created once and catches up with new archetypes itself. */
+    struct ChunkCall
+    {
+        ManagedSystems* systems;
+        std::uint32_t stage;
+        std::uint32_t id;
+    };
+
     bool called = false;
     if (!self->component_name_.empty())
     {
@@ -310,10 +426,12 @@ void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer
             }
             if (self->query_ready_)
             {
+                ChunkCall call{self, static_cast<std::uint32_t>(stage), id};
                 self->query_.forEachChunk(
                     [](void* chunk_context, ecs::ChunkView view)
                     {
-                        auto* systems = static_cast<ManagedSystems*>(chunk_context);
+                        auto* call = static_cast<ChunkCall*>(chunk_context);
+                        ManagedSystems* systems = call->systems;
                         systems->frame_.chunk_data =
                             view.componentData(systems->component_);
                         systems->frame_.chunk_count = view.count;
@@ -323,9 +441,9 @@ void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer
                         systems->api_.chunk_count = view.count;
                         systems->api_.entity_data =
                             const_cast<ecs::Entity*>(view.entities);
-                        systems->table_.invoke(bindings::kSystemTick, &systems->frame_);
+                        systems->tables_[call->stage].invoke(call->id, &systems->frame_);
                     },
-                    self);
+                    &call);
                 called = true;
             }
         }
@@ -338,9 +456,12 @@ void ManagedSystems::invoke(void* context, ecs::World& world, ecs::CommandBuffer
         self->api_.chunk_data = nullptr;
         self->api_.chunk_count = 0U;
         self->api_.entity_data = nullptr;
-        self->table_.invoke(bindings::kSystemTick, &self->frame_);
+        self->tables_[index].invoke(id, &self->frame_);
     }
-    ++self->frames_;
+    if (stage == RESONATE_STAGE_UPDATE)
+    {
+        ++self->frames_;
+    }
 }
 
 } // namespace resonate::csharp

@@ -1,6 +1,9 @@
 using System;
 using System.Runtime.InteropServices;
+using Resonate.CSharp;
 using Resonate.CSharp.Bindings;
+
+[assembly: ResonateBehaviour]
 
 namespace Resonate.Tests.Managed;
 
@@ -13,22 +16,12 @@ public static unsafe class Probe
         return left + right;
     }
 
-    /* Registration path: the managed assembly places its own entry in the
-       engine's table, so the engine never holds a delegate. */
-    [UnmanagedCallersOnly]
-    public static int Register(IntPtr api)
-    {
-        Registration* registration = (Registration*)api;
-        return registration->RegisterEntry(registration->Context, Systems.Tick,
-                                           (IntPtr)(delegate* unmanaged<IntPtr, void>)&TickFrame);
-    }
-
     /* The registered entry: the generated frame context arrives as a pointer,
-       and the native state hangs off its user field. */
-    [UnmanagedCallersOnly]
-    public static void TickFrame(IntPtr context)
+       and the native state hangs off its user field. The registration
+       generator places it in the UPDATE table. */
+    [UpdateIn(ResonateStage.Update)]
+    public static void TickFrame(SystemContext* frame)
     {
-        SystemContext* frame = (SystemContext*)context;
         int* counters = (int*)frame->User;
         counters[0] += 1;
         counters[1] = (int)frame->FrameIndex;
@@ -81,6 +74,16 @@ public static unsafe class Probe
         counters[4] = (int)entities[0].Index;
 
         counters[5] = api->MarkChunkChanged((IntPtr)api);
+    }
+
+    /* The read path's second stage: proves the registration keeps entries
+       apart per stage, so the schedule decides when they run. */
+    [UpdateIn(ResonateStage.LateUpdate)]
+    public static void LateFrame(SystemContext* frame)
+    {
+        int* counters = (int*)frame->User;
+        counters[0] += 10;
+        counters[1] = 3;
     }
 
     /* Reads a generated struct field by field: the engine lays the frame view

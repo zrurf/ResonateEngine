@@ -1,5 +1,4 @@
 using System;
-using System.Runtime.InteropServices;
 using Resonate.CSharp;
 using Resonate.CSharp.Bindings;
 
@@ -15,18 +14,9 @@ public static unsafe class GameBehaviour
     private const uint kSpawnEveryFrames = 60U;
     private const uint kCubeMesh = 1U;
 
-    [UnmanagedCallersOnly]
-    public static int Register(IntPtr api)
+    [UpdateIn(ResonateStage.Update)]
+    public static void Tick(SystemContext* frame)
     {
-        Registration* registration = (Registration*)api;
-        return registration->RegisterEntry(registration->Context, Systems.Tick,
-                                           (IntPtr)(delegate* unmanaged<IntPtr, void>)&Tick);
-    }
-
-    [UnmanagedCallersOnly]
-    public static void Tick(IntPtr context)
-    {
-        SystemContext* frame = (SystemContext*)context;
         if (frame->FrameIndex == 0 || frame->FrameIndex % kSpawnEveryFrames != 0)
         {
             return;

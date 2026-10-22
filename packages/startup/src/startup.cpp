@@ -1,5 +1,6 @@
 #include <resonate/startup/startup.hpp>
 
+#include <array>
 #include <climits>
 #include <cstddef>
 #include <cstdio>
@@ -255,8 +256,19 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     const EngineSystemDesc render_desc{"renderer.frame", RESONATE_STAGE_RENDER,
                                        &renderer::RenderSystem::invoke, &render_system};
 #if defined(RESONATE_WITH_CSHARP)
-    const EngineSystemDesc managed_desc{"csharp.tick", RESONATE_STAGE_UPDATE,
-                                        &csharp::ManagedSystems::invoke, &managed};
+    /* Every stage the managed assembly may declare. The schedule reads these
+       every frame and copies the names, so they live as long as the run; only
+       the stages the assembly filled are registered. */
+    std::array<EngineSystemDesc, csharp::ManagedSystems::kStageEntryCount> managed_descs{};
+    {
+        const csharp::ManagedSystems::StageEntry* entries =
+            csharp::ManagedSystems::stageEntries();
+        for (std::size_t index = 0; index < managed_descs.size(); ++index)
+        {
+            managed_descs[index] = EngineSystemDesc{entries[index].name, entries[index].stage,
+                                                    entries[index].run, &managed};
+        }
+    }
 #endif
     config.systems = [&](ModuleHost& host, ecs::World& world)
     {
@@ -277,9 +289,18 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             return RESONATE_E_INVALID;
         }
 #if defined(RESONATE_WITH_CSHARP)
-        if (managed_configured && addEngineSystem(host, managed_desc) != RESONATE_OK)
+        if (managed_configured)
         {
-            return RESONATE_E_INVALID;
+            const csharp::ManagedSystems::StageEntry* entries =
+                csharp::ManagedSystems::stageEntries();
+            for (std::size_t index = 0; index < managed_descs.size(); ++index)
+            {
+                if (managed.usesStage(entries[index].stage) &&
+                    addEngineSystem(host, managed_descs[index]) != RESONATE_OK)
+                {
+                    return RESONATE_E_INVALID;
+                }
+            }
         }
 #endif
         /* The demo scene is what the window shows until scenes load from disk;

@@ -1,6 +1,8 @@
 #ifndef RESONATE_CSHARP_MANAGED_SYSTEMS_H
 #define RESONATE_CSHARP_MANAGED_SYSTEMS_H
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -11,20 +13,33 @@
 #include <resonate/csharp/host.hpp>
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
+#include <resonate/module/stage.h>
 
 namespace resonate::csharp
 {
 
-/* The registration entry every managed assembly exposes; the binding generator
-   will name it per assembly later. */
-inline constexpr const char* kRegisterEntry = "Register";
+/* The unmanaged entry the registration generator emits; the plain Register it
+   also emits serves the reflective patch path. */
+inline constexpr const char* kRegisterEntry = "RegisterUnmanaged";
 
-/* A managed assembly's systems as one engine system. The assembly registers its
-   entries into the table when it loads; the frame loop invokes them through the
-   table with the generated frame context, so no delegate reaches the engine. */
+/* A managed assembly's systems, one engine system per stage it declares. The
+   assembly registers its entries into per-stage tables when it loads; the
+   frame loop invokes them through the tables with the generated frame context,
+   so no delegate reaches the engine. */
 class ManagedSystems
 {
 public:
+    /* The stage declarations the host can schedule, and the thunk for each.
+       The descriptors borrow these names and thunks for the run's lifetime. */
+    struct StageEntry
+    {
+        ResonateStage stage;
+        const char* name;
+        void (*run)(void*, ecs::World&, ecs::CommandBuffer&, float);
+    };
+    static constexpr std::size_t kStageEntryCount = 6U;
+    static const StageEntry* stageEntries();
+
     ManagedSystems() = default;
     ~ManagedSystems();
 
@@ -57,21 +72,33 @@ public:
         return !patch_frames_.empty();
     }
 
-    /* The registration callback a patch reaches through its registration; it
-       remembers the entry being displaced. Public because the C callback in
-       the implementation has to call it. */
-    bool replace_tracked(std::uint32_t id, DispatchEntry entry);
+    /* The registration callbacks a managed assembly and a patch reach through
+       their registration. Public because the C callbacks in the implementation
+       have to call them. */
+    bool register_entry(std::uint32_t stage, std::uint32_t id, DispatchEntry entry);
+    bool replace_tracked(std::uint32_t stage, std::uint32_t id, DispatchEntry entry);
 
-    /* The component whose first non-empty chunk rides the context each frame
-       (its name as registered, e.g. "resonate.hierarchy.LocalTransform").
-       Empty leaves the chunk fields null. */
+    /* True when the assembly registered at least one entry for the stage; the
+       host registers an engine system only for those. */
+    bool usesStage(ResonateStage stage) const;
+
+    /* The component whose chunks ride the context, one invocation per
+       non-empty chunk (its name as registered, e.g.
+       "resonate.hierarchy.LocalTransform"). Empty leaves the chunk fields
+       null. */
     void set_component(const char* name);
 
-    /* The engine system's run function; `context` is this object. */
+    /* The UPDATE-stage run function, for hosts that schedule one stage only;
+       `context` is this object. */
     static void invoke(void* context, ecs::World& world, ecs::CommandBuffer& commands,
                        float delta_seconds);
 
-    /* Frames the table has been invoked for. */
+    /* The per-stage run function the host registers through stageEntries. */
+    static void invokeStage(ResonateStage stage, void* context, ecs::World& world,
+                            ecs::CommandBuffer& commands, float delta_seconds);
+
+    /* Fixed steps the UPDATE stage has run: the frame index a managed entry
+       sees. Other stages observe the current step. */
     std::uint64_t frames() const
     {
         return frames_;
@@ -79,7 +106,7 @@ public:
 
 private:
     RuntimeHost host_;
-    DispatchTable table_{64U};
+    std::array<DispatchTable, RESONATE_STAGE_COUNT> tables_{};
     bindings::SystemContext frame_{};
     std::uint64_t frames_ = 0U;
     void* registration_ = nullptr;
@@ -89,10 +116,17 @@ private:
     bool query_ready_ = false;
     bindings::HostApi api_{};
 
+    struct PreviousEntry
+    {
+        std::uint32_t stage = 0U;
+        std::uint32_t id = 0U;
+        DispatchEntry entry = nullptr;
+    };
+
     struct PatchFrame
     {
         void* context = nullptr;
-        std::vector<std::pair<std::uint32_t, DispatchEntry>> previous;
+        std::vector<PreviousEntry> previous;
     };
     void restoreFrame(PatchFrame& frame);
     std::vector<PatchFrame> patch_frames_;

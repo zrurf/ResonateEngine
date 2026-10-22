@@ -19,7 +19,8 @@ using DispatchEntry = void (*)(void* context);
 class DispatchTable
 {
 public:
-    explicit DispatchTable(std::size_t capacity = 0);
+    DispatchTable() = default;
+    explicit DispatchTable(std::size_t capacity);
 
     /* Allocates the slots, all empty. Called by the assembler before any
        managed code registers; entries do not survive a resize. */
@@ -43,6 +44,10 @@ public:
        empty slot is a no-op, so a system a patch has not installed yet cannot
        crash the frame. */
     bool invoke(std::uint32_t id, void* context) const;
+
+    /* True when at least one slot is occupied; the host schedules only the
+       stages an assembly filled. */
+    bool any() const;
 
     std::size_t capacity() const
     {

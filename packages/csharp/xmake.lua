@@ -4,7 +4,7 @@
 --
 -- The managed ids and boundary structs come from content/csharp/bindings.json;
 -- csbind generates them before this target compiles, because ManagedSystems
--- names the generated SystemContext and the tick id.
+-- names the generated SystemContext and the stage ids.
 
 rule("resonate.csbind")
     before_build(function (target)
@@ -24,7 +24,7 @@ target("Resonate.CSharp")
     add_includedirs("include", {public = true})
     add_includedirs(path.join(os.projectdir(), "build", "gen", "csharp"), {public = true})
     add_files("src/**.cpp")
-    add_deps("Resonate.ECS", "Resonate.PAL")
+    add_deps("Resonate.ECS", "Resonate.PAL", "Resonate.Module.Abi")
     add_rules("resonate.csbind")
     on_load(function (target)
         os.mkdir(path.join(os.projectdir(), "build", "gen", "csharp"))
