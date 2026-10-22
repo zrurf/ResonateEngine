@@ -289,6 +289,17 @@ task("ecs-bench")
         description = "Run the ECS acceptance bench.",
     }
 
+task("csharp-bench")
+    set_category("plugin")
+    on_run(function ()
+        os.execv(os.programfile(), {"build", "-y", "Resonate.Bench.CSharp"})
+        os.execv(os.programfile(), {"run", "Resonate.Bench.CSharp"})
+    end)
+    set_menu {
+        usage = "xmake csharp-bench",
+        description = "Run the C# FFI-budget bench.",
+    }
+
 task("texcook")
     set_category("plugin")
     on_run(function ()
