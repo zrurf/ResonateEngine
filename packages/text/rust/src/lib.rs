@@ -114,7 +114,8 @@ pub extern "C" fn resonate_text_font_metrics(font: *const ResonateTextFont, size
     }
     let result = catch_unwind(AssertUnwindSafe(|| {
         let font = unsafe { font_ref(font) }?;
-        let metrics = font.metrics(Size::new(size), LocationRef::default());
+        let location = font.axes().location([("wght", 400.0)]);
+        let metrics = font.metrics(Size::new(size), LocationRef::from(&location));
         unsafe
         {
             *ascent = metrics.ascent;
@@ -152,9 +153,13 @@ pub extern "C" fn resonate_text_glyph_raster(font: *const ResonateTextFont, glyp
         let font = unsafe { font_ref(font) }?;
         let glyphs = font.outline_glyphs();
         let glyph = glyphs.get(GlyphId::new(glyph_id))?;
+        let location = font.axes().location([("wght", 400.0)]);
         let mut pen = PathPen { commands: Vec::new() };
         let metrics = glyph
-            .draw(DrawSettings::unhinted(Size::new(size), LocationRef::default()), &mut pen)
+            .draw(
+                DrawSettings::unhinted(Size::new(size), LocationRef::from(&location)),
+                &mut pen,
+            )
             .ok()?;
 
         let advance = metrics.advance_width.unwrap_or(0.0);
@@ -170,11 +175,7 @@ pub extern "C" fn resonate_text_glyph_raster(font: *const ResonateTextFont, glyp
         // Skrifa outlines are y-up; the atlas is y-down, so flip before
         // measuring and rasterizing.
         let flip = Transform::new(1.0, 0.0, 0.0, -1.0, 0.0, 0.0);
-        let placed: Vec<Command> = pen
-            .commands
-            .iter()
-            .map(|command| command.transform(&flip))
-            .collect();
+        let placed: Vec<Command> = pen.commands.iter().map(|c| c.transform(&flip)).collect();
         let bounds = zeno::bounds(&placed, Fill::NonZero, None);
         let pad = 1.0f32;
         let left = bounds.min.x.floor();
@@ -190,11 +191,12 @@ pub extern "C" fn resonate_text_glyph_raster(font: *const ResonateTextFont, glyp
             return Some(());
         }
 
-        let mut mask = Mask::new(&placed);
-        mask.transform(Some(Transform::translation(pad - left, pad - top)))
-            .size(width, height)
-            .origin(Origin::TopLeft);
+        let translation = Transform::translation(pad - left, pad - top);
+        let translated: Vec<Command> = placed.iter().map(|c| c.transform(&translation)).collect();
+        let mut mask = Mask::new(&translated);
+        mask.size(width, height).origin(Origin::TopLeft);
         let (pixels, _) = mask.render();
+
         let bitmap = pixels.into_boxed_slice();
         let pointer = Box::into_raw(bitmap) as *mut u8;
         unsafe
@@ -203,7 +205,7 @@ pub extern "C" fn resonate_text_glyph_raster(font: *const ResonateTextFont, glyp
                 width,
                 height,
                 bearing_x: (left - pad) as i32,
-                bearing_y: (pad - top) as i32,
+                bearing_y: (pad - bounds.min.y) as i32,
                 advance,
                 pixels: pointer,
             };
@@ -237,3 +239,4 @@ pub extern "C" fn resonate_text_bitmap_free(bitmap: *mut ResonateTextBitmap)
         *out = ResonateTextBitmap::default();
     }
 }
+

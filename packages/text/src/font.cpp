@@ -155,6 +155,10 @@ bool shape(const Font& font, std::string_view utf8, float size, std::vector<Shap
     }
     const int scale = static_cast<int>(size * 64.0F + 0.5F);
     hb_font_set_scale(hb_font, scale, scale);
+    hb_variation_t weight{};
+    weight.tag = HB_TAG('w', 'g', 'h', 't');
+    weight.value = 400.0F;
+    hb_font_set_variations(hb_font, &weight, 1U);
 
     hb_buffer_t* buffer = hb_buffer_create();
     if (buffer == nullptr)
