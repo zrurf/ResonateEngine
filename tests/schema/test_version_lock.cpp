@@ -145,6 +145,25 @@ TEST_CASE("the lock records the accepted shape and then checks clean", "[schema]
     REQUIRE(again.output.find("0 lock(s) updated") != std::string::npos);
 }
 
+TEST_CASE("a malformed version in the lock is a diagnostic, not a crash", "[schema][lock]")
+{
+    LockCase testCase("lock-malformed-version");
+    testCase.write(kHealthV1);
+    REQUIRE(testCase.update().exitCode == 0);
+
+    std::string text = testCase.lock();
+    const std::string version = "\"version\": 1";
+    const std::size_t at = text.find(version);
+    REQUIRE(at != std::string::npos);
+    text.replace(at, version.size(), "\"version\": 1.5");
+    resonate::test::writeTextFile(testCase.root + "/schemas.lock.json", text);
+
+    const ToolRun run = testCase.check();
+    CHECK(run.exitCode != 0);
+    CHECK(run.output.find("cannot be read as a version lock") != std::string::npos);
+    CHECK(run.output.find("Unhandled exception") == std::string::npos);
+}
+
 TEST_CASE("a version that goes backwards fails the check", "[schema][lock]")
 {
     LockCase testCase("lock-rollback");

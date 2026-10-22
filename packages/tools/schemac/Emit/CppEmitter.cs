@@ -76,7 +76,7 @@ internal static class CppEmitter
 
         string space = Namespace(module.Id);
         text.Append("\nnamespace ").Append(space).Append("\n{\n");
-        foreach (TypeDecl type in storage)
+        foreach (TypeDecl type in Order(storage))
         {
             text.Append('\n');
             switch (type.Kind)
@@ -108,7 +108,7 @@ internal static class CppEmitter
         text.Append("\n/* The frozen layout: the metadata and every other language's view are built\n"
                     + "   from these numbers, so a compiler that would lay the declarations out\n"
                     + "   differently has to fail here instead of shifting bytes silently. */\n");
-        foreach (TypeDecl type in storage)
+        foreach (TypeDecl type in Order(storage))
         {
             WriteLayoutAssertions(text, type);
         }
@@ -322,6 +322,49 @@ internal static class CppEmitter
             return text + (primitive.Signed ? "LL" : "ULL");
         }
         return text;
+    }
+
+    /* A field inlines its type, so a record must follow every record it names.
+       The schema allows a field to reference a type declared later (or in
+       another file), so the emission order is derived rather than taken from
+       discovery order. Cycles are rejected by the compiler before this runs. */
+    private static List<TypeDecl> Order(List<TypeDecl> storage)
+    {
+        Dictionary<string, TypeDecl> by_name = [];
+        foreach (TypeDecl type in storage)
+        {
+            by_name[type.Name] = type;
+        }
+
+        List<TypeDecl> ordered = [];
+        HashSet<TypeDecl> emitted = [];
+        HashSet<TypeDecl> visiting = [];
+
+        void Visit(TypeDecl type)
+        {
+            if (emitted.Contains(type) || !visiting.Add(type))
+            {
+                return;
+            }
+            foreach (FieldDecl field in type.Fields)
+            {
+                if (field.Resolved is TypeDecl dependency &&
+                    by_name.TryGetValue(dependency.Name, out TypeDecl? local) &&
+                    !ReferenceEquals(local, type))
+                {
+                    Visit(local);
+                }
+            }
+            visiting.Remove(type);
+            emitted.Add(type);
+            ordered.Add(type);
+        }
+
+        foreach (TypeDecl type in storage)
+        {
+            Visit(type);
+        }
+        return ordered;
     }
 
     private static string Namespace(string module)

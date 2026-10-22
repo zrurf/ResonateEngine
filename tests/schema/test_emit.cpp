@@ -172,6 +172,11 @@ TEST_CASE("the generated header carries the types, traits, versions and frozen l
     requireContains(managed, "public static class HealthLayout");
     requireContains(managed, "public const int FlagsOffset = 4;");
     requireContains(managed, "public static class LayoutChecks");
+    /* A named enum is a chunk scalar: an empty struct for it would compare its
+       1-byte Marshal size against the declared width and fail the check. */
+    REQUIRE(managed.find("public struct Flags") == std::string::npos);
+    REQUIRE(managed.find("public struct Mask") == std::string::npos);
+    REQUIRE(managed.find("FlagsLayout") == std::string::npos);
 
     const std::string math =
         resonate::test::readTextFile(testCase.gen + "/csharp/Resonate.CSharp.Math.g.cs");
@@ -179,6 +184,35 @@ TEST_CASE("the generated header carries the types, traits, versions and frozen l
     requireContains(math, "namespace Resonate.CSharp.Math;");
     requireContains(math, "public struct Mat4");
     requireContains(math, "    public float M33;");
+}
+
+TEST_CASE("generated records follow the types they inline", "[schema][emit]")
+{
+    const std::string root = resonate::test::scratchDirectory("emit-forward-reference");
+    /* The component names a struct declared after it; C++ needs the struct
+       first even though the schema language does not care about order. */
+    resonate::test::writeTextFile(root + "/case.rschema", R"xml(<schema module="resonate.order">
+  <component name="Early" version="1">
+    <field name="late" type="Late"/>
+  </component>
+  <struct name="Late">
+    <field name="value" type="i32"/>
+  </struct>
+</schema>
+)xml");
+
+    const ToolRun run =
+        resonate::test::runSchemac("--root \"" + root + "\" --out \"" + root + "/gen\"");
+    INFO(run.output);
+    REQUIRE(run.exitCode == 0);
+
+    const std::string header =
+        resonate::test::readTextFile(root + "/gen/resonate.order/components.gen.h");
+    const std::size_t late = header.find("struct Late");
+    const std::size_t early = header.find("struct Early");
+    REQUIRE(late != std::string::npos);
+    REQUIRE(early != std::string::npos);
+    CHECK(late < early);
 }
 
 TEST_CASE("a module of document node types generates metadata and a header without types",

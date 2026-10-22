@@ -231,7 +231,8 @@ internal static class VersionLock
             return types;
         }
         catch (Exception error) when (error is JsonException or InvalidOperationException or IOException
-                                      or UnauthorizedAccessException or KeyNotFoundException)
+                                      or UnauthorizedAccessException or KeyNotFoundException
+                                      or FormatException)
         {
             diagnostics.Error($"{PathText.Relative(path)} cannot be read as a version lock "
                               + $"({error.Message}); run 'xmake schema-lock' to rewrite it");

@@ -28,7 +28,10 @@ internal static class CSharpEmitter
         List<TypeDecl> storage = [];
         foreach (TypeDecl type in module.Types)
         {
-            if (type.IsStorage)
+            /* Enums and bitmasks are chunk scalars, not structs: fields of one
+               appear as the width's primitive type, so a managed view of the
+               named type would be an empty struct with the wrong size. */
+            if (type.IsStorage && type.Kind != TypeKind.Enum && type.Kind != TypeKind.Bitmask)
             {
                 storage.Add(type);
             }
