@@ -25,10 +25,17 @@ struct InputState
 
 struct WindowState
 {
+    /* Four pads is a couch-multiplayer bound, not a driver limit: the action map
+       asks for the count and indexes below it. */
+    static constexpr int kMaxGamepads = 4;
+
     SDL_Window* handle = nullptr;
     uint32_t width = 0;
     uint32_t height = 0;
     InputState input;
+    SDL_Gamepad* gamepads[kMaxGamepads] = {};
+    SDL_JoystickID gamepad_ids[kMaxGamepads] = {};
+    int gamepad_count = 0;
 };
 
 WindowState& windowState();

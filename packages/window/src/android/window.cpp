@@ -293,6 +293,10 @@ ResonateInput g_input = {
     &mouseDown,
     &pointerPosition,
     &pointerDelta,
+    /* Android has no gamepad source yet; the nulls are the ABI's "none". */
+    nullptr,
+    nullptr,
+    nullptr,
     nullptr,
 };
 

@@ -301,6 +301,40 @@ typedef enum ResonateMouseButton : uint8_t
     RESONATE_MOUSE_BUTTON_COUNT = 5
 } ResonateMouseButton;
 
+/* Gamepad controls in the engine's own order: the numbering is the ABI and does
+   not follow any one vendor's layout. South/east/west/north are the face
+   buttons (A/B/X/Y on an Xbox pad). */
+typedef enum ResonateGamepadButton : uint8_t
+{
+    RESONATE_GAMEPAD_SOUTH = 0,
+    RESONATE_GAMEPAD_EAST = 1,
+    RESONATE_GAMEPAD_WEST = 2,
+    RESONATE_GAMEPAD_NORTH = 3,
+    RESONATE_GAMEPAD_BACK = 4,
+    RESONATE_GAMEPAD_GUIDE = 5,
+    RESONATE_GAMEPAD_START = 6,
+    RESONATE_GAMEPAD_LEFT_STICK = 7,
+    RESONATE_GAMEPAD_RIGHT_STICK = 8,
+    RESONATE_GAMEPAD_LEFT_SHOULDER = 9,
+    RESONATE_GAMEPAD_RIGHT_SHOULDER = 10,
+    RESONATE_GAMEPAD_DPAD_UP = 11,
+    RESONATE_GAMEPAD_DPAD_DOWN = 12,
+    RESONATE_GAMEPAD_DPAD_LEFT = 13,
+    RESONATE_GAMEPAD_DPAD_RIGHT = 14,
+    RESONATE_GAMEPAD_BUTTON_COUNT = 15
+} ResonateGamepadButton;
+
+typedef enum ResonateGamepadAxis : uint8_t
+{
+    RESONATE_GAMEPAD_AXIS_LEFT_X = 0,
+    RESONATE_GAMEPAD_AXIS_LEFT_Y = 1,
+    RESONATE_GAMEPAD_AXIS_RIGHT_X = 2,
+    RESONATE_GAMEPAD_AXIS_RIGHT_Y = 3,
+    RESONATE_GAMEPAD_AXIS_LEFT_TRIGGER = 4,
+    RESONATE_GAMEPAD_AXIS_RIGHT_TRIGGER = 5,
+    RESONATE_GAMEPAD_AXIS_COUNT = 6
+} ResonateGamepadAxis;
+
 /* Snapshot of input state for the current frame. */
 typedef struct ResonateInput
 {
@@ -320,6 +354,14 @@ typedef struct ResonateInput
 
     /* Movement since the previous frame. */
     void (*pointer_delta)(void* self, ResonateVec2* out_delta);
+
+    /* Connected gamepads, indexed 0 .. count-1. The engine's own numbering keeps
+       a pad index stable for the run; a disconnected pad disappears from the
+       count. */
+    int32_t (*gamepad_count)(void* self);
+    int32_t (*gamepad_button_down)(void* self, int32_t pad, ResonateGamepadButton button);
+    /* -1..1 for sticks, 0..1 for triggers. */
+    float (*gamepad_axis)(void* self, int32_t pad, ResonateGamepadAxis axis);
 
     /* Provider state. Every call above receives this as its first argument; the
        host never interprets it. */

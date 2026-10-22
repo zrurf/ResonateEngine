@@ -49,6 +49,8 @@ struct FakeInput
     bool space = false;
     bool left_mouse = false;
     bool j = false;
+    bool south = false;
+    bool trigger = false;
     ResonateInput input{};
 
     FakeInput()
@@ -56,6 +58,9 @@ struct FakeInput
         input.self = this;
         input.key_down = &FakeInput::keyDown;
         input.mouse_down = &FakeInput::mouseDown;
+        input.gamepad_count = &FakeInput::gamepadCount;
+        input.gamepad_button_down = &FakeInput::gamepadButtonDown;
+        input.gamepad_axis = &FakeInput::gamepadAxis;
     }
 
     static std::int32_t keyDown(void* self, ResonateKey key)
@@ -77,11 +82,33 @@ struct FakeInput
         const auto* fake = static_cast<const FakeInput*>(self);
         return button == RESONATE_MOUSE_LEFT && fake->left_mouse ? 1 : 0;
     }
+
+    static std::int32_t gamepadCount(void*)
+    {
+        return 1;
+    }
+
+    static std::int32_t gamepadButtonDown(void* self, std::int32_t pad,
+                                          ResonateGamepadButton button)
+    {
+        const auto* fake = static_cast<const FakeInput*>(self);
+        return pad == 0 && button == RESONATE_GAMEPAD_SOUTH && fake->south ? 1 : 0;
+    }
+
+    static float gamepadAxis(void* self, std::int32_t pad, ResonateGamepadAxis axis)
+    {
+        const auto* fake = static_cast<const FakeInput*>(self);
+        if (pad == 0 && axis == RESONATE_GAMEPAD_AXIS_RIGHT_TRIGGER && fake->trigger)
+        {
+            return 0.8F;
+        }
+        return 0.0F;
+    }
 };
 
 const char* kDocument =
     "<?xml version=\"1.0\"?>\n"
-    "<!-- two actions; fire is bound twice, aim also names a gamepad -->\n"
+    "<!-- two actions; each is bound on more than one device -->\n"
     "<action-map>\n"
     "  <action name=\"fire\" value=\"button\">\n"
     "    <phase name=\"pressed\"/>\n"
@@ -90,6 +117,7 @@ const char* kDocument =
     "  <action name=\"aim\"/>\n"
     "  <binding action=\"fire\" device=\"keyboard\" control=\"space\"/>\n"
     "  <binding action=\"fire\" device=\"mouse\" control=\"left-button\"/>\n"
+    "  <binding action=\"fire\" device=\"gamepad\" control=\"south\"/>\n"
     "  <binding action=\"aim\" device=\"keyboard\" control=\"j\"/>\n"
     "  <binding action=\"aim\" device=\"gamepad\" control=\"right-trigger\"/>\n"
     "</action-map>\n";
@@ -150,6 +178,28 @@ TEST_CASE("action map: bindings drive pressed, held and released", "[action-map]
     fake.j = true;
     map.update(&fake.input);
     CHECK(aim->pressed);
+
+    /* The gamepad drives the same actions: a face button holds fire, and a
+       trigger past halfway drives the digital aim state. Space was still held
+       from the null-input check, so release first to see a fresh press. */
+    fake.j = false;
+    fake.space = false;
+    map.update(&fake.input);
+    fake.south = true;
+    map.update(&fake.input);
+    CHECK(fire->pressed);
+    CHECK(fire->held);
+    fake.south = false;
+    map.update(&fake.input);
+    CHECK(fire->released);
+
+    fake.trigger = true;
+    map.update(&fake.input);
+    CHECK(aim->pressed);
+    CHECK(aim->held);
+    fake.trigger = false;
+    map.update(&fake.input);
+    CHECK(aim->released);
 }
 
 TEST_CASE("action map: invalid documents fail and leave the map unchanged", "[action-map]")

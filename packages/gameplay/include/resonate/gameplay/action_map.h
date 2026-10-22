@@ -6,10 +6,9 @@
    into pressed/held/released states. Gameplay reads actions, not keys, so a
    rebind is an asset change.
 
-   Bindings exist per device (keyboard, mouse, gamepad); the gamepad source is
-   not wired yet, so gamepad bindings validate and are kept but do not drive
-   state. Phases in the document are accepted and currently implied by the
-   digital state (pressed/held/released); analog values are a later slice. */
+   Keyboard, mouse and gamepad bindings all drive the digital states; a gamepad
+   trigger counts as down past its halfway point. Analog values and rebind
+   persistence are later slices. */
 
 #include <cstddef>
 #include <memory>

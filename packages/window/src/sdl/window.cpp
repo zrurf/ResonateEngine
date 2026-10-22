@@ -15,6 +15,11 @@ namespace
 
 WindowState g_state;
 
+/* Defined below; create opens the pads that are already connected, and the
+   event pump follows hotplug. */
+bool openGamepad(WindowState& state, SDL_JoystickID id);
+void closeGamepad(WindowState& state, SDL_JoystickID id);
+
 ResonateStatus create(void* self, const char* title, uint32_t width, uint32_t height)
 {
     auto* state = static_cast<WindowState*>(self);
@@ -45,6 +50,22 @@ ResonateStatus create(void* self, const char* title, uint32_t width, uint32_t he
         return RESONATE_E_INTERNAL;
     }
 
+    /* Gamepads are optional: a machine without controller support still runs
+       with keyboard and mouse. Pads already connected when the window opens are
+       opened here; later ones arrive as events. */
+    if (SDL_InitSubSystem(SDL_INIT_GAMEPAD))
+    {
+        int count = 0;
+        if (SDL_JoystickID* ids = SDL_GetGamepads(&count))
+        {
+            for (int index = 0; index < count; ++index)
+            {
+                openGamepad(*state, ids[index]);
+            }
+            SDL_free(ids);
+        }
+    }
+
     int pixels_w = 0;
     int pixels_h = 0;
     SDL_GetWindowSizeInPixels(state->handle, &pixels_w, &pixels_h);
@@ -61,11 +82,62 @@ void destroy(void* self)
         return;
     }
 
+    for (int index = 0; index < state->gamepad_count; ++index)
+    {
+        SDL_CloseGamepad(state->gamepads[index]);
+        state->gamepads[index] = nullptr;
+    }
+    state->gamepad_count = 0;
+    SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+
     SDL_DestroyWindow(state->handle);
     state->handle = nullptr;
     state->width = 0;
     state->height = 0;
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
+}
+
+bool openGamepad(WindowState& state, SDL_JoystickID id)
+{
+    for (int index = 0; index < state.gamepad_count; ++index)
+    {
+        if (state.gamepad_ids[index] == id)
+        {
+            return false;
+        }
+    }
+    if (state.gamepad_count >= WindowState::kMaxGamepads)
+    {
+        return false;
+    }
+    SDL_Gamepad* pad = SDL_OpenGamepad(id);
+    if (pad == nullptr)
+    {
+        return false;
+    }
+    state.gamepads[state.gamepad_count] = pad;
+    state.gamepad_ids[state.gamepad_count] = id;
+    ++state.gamepad_count;
+    return true;
+}
+
+void closeGamepad(WindowState& state, SDL_JoystickID id)
+{
+    for (int index = 0; index < state.gamepad_count; ++index)
+    {
+        if (state.gamepad_ids[index] != id)
+        {
+            continue;
+        }
+        SDL_CloseGamepad(state.gamepads[index]);
+        /* The last pad fills the hole; the engine's pad indices are positional,
+           so a disconnect shifts only the tail. */
+        state.gamepads[index] = state.gamepads[state.gamepad_count - 1];
+        state.gamepad_ids[index] = state.gamepad_ids[state.gamepad_count - 1];
+        state.gamepads[state.gamepad_count - 1] = nullptr;
+        --state.gamepad_count;
+        return;
+    }
 }
 
 void refreshInput(InputState& input)
@@ -127,6 +199,12 @@ void pumpEvents(void* self)
                 state->height = static_cast<uint32_t>(pixels_h);
                 break;
             }
+            case SDL_EVENT_GAMEPAD_ADDED:
+                openGamepad(*state, event.gdevice.which);
+                break;
+            case SDL_EVENT_GAMEPAD_REMOVED:
+                closeGamepad(*state, event.gdevice.which);
+                break;
             default:
                 break;
         }

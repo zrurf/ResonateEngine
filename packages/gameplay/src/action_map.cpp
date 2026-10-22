@@ -421,10 +421,75 @@ bool mouseFromName(const std::string& name, ResonateMouseButton& out)
     return false;
 }
 
+enum class GamepadKind
+{
+    Button,
+    Axis,
+};
+
+struct GamepadBinding
+{
+    GamepadKind kind = GamepadKind::Button;
+    ResonateGamepadButton button = RESONATE_GAMEPAD_SOUTH;
+    ResonateGamepadAxis axis = RESONATE_GAMEPAD_AXIS_RIGHT_TRIGGER;
+};
+
+bool gamepadFromName(const std::string& name, GamepadKind& kind, ResonateGamepadButton& button,
+                     ResonateGamepadAxis& axis)
+{
+    /* Triggers are analog, but an action is digital for now: a trigger past the
+       halfway point counts as down. */
+    if (name == "left-trigger")
+    {
+        kind = GamepadKind::Axis;
+        axis = RESONATE_GAMEPAD_AXIS_LEFT_TRIGGER;
+        return true;
+    }
+    if (name == "right-trigger")
+    {
+        kind = GamepadKind::Axis;
+        axis = RESONATE_GAMEPAD_AXIS_RIGHT_TRIGGER;
+        return true;
+    }
+
+    struct Named
+    {
+        const char* name;
+        ResonateGamepadButton button;
+    };
+    static const Named kNamed[] = {
+        {"south", RESONATE_GAMEPAD_SOUTH},
+        {"east", RESONATE_GAMEPAD_EAST},
+        {"west", RESONATE_GAMEPAD_WEST},
+        {"north", RESONATE_GAMEPAD_NORTH},
+        {"back", RESONATE_GAMEPAD_BACK},
+        {"guide", RESONATE_GAMEPAD_GUIDE},
+        {"start", RESONATE_GAMEPAD_START},
+        {"left-stick", RESONATE_GAMEPAD_LEFT_STICK},
+        {"right-stick", RESONATE_GAMEPAD_RIGHT_STICK},
+        {"left-shoulder", RESONATE_GAMEPAD_LEFT_SHOULDER},
+        {"right-shoulder", RESONATE_GAMEPAD_RIGHT_SHOULDER},
+        {"dpad-up", RESONATE_GAMEPAD_DPAD_UP},
+        {"dpad-down", RESONATE_GAMEPAD_DPAD_DOWN},
+        {"dpad-left", RESONATE_GAMEPAD_DPAD_LEFT},
+        {"dpad-right", RESONATE_GAMEPAD_DPAD_RIGHT},
+    };
+    for (const Named& named : kNamed)
+    {
+        if (name == named.name)
+        {
+            kind = GamepadKind::Button;
+            button = named.button;
+            return true;
+        }
+    }
+    return false;
+}
+
 struct ActionData
 {
     std::string name;
-    bool gamepad = false;
+    std::vector<GamepadBinding> gamepad;
 };
 
 struct Binding
@@ -438,6 +503,7 @@ struct Binding
     } device = Device::Keyboard;
     ResonateKey key = RESONATE_KEY_UNKNOWN;
     ResonateMouseButton button = RESONATE_MOUSE_LEFT;
+    GamepadBinding gamepad;
 };
 
 bool expectEmpty(Reader& reader, const Element& element, const std::string& path,
@@ -535,7 +601,7 @@ bool parseAction(Reader& reader, const Element& element, std::vector<ActionData>
         }
     }
 
-    actions.push_back(ActionData{name->value, false});
+    actions.push_back(ActionData{name->value, {}});
     return true;
 }
 
@@ -577,9 +643,13 @@ bool parseBinding(Reader& reader, const Element& element, std::vector<Binding>& 
     }
     else if (device->value == "gamepad")
     {
-        /* Accepted and kept; the gamepad source is a later slice, so it does
-           not drive action state yet. */
         binding.device = Binding::Device::Gamepad;
+        if (!gamepadFromName(control->value, binding.gamepad.kind, binding.gamepad.button,
+                             binding.gamepad.axis))
+        {
+            return describe(path, element.line,
+                            "unknown gamepad control '" + control->value + "'", error);
+        }
     }
     else
     {
@@ -711,7 +781,7 @@ struct ActionMap::Impl
         std::string name;
         std::vector<ResonateKey> keys;
         std::vector<ResonateMouseButton> buttons;
-        bool gamepad = false;
+        std::vector<GamepadBinding> gamepad;
         ActionState state;
         bool was_held = false;
     };
@@ -776,7 +846,7 @@ bool ActionMap::load(const std::string& path, std::string& error)
                 action.buttons.push_back(binding.button);
                 break;
             case Binding::Device::Gamepad:
-                action.gamepad = true;
+                action.gamepad.push_back(binding.gamepad);
                 break;
             }
             break;
@@ -809,6 +879,26 @@ void ActionMap::update(const ResonateInput* input)
                 {
                     down = true;
                     break;
+                }
+            }
+        }
+        if (!down && input != nullptr && input->gamepad_count != nullptr &&
+            input->gamepad_button_down != nullptr && input->gamepad_axis != nullptr)
+        {
+            const int32_t pads = input->gamepad_count(input->self);
+            for (int32_t pad = 0; pad < pads && !down; ++pad)
+            {
+                for (const GamepadBinding& binding : action.gamepad)
+                {
+                    const bool pressed =
+                        binding.kind == GamepadKind::Button
+                            ? input->gamepad_button_down(input->self, pad, binding.button) != 0
+                            : input->gamepad_axis(input->self, pad, binding.axis) >= 0.5F;
+                    if (pressed)
+                    {
+                        down = true;
+                        break;
+                    }
                 }
             }
         }
