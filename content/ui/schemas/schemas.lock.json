@@ -1,0 +1,81 @@
+{
+  "format": 1,
+  "tool": "0.1.0",
+  "module": "resonate.ui",
+  "types": [
+    {
+      "name": "Canvas",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Canvas version 1",
+        "  size 8 align 4",
+        "  field mode resonate.ui.UpdateMode @0 size 1 default=Retained",
+        "  field scale f32 @4 size 4 default=1",
+        "  enum UpdateMode u8 values Retained=0, Immediate=1"
+      ]
+    },
+    {
+      "name": "ComputedRect",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component ComputedRect version 1",
+        "  size 16 align 4",
+        "  field x f32 @0 size 4",
+        "  field y f32 @4 size 4",
+        "  field width f32 @8 size 4",
+        "  field height f32 @12 size 4"
+      ]
+    },
+    {
+      "name": "LayoutGroup",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component LayoutGroup version 1",
+        "  size 24 align 4",
+        "  field direction resonate.ui.FlexDirection @0 size 1 default=Row",
+        "  field justify resonate.ui.Justify @1 size 1 default=Start",
+        "  field align resonate.ui.Align @2 size 1 default=Start",
+        "  field gap f32 @4 size 4 min=0 default=0",
+        "  field padding_left f32 @8 size 4 min=0 default=0",
+        "  field padding_top f32 @12 size 4 min=0 default=0",
+        "  field padding_right f32 @16 size 4 min=0 default=0",
+        "  field padding_bottom f32 @20 size 4 min=0 default=0",
+        "  enum Align u8 values Start=0, Center=1, End=2, Stretch=3",
+        "  enum FlexDirection u8 values Row=0, Column=1",
+        "  enum Justify u8 values Start=0, Center=1, End=2, SpaceBetween=3"
+      ]
+    },
+    {
+      "name": "RectTransform",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component RectTransform version 1",
+        "  size 48 align 4",
+        "  field x f32 @0 size 4 default=0",
+        "  field y f32 @4 size 4 default=0",
+        "  field width f32 @8 size 4 default=0",
+        "  field height f32 @12 size 4 default=0",
+        "  field anchor_min vec2 @16 size 8 default=0 0",
+        "  field anchor_max vec2 @24 size 8 default=0 0",
+        "  field pivot vec2 @32 size 8 default=0 0",
+        "  field z i32 @40 size 4 default=0",
+        "  field position resonate.ui.PositionMode @44 size 1 default=Relative",
+        "  enum PositionMode u8 values Relative=0, Absolute=1"
+      ]
+    },
+    {
+      "name": "StyleRef",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component StyleRef version 1",
+        "  size 4 align 4",
+        "  field style u32 @0 size 4 default=0"
+      ]
+    }
+  ]
+}

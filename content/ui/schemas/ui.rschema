@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<schema module="resonate.ui">
+
+  <!-- How a canvas updates: retained widgets rerender on change, immediate
+       subtrees rebuild their commands every frame. -->
+  <enum name="UpdateMode" width="u8">
+    <value name="Retained"/>
+    <value name="Immediate"/>
+  </enum>
+
+  <!-- A widget either takes its place from its parent's flow or keeps its
+       anchors and ignores that flow. -->
+  <enum name="PositionMode" width="u8">
+    <value name="Relative"/>
+    <value name="Absolute"/>
+  </enum>
+
+  <enum name="FlexDirection" width="u8">
+    <value name="Row"/>
+    <value name="Column"/>
+  </enum>
+
+  <enum name="Justify" width="u8">
+    <value name="Start"/>
+    <value name="Center"/>
+    <value name="End"/>
+    <value name="SpaceBetween"/>
+  </enum>
+
+  <enum name="Align" width="u8">
+    <value name="Start"/>
+    <value name="Center"/>
+    <value name="End"/>
+    <value name="Stretch"/>
+  </enum>
+
+  <!-- The root marker. Its rectangle is the target the layout pass is given;
+       scale is the one global factor between authored pixels and the target. -->
+  <component name="Canvas" version="1">
+    <field name="mode" type="UpdateMode" default="Retained"/>
+    <field name="scale" type="f32" default="1.0"/>
+  </component>
+
+  <!-- A widget's place in its parent. anchor_min and anchor_max select the
+       parent fraction the widget is tied to, x/y offset the pivot from that
+       anchor point, and width/height are added to the anchor span, so a
+       stretched widget uses negative insets. pivot is the fraction of its own
+       box the offsets name. -->
+  <component name="RectTransform" version="1">
+    <field name="x" type="f32" default="0"/>
+    <field name="y" type="f32" default="0"/>
+    <field name="width" type="f32" default="0"/>
+    <field name="height" type="f32" default="0"/>
+    <field name="anchor_min" type="vec2" default="0 0"/>
+    <field name="anchor_max" type="vec2" default="0 0"/>
+    <field name="pivot" type="vec2" default="0 0"/>
+    <field name="z" type="i32" default="0"/>
+    <field name="position" type="PositionMode" default="Relative"/>
+  </component>
+
+  <!-- A container's flow: children are visited in the hierarchy's insertion
+       order, gap separates neighbours, padding shrinks the content box. -->
+  <component name="LayoutGroup" version="1">
+    <field name="direction" type="FlexDirection" default="Row"/>
+    <field name="justify" type="Justify" default="Start"/>
+    <field name="align" type="Align" default="Start"/>
+    <field name="gap" type="f32" min="0" default="0"/>
+    <field name="padding_left" type="f32" min="0" default="0"/>
+    <field name="padding_top" type="f32" min="0" default="0"/>
+    <field name="padding_right" type="f32" min="0" default="0"/>
+    <field name="padding_bottom" type="f32" min="0" default="0"/>
+  </component>
+
+  <!-- Written by the layout pass, in target pixels. Consumers (render, hit
+       test) read this instead of repeating the anchor and flow math. -->
+  <component name="ComputedRect" version="1">
+    <field name="x" type="f32"/>
+    <field name="y" type="f32"/>
+    <field name="width" type="f32"/>
+    <field name="height" type="f32"/>
+  </component>
+
+  <!-- Reserved for the style compiler: the interned table entry a widget's
+       class set resolves to. Layout does not read it. -->
+  <component name="StyleRef" version="1">
+    <field name="style" type="u32" default="0"/>
+  </component>
+
+</schema>
