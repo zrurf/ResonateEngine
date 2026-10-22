@@ -42,8 +42,8 @@ internal static class Program
         " public delegate* unmanaged<System.IntPtr, ulong, byte*, int> RemoveComponent;" +
         " public delegate* unmanaged<System.IntPtr, ulong, int> Despawn;" +
         " public delegate* unmanaged<System.IntPtr, int> MarkChunkChanged; }" +        " public struct SystemContext { public float DeltaSeconds;" +
-        " public System.IntPtr HostApi; public System.IntPtr ChunkData;" +
-        " public ulong ChunkCount; public System.IntPtr EntityData; }" +
+        " public System.IntPtr HostApi; public System.IntPtr Chunks;" +
+        " public ulong ChunkCount; }" +
         "}";
 
     private const string Marked = "[assembly: Resonate.CSharp.ResonateBehaviour]\n";
@@ -91,7 +91,7 @@ internal static class Program
         "namespace Game { public static unsafe class Behaviour {" +
         " [Resonate.CSharp.UpdateIn(Resonate.CSharp.ResonateStage.Update)]" +
         " public static void Tick(Resonate.CSharp.Bindings.SystemContext* frame) {" +
-        " System.IntPtr data = frame->ChunkData; } } }";
+        " System.IntPtr data = frame->Chunks; } } }";
     private const string RawMarking =
         "[assembly: Resonate.CSharp.ResonateBehaviour]\n" +
         "namespace Game { public static unsafe class Behaviour {" +

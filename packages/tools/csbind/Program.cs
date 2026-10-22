@@ -675,23 +675,28 @@ internal static class Program
             public ref readonly T Value => ref *_data;
         }
 
-        /* Law 3's self side: the chunk the stage handed over, writable, and the
-           mark goes out when the view is disposed (law 7: a write is never
-           invisible). The type check against the host's component name keeps a
-           wrong T from aliasing the memory. */
-        public unsafe ref struct SelfView<T> where T : unmanaged
+        /* The stage's chunks, validated once: the name check happens here, so a
+           view per chunk costs no boundary work. The whole list arrives in one
+           call (the FFI budget is per stage, not per chunk). */
+        public readonly unsafe ref struct ChunkList<T> where T : unmanaged
         {
-            private HostApi* _api;
-            private Span<T> _items;
-            private ReadOnlySpan<EntityHandle> _entities;
+            private readonly ChunkSpan* _spans;
+            private readonly int _count;
+            private readonly HostApi* _api;
+
+            private ChunkList(ChunkSpan* spans, int count, HostApi* api)
+            {
+                _spans = spans;
+                _count = count;
+                _api = api;
+            }
 
             public static bool TryFrom(SystemContext* frame, ReadOnlySpan<byte> component,
-                                       out SelfView<T> view)
+                                       out ChunkList<T> list)
             {
-                view = default;
+                list = default;
                 HostApi* api = (HostApi*)frame->HostApi;
-                if (api == null || api->ComponentName == null || api->ComponentNameSize == 0 ||
-                    frame->ChunkData == IntPtr.Zero || frame->ChunkCount == 0)
+                if (api == null || api->ComponentName == null || api->ComponentNameSize == 0)
                 {
                     return false;
                 }
@@ -700,31 +705,64 @@ internal static class Program
                 {
                     return false;
                 }
-                view = new SelfView<T>
-                {
-                    _api = api,
-                    _items = new Span<T>((void*)frame->ChunkData, (int)frame->ChunkCount),
-                    _entities = new ReadOnlySpan<EntityHandle>(
-                        (void*)frame->EntityData, (int)frame->ChunkCount),
-                };
+                list = new ChunkList<T>((ChunkSpan*)frame->Chunks, (int)frame->ChunkCount, api);
                 return true;
             }
 
-            public Span<T> Items => _items;
+            public int Count => _count;
 
-            public ReadOnlySpan<EntityHandle> Entities => _entities;
+            /* The writable view; it marks its chunk when disposed (law 7). */
+            public SelfView<T> Self(int index) => new(_api, _spans[index]);
 
-            /* A self view denotes intent to write, so the chunk is marked even
-               when the body only read: over-reporting is safe, a missed write
-               is not. */
+            /* The swarm lane's read view: no write path, no mark. */
+            public ChunkView<T> Read(int index) => new(_spans[index]);
+        }
+
+        /* Law 3's self side: one chunk of the list, writable, with the mark on
+           dispose. A self view denotes intent to write, so the chunk is marked
+           even when the body only read: over-reporting is safe, a missed write
+           is not. */
+        public unsafe ref struct SelfView<T> where T : unmanaged
+        {
+            private HostApi* _api;
+            private readonly ChunkSpan _span;
+
+            internal SelfView(HostApi* api, in ChunkSpan span)
+            {
+                _api = api;
+                _span = span;
+            }
+
+            public Span<T> Items => new((void*)_span.Data, (int)_span.Count);
+
+            public ReadOnlySpan<EntityHandle> Entities =>
+                new((void*)_span.Entities, (int)_span.Count);
+
             public void Dispose()
             {
                 if (_api != null)
                 {
-                    _api->MarkChunkChanged((IntPtr)_api);
+                    _api->MarkChunkChanged((IntPtr)_api, _span.Entities, _span.Count);
                     _api = null;
                 }
             }
+        }
+
+        /* The swarm lane's view: a dense read-only pass with no mark, because
+           the body cannot write through it. */
+        public readonly unsafe ref struct ChunkView<T> where T : unmanaged
+        {
+            private readonly ChunkSpan _span;
+
+            internal ChunkView(in ChunkSpan span)
+            {
+                _span = span;
+            }
+
+            public ReadOnlySpan<T> Items => new((void*)_span.Data, (int)_span.Count);
+
+            public ReadOnlySpan<EntityHandle> Entities =>
+                new((void*)_span.Entities, (int)_span.Count);
         }
         """;
     }

@@ -59,18 +59,6 @@
           "type": "u32"
         },
         {
-          "name": "chunk_data",
-          "type": "void_pointer"
-        },
-        {
-          "name": "chunk_count",
-          "type": "u64"
-        },
-        {
-          "name": "entity_data",
-          "type": "void_pointer"
-        },
-        {
           "name": "mark_chunk_changed",
           "fn": "mark_chunk_changed"
         },
@@ -124,7 +112,7 @@
           "type": "void_pointer"
         },
         {
-          "name": "chunk_data",
+          "name": "chunks",
           "type": "void_pointer"
         },
         {
@@ -132,12 +120,25 @@
           "type": "u64"
         },
         {
-          "name": "entity_data",
+          "name": "host_api",
+          "type": "void_pointer"
+        }
+      ]
+    },
+    {
+      "name": "ChunkSpan",
+      "fields": [
+        {
+          "name": "data",
           "type": "void_pointer"
         },
         {
-          "name": "host_api",
+          "name": "entities",
           "type": "void_pointer"
+        },
+        {
+          "name": "count",
+          "type": "u64"
         }
       ]
     },
@@ -172,7 +173,9 @@
       "name": "mark_chunk_changed",
       "ret": "i32",
       "params": [
-        "void_pointer"
+        "void_pointer",
+        "void_pointer",
+        "u64"
       ]
     },
     {

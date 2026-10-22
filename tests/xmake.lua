@@ -156,3 +156,39 @@ target("Resonate.Bench.ECS")
     end
 
     add_packages("xxhash")
+
+-- The FFI budget: the same dense pass through a C# Span and as C++, both
+-- optimized, on the same 100k entities. The managed assembly publishes in
+-- Release/ReadyToRun (scripts/csharp_bench.lua) before the target compiles.
+target("Resonate.Bench.CSharp")
+    set_kind("binary")
+    set_default(false)
+    set_group("tests")
+    set_optimize("fastest")
+
+    add_files("bench/csharp_bench.cpp", "../packages/csharp/src/**.cpp",
+              "../packages/ecs/src/**.cpp", "../packages/core/src/container/**.cpp",
+              "../packages/core/src/memory/**.cpp", "../packages/core/src/job/**.cpp")
+    add_includedirs(".", "../packages/csharp/include", "../packages/ecs/include",
+                    "../packages/core/include", "../packages/module/include",
+                    path.join(os.projectdir(), "build", "gen", "csharp"))
+
+    add_files("../packages/pal/src/common/*.cpp")
+    add_includedirs("../packages/pal/include", "../packages/pal/src")
+    if is_plat("windows") then
+        add_files("../packages/pal/src/platform/os/windows/**.cpp")
+        add_syslinks("user32", "kernel32")
+    else
+        add_files("../packages/pal/src/common/posix/**.cpp")
+        add_syslinks("pthread", "dl")
+    end
+
+    add_packages("xxhash")
+
+    before_build(function (target)
+        local script = path.join(os.projectdir(), "scripts", "csharp_bench.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script})
+        if output ~= nil then
+            print(output)
+        end
+    end)

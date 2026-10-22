@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <AssemblyName>Resonate.Tests.Bench</AssemblyName>
+    <RootNamespace>Resonate.Tests.Bench</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DebugType>embedded</DebugType>
+    <!-- The entry writes through the chunk pointer. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- hostfxr loads this as a component: the publish drops the
+         runtimeconfig.json the initializer reads. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <!-- The generated ids, boundary structs, facade and component views. -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)../../../build/gen/csharp/**/*.g.cs" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../../packages/tools/analyzers/Resonate.CSharp.Attributes/Resonate.CSharp.Attributes.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../../packages/tools/analyzers/Resonate.Analyzers/Resonate.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

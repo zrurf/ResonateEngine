@@ -333,7 +333,8 @@ TEST_CASE("csharp: a large chunk set reaches managed code in one frame", "[cshar
     CHECK(counters[1] == 0);
     CHECK(counters[3] == kEntities);
     CHECK(counters[2] == kEntities * 10);
-    CHECK(counters[0] > 1);
+    /* One boundary call covers every chunk: the FFI budget is per stage. */
+    CHECK(counters[0] == 1);
     CHECK(systems.frames() == 1U);
 }
 

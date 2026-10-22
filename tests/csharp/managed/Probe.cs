@@ -71,44 +71,57 @@ public static unsafe class Probe
             counters[8] = 0;
         }
 
-        if (!SelfView<Resonate.Hierarchy.LocalTransform>.TryFrom(
+        if (!ChunkList<Resonate.Hierarchy.LocalTransform>.TryFrom(
                 frame, Resonate.Hierarchy.LocalTransform.SchemaNameUtf8,
-                out SelfView<Resonate.Hierarchy.LocalTransform> self))
+                out ChunkList<Resonate.Hierarchy.LocalTransform> chunks))
         {
             counters[2] = -1;
             return;
         }
-        using (self)
+
+        /* A list of the wrong type is rejected once, so a mismatched T cannot
+           alias the memory. */
+        bool rejected = !ChunkList<Resonate.Hierarchy.WorldTransform>.TryFrom(
+            frame, Resonate.Hierarchy.WorldTransform.SchemaNameUtf8, out _);
+        counters[11] = rejected ? 1 : 0;
+
+        bool saw_rows = false;
+        for (int chunk = 0; chunk < chunks.Count; ++chunk)
         {
-            Span<Resonate.Hierarchy.LocalTransform> transforms = self.Items;
-            float sum = 0.0F;
-            for (int index = 0; index < transforms.Length; ++index)
+            /* The view marks its chunk when it is disposed. */
+            using (SelfView<Resonate.Hierarchy.LocalTransform> self = chunks.Self(chunk))
             {
-                sum += transforms[index].Position.X;
-                transforms[index].Position.Y = 1.0F;
+                Span<Resonate.Hierarchy.LocalTransform> transforms = self.Items;
+                float sum = 0.0F;
+                for (int index = 0; index < transforms.Length; ++index)
+                {
+                    sum += transforms[index].Position.X;
+                    transforms[index].Position.Y = 1.0F;
+                }
+                counters[2] += (int)(sum * 10.0F);
+                counters[3] += transforms.Length;
+                if (!saw_rows)
+                {
+                    counters[4] = (int)self.Entities[0].Index;
+                }
+                saw_rows = true;
+
+                if (frame->FrameIndex == 1 && counters[8] == 3)
+                {
+                    counters[9] = commands.Read(self.Entities[0],
+                                                Resonate.Hierarchy.LocalTransform.SchemaNameUtf8,
+                                                out ReadView<Resonate.Hierarchy.LocalTransform> view)
+                                      ? (int)(view.Value.Position.X * 10.0F)
+                                      : -1;
+                    counters[8] = 0;
+                }
+
+                counters[5] = 1;
             }
-            counters[2] += (int)(sum * 10.0F);
-            counters[3] += transforms.Length;
-            counters[4] = (int)self.Entities[0].Index;
-
-            /* A view of the wrong type is rejected, so a mismatched T cannot
-               alias the chunk. */
-            bool rejected = !SelfView<Resonate.Hierarchy.WorldTransform>.TryFrom(
-                frame, Resonate.Hierarchy.WorldTransform.SchemaNameUtf8, out _);
-            counters[11] = rejected ? 1 : 0;
-
-            if (frame->FrameIndex == 1 && counters[8] == 3)
-            {
-                counters[9] = commands.Read(self.Entities[0],
-                                            Resonate.Hierarchy.LocalTransform.SchemaNameUtf8,
-                                            out ReadView<Resonate.Hierarchy.LocalTransform> view)
-                                  ? (int)(view.Value.Position.X * 10.0F)
-                                  : -1;
-                counters[8] = 0;
-            }
-
-            /* The view marks the chunk when it is disposed. */
-            counters[5] = 1;
+        }
+        if (!saw_rows)
+        {
+            counters[2] = -1;
         }
     }
 

@@ -116,6 +116,10 @@ private:
     bool query_ready_ = false;
     bindings::HostApi api_{};
 
+    /* The stage's chunks for the single boundary call; reserved once so a
+       frame does not allocate. */
+    std::vector<bindings::ChunkSpan> chunk_spans_;
+
     struct PreviousEntry
     {
         std::uint32_t stage = 0U;

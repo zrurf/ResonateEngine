@@ -15,15 +15,15 @@ public sealed class RawChunkAccessAnalyzer : DiagnosticAnalyzer
     public static readonly DiagnosticDescriptor Rule = new(
         id: "RESONATE0003",
         title: "Component memory is reached through a typed view",
-        messageFormat: "'{0}' bypasses the typed view; use SelfView<T> or ReadView<T>",
+        messageFormat: "'{0}' bypasses the typed views; use ChunkList<T>",
         category: "Resonate",
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
-        description: "SelfView<T> is writable and ReadView<T> is read-only; raw chunk " +
-                     "pointers carry neither guarantee.");
+        description: "ChunkList<T> carries the type check; SelfView<T> is writable and " +
+                     "ChunkView<T> is read-only, while the raw list carries neither guarantee.");
 
     private static readonly ImmutableHashSet<string> RawPointers = ImmutableHashSet.Create(
-        "ChunkData", "ChunkCount", "EntityData");
+        "Chunks", "ChunkCount");
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
         ImmutableArray.Create(Rule);

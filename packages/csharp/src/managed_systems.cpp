@@ -121,19 +121,20 @@ extern "C" std::int32_t readComponent(void* host_api, std::uint64_t handle,
 }
 
 /* A dense write over a chunk cannot know which rows it touched, so its owner
-   marks them; the observer dispatch stays the world's. */
-extern "C" std::int32_t markChunkChanged(void* host_api)
+   marks them; the observer dispatch stays the world's. The chunk's rows ride
+   the call, so the frame may hold many chunks. */
+extern "C" std::int32_t markChunkChanged(void* host_api, void* entities, std::uint64_t count)
 {
     auto* api = static_cast<bindings::HostApi*>(host_api);
     auto* world = static_cast<ecs::World*>(api->world);
-    const auto* entities = static_cast<const ecs::Entity*>(api->entity_data);
-    if (world == nullptr || entities == nullptr)
+    const auto* rows = static_cast<const ecs::Entity*>(entities);
+    if (world == nullptr || rows == nullptr)
     {
         return 1;
     }
-    for (std::uint64_t row = 0; row < api->chunk_count; ++row)
+    for (std::uint64_t row = 0; row < count; ++row)
     {
-        world->markChanged(entities[row], api->component);
+        world->markChanged(rows[row], api->component);
     }
     return 0;
 }
@@ -260,6 +261,9 @@ bool ManagedSystems::load(const std::string& runtime_config, const std::string& 
     {
         table.resize(64U);
     }
+    /* A 16 KiB chunk holds a few hundred rows, so a million entities stay well
+       inside this reservation. */
+    chunk_spans_.reserve(4096U);
     const auto register_fn = reinterpret_cast<int (*)(void*)>(registration_);
     bindings::Registration registration{this, &managedSystemsRegisterEntry};
     if (register_fn(&registration) != 0)
@@ -293,6 +297,7 @@ void ManagedSystems::unload()
     component_ = ecs::kInvalidComponent;
     query_ready_ = false;
     query_ = ecs::Query{};
+    chunk_spans_.clear();
     host_.shutdown();
 }
 
@@ -470,20 +475,13 @@ void ManagedSystems::invokeStage(ResonateStage stage, void* context, ecs::World&
     self->api_.component_name_size = static_cast<std::uint32_t>(self->component_name_.size());
     self->frame_.host_api = &self->api_;
 
-    /* The read path is the named component, one call per non-empty chunk: the
-       body sees a dense array it wraps in a Span without copying. The query is
-       created once and catches up with new archetypes itself. A stage with no
-       matching chunk still runs once with empty chunk fields: that invocation
-       is what lets a behaviour spawn the first entity of the component. */
-    struct ChunkCall
-    {
-        ManagedSystems* systems;
-        std::uint32_t stage;
-        std::uint32_t id;
-        std::uint32_t chunks;
-    };
-
-    bool called = false;
+    /* The read path is the named component, gathered into one list and handed
+       over with a single boundary call: the FFI budget is per stage, not per
+       chunk. The managed side iterates the dense arrays without copying. The
+       query is created once and catches up with new archetypes itself; a stage
+       with no matching chunk still runs once with an empty list, which is what
+       lets a behaviour spawn the first entity of the component. */
+    self->chunk_spans_.clear();
     if (!self->component_name_.empty())
     {
         if (self->component_ == ecs::kInvalidComponent)
@@ -503,39 +501,23 @@ void ManagedSystems::invokeStage(ResonateStage stage, void* context, ecs::World&
             }
             if (self->query_ready_)
             {
-                ChunkCall call{self, static_cast<std::uint32_t>(stage), id, 0U};
                 self->query_.forEachChunk(
                     [](void* chunk_context, ecs::ChunkView view)
                     {
-                        auto* call = static_cast<ChunkCall*>(chunk_context);
-                        ManagedSystems* systems = call->systems;
-                        ++call->chunks;
-                        systems->frame_.chunk_data =
-                            view.componentData(systems->component_);
-                        systems->frame_.chunk_count = view.count;
-                        systems->frame_.entity_data =
-                            const_cast<ecs::Entity*>(view.entities);
-                        systems->api_.chunk_data = systems->frame_.chunk_data;
-                        systems->api_.chunk_count = view.count;
-                        systems->api_.entity_data =
-                            const_cast<ecs::Entity*>(view.entities);
-                        systems->tables_[call->stage].invoke(call->id, &systems->frame_);
+                        auto* systems = static_cast<ManagedSystems*>(chunk_context);
+                        systems->chunk_spans_.push_back(bindings::ChunkSpan{
+                            view.componentData(systems->component_),
+                            const_cast<ecs::Entity*>(view.entities), view.count});
                     },
-                    &call);
-                called = call.chunks != 0U;
+                    self);
             }
         }
     }
-    if (!called)
-    {
-        self->frame_.chunk_data = nullptr;
-        self->frame_.chunk_count = 0U;
-        self->frame_.entity_data = nullptr;
-        self->api_.chunk_data = nullptr;
-        self->api_.chunk_count = 0U;
-        self->api_.entity_data = nullptr;
-        self->tables_[index].invoke(id, &self->frame_);
-    }
+    self->frame_.chunks =
+        self->chunk_spans_.empty() ? nullptr : self->chunk_spans_.data();
+    self->frame_.chunk_count = self->chunk_spans_.size();
+    self->tables_[index].invoke(id, &self->frame_);
+
     if (stage == RESONATE_STAGE_UPDATE)
     {
         ++self->frames_;
