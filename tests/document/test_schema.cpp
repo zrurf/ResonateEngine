@@ -126,6 +126,13 @@ TEST_CASE("document schema: implicit elements expand to node types and component
     CHECK(document->type(title) == document->intern("Label"));
     CHECK(document->hasComponent(title, document->intern("RectTransform")));
     CHECK(fieldValue(*document, title, "RectTransform", "x") == "4");
+
+    const std::string xml = document->toXml();
+    CHECK(xml.find("selector=\".panel\"") != std::string::npos);
+    std::vector<resonate::dom::Diagnostic> round_diagnostics;
+    auto reparsed = Document::parse(xml, &schema, round_diagnostics);
+    REQUIRE(reparsed != nullptr);
+    CHECK(reparsed->property(reparsed->root(), reparsed->intern("selector"))->value == ".panel");
 }
 
 TEST_CASE("document schema: unknown and ambiguous implicit elements are refused",
