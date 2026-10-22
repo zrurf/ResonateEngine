@@ -8,4 +8,4 @@ target("Resonate.Document")
     add_includedirs("include", {public = true})
     add_files("src/**.cpp")
 
-    add_deps("Resonate.Core.Container")
+    add_deps("Resonate.Core.Container", "Resonate.Module.Abi")
