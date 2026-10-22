@@ -506,6 +506,84 @@ struct Binding
     GamepadBinding gamepad;
 };
 
+bool resolveDevice(const std::string& name, Binding::Device& device)
+{
+    if (name == "keyboard")
+    {
+        device = Binding::Device::Keyboard;
+        return true;
+    }
+    if (name == "mouse")
+    {
+        device = Binding::Device::Mouse;
+        return true;
+    }
+    if (name == "gamepad")
+    {
+        device = Binding::Device::Gamepad;
+        return true;
+    }
+    return false;
+}
+
+const char* deviceName(Binding::Device device)
+{
+    switch (device)
+    {
+    case Binding::Device::Keyboard:
+        return "keyboard";
+    case Binding::Device::Mouse:
+        return "mouse";
+    case Binding::Device::Gamepad:
+        return "gamepad";
+    }
+    return "keyboard";
+}
+
+bool resolveControl(const std::string& control, Binding::Device device, ResonateKey& key,
+                    ResonateMouseButton& button, GamepadBinding& gamepad, std::string& why)
+{
+    switch (device)
+    {
+    case Binding::Device::Keyboard:
+        if (!keyFromName(control, key))
+        {
+            why = "unknown keyboard control '" + control + "'";
+            return false;
+        }
+        return true;
+    case Binding::Device::Mouse:
+        if (!mouseFromName(control, button))
+        {
+            why = "unknown mouse control '" + control + "'";
+            return false;
+        }
+        return true;
+    case Binding::Device::Gamepad:
+        if (!gamepadFromName(control, gamepad.kind, gamepad.button, gamepad.axis))
+        {
+            why = "unknown gamepad control '" + control + "'";
+            return false;
+        }
+        return true;
+    }
+    why = "unknown device";
+    return false;
+}
+
+/* One user-layer entry. The entry remembers the control's spelling so saving
+   writes back the document the user authored. */
+struct OverrideEntry
+{
+    std::string action;
+    Binding::Device device = Binding::Device::Keyboard;
+    bool bound = true;
+    ResonateKey key = RESONATE_KEY_UNKNOWN;
+    ResonateMouseButton button = RESONATE_MOUSE_LEFT;
+    GamepadBinding gamepad;
+    std::string control;
+};
+
 bool expectEmpty(Reader& reader, const Element& element, const std::string& path,
                  std::string& error)
 {
@@ -623,40 +701,18 @@ bool parseBinding(Reader& reader, const Element& element, std::vector<Binding>& 
 
     Binding binding;
     binding.action = action->value;
-    if (device->value == "keyboard")
-    {
-        binding.device = Binding::Device::Keyboard;
-        if (!keyFromName(control->value, binding.key))
-        {
-            return describe(path, element.line,
-                            "unknown keyboard control '" + control->value + "'", error);
-        }
-    }
-    else if (device->value == "mouse")
-    {
-        binding.device = Binding::Device::Mouse;
-        if (!mouseFromName(control->value, binding.button))
-        {
-            return describe(path, element.line,
-                            "unknown mouse control '" + control->value + "'", error);
-        }
-    }
-    else if (device->value == "gamepad")
-    {
-        binding.device = Binding::Device::Gamepad;
-        if (!gamepadFromName(control->value, binding.gamepad.kind, binding.gamepad.button,
-                             binding.gamepad.axis))
-        {
-            return describe(path, element.line,
-                            "unknown gamepad control '" + control->value + "'", error);
-        }
-    }
-    else
+    if (!resolveDevice(device->value, binding.device))
     {
         return describe(path, element.line,
                         "unknown device '" + device->value +
                             "'; expected keyboard, mouse or gamepad",
                         error);
+    }
+    std::string why;
+    if (!resolveControl(control->value, binding.device, binding.key, binding.button,
+                        binding.gamepad, why))
+    {
+        return describe(path, element.line, why, error);
     }
 
     if (!expectEmpty(reader, element, path, error))
@@ -772,6 +828,168 @@ bool parseDocument(const std::string& path, const std::string& text,
     return true;
 }
 
+std::string escapeXml(const std::string& text)
+{
+    std::string out;
+    out.reserve(text.size());
+    for (const char character : text)
+    {
+        switch (character)
+        {
+        case '&':
+            out += "&amp;";
+            break;
+        case '<':
+            out += "&lt;";
+            break;
+        case '>':
+            out += "&gt;";
+            break;
+        case '"':
+            out += "&quot;";
+            break;
+        default:
+            out += character;
+            break;
+        }
+    }
+    return out;
+}
+
+/* The user layer's document: <binding> replaces the action's bindings on one
+   device, <unbind> removes them. Entries are validated against the base map
+   after parsing, so a bad file changes nothing. */
+bool parseOverrides(const std::string& path, const std::string& text,
+                    std::vector<OverrideEntry>& entries, std::string& error)
+{
+    Reader reader(text);
+    Element root;
+    const Next root_next = reader.next(root, error);
+    if (root_next == Next::Error)
+    {
+        error = path + ": " + error;
+        return false;
+    }
+    if (root_next != Next::Element || root.closing || root.name != "action-overrides")
+    {
+        error = path + ": expected <action-overrides>";
+        return false;
+    }
+    if (!root.attributes.empty())
+    {
+        return describe(path, root.line, "<action-overrides> takes no attributes", error);
+    }
+
+    if (!root.self_closing)
+    {
+        while (true)
+        {
+            Element element;
+            const Next next = reader.next(element, error);
+            if (next == Next::Error)
+            {
+                error = path + ": " + error;
+                return false;
+            }
+            if (next == Next::End)
+            {
+                return describe(path, root.line, "<action-overrides> is not closed", error);
+            }
+            if (element.closing)
+            {
+                if (element.name != "action-overrides")
+                {
+                    return describe(path, element.line, "unexpected </" + element.name + ">",
+                                    error);
+                }
+                break;
+            }
+
+            if (element.name == "binding")
+            {
+                if (!checkAttributes(element, path, {"action", "device", "control"}, error))
+                {
+                    return false;
+                }
+                const Attribute* action = findAttribute(element, "action");
+                const Attribute* device = findAttribute(element, "device");
+                const Attribute* control = findAttribute(element, "control");
+                if (action == nullptr || action->value.empty() || device == nullptr ||
+                    control == nullptr || control->value.empty())
+                {
+                    return describe(path, element.line,
+                                    "a binding needs action, device and control", error);
+                }
+                OverrideEntry entry;
+                entry.action = action->value;
+                if (!resolveDevice(device->value, entry.device))
+                {
+                    return describe(path, element.line,
+                                    "unknown device '" + device->value + "'", error);
+                }
+                std::string why;
+                if (!resolveControl(control->value, entry.device, entry.key, entry.button,
+                                    entry.gamepad, why))
+                {
+                    return describe(path, element.line, why, error);
+                }
+                entry.control = control->value;
+                entry.bound = true;
+                if (!expectEmpty(reader, element, path, error))
+                {
+                    return false;
+                }
+                entries.push_back(std::move(entry));
+            }
+            else if (element.name == "unbind")
+            {
+                if (!checkAttributes(element, path, {"action", "device"}, error))
+                {
+                    return false;
+                }
+                const Attribute* action = findAttribute(element, "action");
+                const Attribute* device = findAttribute(element, "device");
+                if (action == nullptr || action->value.empty() || device == nullptr)
+                {
+                    return describe(path, element.line, "an unbind needs action and device",
+                                    error);
+                }
+                OverrideEntry entry;
+                entry.action = action->value;
+                entry.bound = false;
+                if (!resolveDevice(device->value, entry.device))
+                {
+                    return describe(path, element.line,
+                                    "unknown device '" + device->value + "'", error);
+                }
+                if (!expectEmpty(reader, element, path, error))
+                {
+                    return false;
+                }
+                entries.push_back(std::move(entry));
+            }
+            else
+            {
+                return describe(path, element.line,
+                                "unknown element <" + element.name + ">", error);
+            }
+        }
+    }
+
+    Element trailing;
+    const Next trailing_next = reader.next(trailing, error);
+    if (trailing_next == Next::Error)
+    {
+        error = path + ": " + error;
+        return false;
+    }
+    if (trailing_next != Next::End)
+    {
+        return describe(path, trailing.line, "content after </action-overrides>", error);
+    }
+    return true;
+}
+
 } // namespace
 
 struct ActionMap::Impl
@@ -787,6 +1005,67 @@ struct ActionMap::Impl
     };
 
     std::vector<Action> actions;
+    /* One entry per (action, device): the user layer's current intent. */
+    std::vector<OverrideEntry> overrides;
+
+    [[nodiscard]] Action* findAction(const std::string& name)
+    {
+        for (Action& action : actions)
+        {
+            if (action.name == name)
+            {
+                return &action;
+            }
+        }
+        return nullptr;
+    }
+
+    /* Replaces the device's bindings on the action and records the intent, so
+       saveOverrides writes what the user last chose. */
+    bool applyOverride(OverrideEntry entry, std::string& error)
+    {
+        Action* action = findAction(entry.action);
+        if (action == nullptr)
+        {
+            error = "action '" + entry.action + "' is not declared";
+            return false;
+        }
+        switch (entry.device)
+        {
+        case Binding::Device::Keyboard:
+            action->keys.clear();
+            if (entry.bound)
+            {
+                action->keys.push_back(entry.key);
+            }
+            break;
+        case Binding::Device::Mouse:
+            action->buttons.clear();
+            if (entry.bound)
+            {
+                action->buttons.push_back(entry.button);
+            }
+            break;
+        case Binding::Device::Gamepad:
+            action->gamepad.clear();
+            if (entry.bound)
+            {
+                action->gamepad.push_back(entry.gamepad);
+            }
+            break;
+        }
+
+        for (OverrideEntry& existing : overrides)
+        {
+            if (existing.action == entry.action && existing.device == entry.device)
+            {
+                existing = std::move(entry);
+                return true;
+            }
+        }
+        overrides.push_back(std::move(entry));
+        return true;
+    }
 };
 
 ActionMap::ActionMap() : impl_(std::make_unique<Impl>())
@@ -929,6 +1208,125 @@ const ActionState* ActionMap::state(const char* action) const noexcept
         }
     }
     return nullptr;
+}
+
+bool ActionMap::bind(const char* action, const char* device, const char* control,
+                     std::string& error)
+{
+    error.clear();
+    if (action == nullptr || device == nullptr || control == nullptr)
+    {
+        error = "bind needs an action, a device and a control";
+        return false;
+    }
+    OverrideEntry entry;
+    entry.action = action;
+    if (!resolveDevice(device, entry.device))
+    {
+        error = "unknown device '" + std::string(device) + "'";
+        return false;
+    }
+    std::string why;
+    if (!resolveControl(control, entry.device, entry.key, entry.button, entry.gamepad, why))
+    {
+        error = why;
+        return false;
+    }
+    entry.control = control;
+    entry.bound = true;
+    return impl_->applyOverride(std::move(entry), error);
+}
+
+bool ActionMap::unbind(const char* action, const char* device, std::string& error)
+{
+    error.clear();
+    if (action == nullptr || device == nullptr)
+    {
+        error = "unbind needs an action and a device";
+        return false;
+    }
+    OverrideEntry entry;
+    entry.action = action;
+    entry.bound = false;
+    if (!resolveDevice(device, entry.device))
+    {
+        error = "unknown device '" + std::string(device) + "'";
+        return false;
+    }
+    return impl_->applyOverride(std::move(entry), error);
+}
+
+bool ActionMap::loadOverrides(const std::string& path, std::string& error)
+{
+    error.clear();
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open())
+    {
+        error = "cannot read " + path;
+        return false;
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+
+    std::vector<OverrideEntry> entries;
+    if (!parseOverrides(path, text, entries, error))
+    {
+        return false;
+    }
+
+    /* Every action is checked before any change, so a file naming one bad
+       action leaves the whole map as it was. */
+    for (const OverrideEntry& entry : entries)
+    {
+        if (impl_->findAction(entry.action) == nullptr)
+        {
+            error = path + ": override names undeclared action '" + entry.action + "'";
+            return false;
+        }
+    }
+    for (OverrideEntry& entry : entries)
+    {
+        if (!impl_->applyOverride(std::move(entry), error))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ActionMap::saveOverrides(const std::string& path, std::string& error) const
+{
+    error.clear();
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out.is_open())
+    {
+        error = "cannot write " + path;
+        return false;
+    }
+    out << "<?xml version=\"1.0\"?>\n<action-overrides>\n";
+    for (const OverrideEntry& entry : impl_->overrides)
+    {
+        if (entry.bound)
+        {
+            out << "  <binding action=\"" << escapeXml(entry.action) << "\" device=\""
+                << deviceName(entry.device) << "\" control=\"" << escapeXml(entry.control)
+                << "\"/>\n";
+        }
+        else
+        {
+            out << "  <unbind action=\"" << escapeXml(entry.action) << "\" device=\""
+                << deviceName(entry.device) << "\"/>\n";
+        }
+    }
+    out << "</action-overrides>\n";
+    if (!out.good())
+    {
+        error = "cannot write " + path;
+        return false;
+    }
+    return true;
 }
 
 } // namespace resonate::gameplay

@@ -52,6 +52,12 @@ default = ""
 description = "Action map asset; empty runs without named actions."
 
 [[setting]]
+key = "resonate.input.bindings"
+type = "string"
+default = ""
+description = "User binding overrides; needs an action-map."
+
+[[setting]]
 key = "resonate.csharp.assembly"
 type = "string"
 default = ""

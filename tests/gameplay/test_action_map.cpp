@@ -49,6 +49,7 @@ struct FakeInput
     bool space = false;
     bool left_mouse = false;
     bool j = false;
+    bool k = false;
     bool south = false;
     bool trigger = false;
     ResonateInput input{};
@@ -73,6 +74,10 @@ struct FakeInput
         if (key == RESONATE_KEY_J)
         {
             return fake->j ? 1 : 0;
+        }
+        if (key == RESONATE_KEY_K)
+        {
+            return fake->k ? 1 : 0;
         }
         return 0;
     }
@@ -248,4 +253,81 @@ TEST_CASE("action map: missing files and empty maps are errors", "[action-map]")
     file.write("<action-map/>\n");
     CHECK_FALSE(map.load(file.path(), error));
     CHECK(error.find("no actions") != std::string::npos);
+}
+
+TEST_CASE("action map: rebinding persists as a user layer", "[action-map]")
+{
+    TempMap base;
+    base.write(kDocument);
+    resonate::gameplay::ActionMap map;
+    std::string error;
+    REQUIRE(map.load(base.path(), error));
+
+    FakeInput fake;
+    fake.space = true;
+    map.update(&fake.input);
+    CHECK(map.state("fire")->held);
+
+    /* Rebind fire's keyboard binding from space to k: the old key stops
+       holding it and the new one holds it. */
+    REQUIRE(map.bind("fire", "keyboard", "k", error));
+    fake.space = false;
+    map.update(&fake.input);
+    CHECK_FALSE(map.state("fire")->held);
+    fake.k = true;
+    map.update(&fake.input);
+    CHECK(map.state("fire")->held);
+
+    /* The mouse binding can be removed independently. */
+    REQUIRE(map.unbind("fire", "mouse", error));
+
+    TempMap saved;
+    REQUIRE(map.saveOverrides(saved.path(), error));
+
+    /* A fresh base map plus the saved layer behaves like the rebound one. */
+    resonate::gameplay::ActionMap restored;
+    REQUIRE(restored.load(base.path(), error));
+    REQUIRE(restored.loadOverrides(saved.path(), error));
+    FakeInput check;
+    check.k = true;
+    restored.update(&check.input);
+    CHECK(restored.state("fire")->held);
+    check.k = false;
+    check.space = true;
+    restored.update(&check.input);
+    CHECK_FALSE(restored.state("fire")->held);
+    check.space = false;
+    check.left_mouse = true;
+    restored.update(&check.input);
+    CHECK_FALSE(restored.state("fire")->held);
+}
+
+TEST_CASE("action map: invalid overrides change nothing", "[action-map]")
+{
+    TempMap base;
+    base.write(kDocument);
+    resonate::gameplay::ActionMap map;
+    std::string error;
+    REQUIRE(map.load(base.path(), error));
+
+    CHECK_FALSE(map.bind("missing", "keyboard", "k", error));
+    CHECK_FALSE(map.bind("fire", "keyboard", "hyper-key", error));
+    CHECK_FALSE(map.unbind("missing", "mouse", error));
+
+    TempMap bad;
+    bad.write("<action-overrides>"
+              "<binding action=\"missing\" device=\"keyboard\" control=\"k\"/>"
+              "</action-overrides>");
+    CHECK_FALSE(map.loadOverrides(bad.path(), error));
+    CHECK(error.find("undeclared action") != std::string::npos);
+
+    TempMap malformed;
+    malformed.write("<action-overrides><binding action=\"fire\" device=\"keyboard\"/></action-overrides>");
+    CHECK_FALSE(map.loadOverrides(malformed.path(), error));
+
+    /* The original bindings are still in force after every failure. */
+    FakeInput fake;
+    fake.space = true;
+    map.update(&fake.input);
+    CHECK(map.state("fire")->held);
 }

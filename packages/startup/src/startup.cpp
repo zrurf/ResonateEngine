@@ -188,6 +188,8 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     gameplay::ActionMap action_map;
     const std::string action_map_path =
         config.settings.value("resonate.input", "action-map").value_or("");
+    const std::string bindings_path =
+        config.settings.value("resonate.input", "bindings").value_or("");
     if (!action_map_path.empty())
     {
         std::string error;
@@ -196,7 +198,17 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             std::fprintf(stderr, "resonate: action map: %s\n", error.c_str());
             return EXIT_FAILURE;
         }
+        if (!bindings_path.empty() && !action_map.loadOverrides(bindings_path, error))
+        {
+            std::fprintf(stderr, "resonate: input bindings: %s\n", error.c_str());
+            return EXIT_FAILURE;
+        }
         std::fprintf(stderr, "resonate: input: %zu action(s)\n", action_map.actionCount());
+    }
+    else if (!bindings_path.empty())
+    {
+        std::fprintf(stderr, "resonate: [resonate.input] bindings needs an action-map\n");
+        return EXIT_FAILURE;
     }
 
     /* CLI beats configuration beats the schema default. */
