@@ -255,6 +255,7 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<RectTransform>() != ecs::kInvalidComponent &&
            world.registerComponent<LayoutGroup>() != ecs::kInvalidComponent &&
            world.registerComponent<ComputedRect>() != ecs::kInvalidComponent &&
+           world.registerComponent<Background>() != ecs::kInvalidComponent &&
            world.registerComponent<StyleRef>() != ecs::kInvalidComponent;
 }
 

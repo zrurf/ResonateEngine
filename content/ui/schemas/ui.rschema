@@ -80,6 +80,12 @@
     <field name="height" type="f32"/>
   </component>
 
+  <!-- A flat fill. The style compiler will resolve it from a class set; until
+       then a widget carries its color directly. -->
+  <component name="Background" version="1">
+    <field name="color" type="vec4" default="1 1 1 1"/>
+  </component>
+
   <!-- Reserved for the style compiler: the interned table entry a widget's
        class set resolves to. Layout does not read it. -->
   <component name="StyleRef" version="1">

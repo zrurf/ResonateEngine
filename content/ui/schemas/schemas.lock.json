@@ -4,6 +4,16 @@
   "module": "resonate.ui",
   "types": [
     {
+      "name": "Background",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Background version 1",
+        "  size 16 align 4",
+        "  field color vec4 @0 size 16 default=1 1 1 1"
+      ]
+    },
+    {
       "name": "Canvas",
       "kind": "component",
       "version": 1,
