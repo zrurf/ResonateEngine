@@ -36,7 +36,8 @@ struct GlyphQuad
 class TextAtlasBuilder
 {
   public:
-    explicit TextAtlasBuilder(std::shared_ptr<const text::Font> font, std::uint32_t size = 512U);
+    explicit TextAtlasBuilder(std::vector<std::shared_ptr<const text::Font>> fonts,
+                              std::uint32_t size = 512U);
 
     /* Shapes utf8 at `size` pixels per em and appends the glyph quads for the
        wrapped lines. `width` is the alignment span (the widget's authored
@@ -68,13 +69,13 @@ class TextAtlasBuilder
 
     static constexpr std::uint32_t kMaxSize = 2048U;
 
-    bool getGlyph(std::uint32_t glyph, float size, float weight, AtlasGlyph& out,
-                  std::string& out_error);
+    bool getGlyph(std::uint32_t font, std::uint32_t glyph, float size, float weight,
+                  AtlasGlyph& out, std::string& out_error);
     bool placeGlyph(AtlasGlyph& glyph);
     bool grow();
     void resetPage(std::uint32_t size);
 
-    std::shared_ptr<const text::Font> font_;
+    std::vector<std::shared_ptr<const text::Font>> fonts_;
     std::uint32_t width_ = 0U;
     std::uint32_t height_ = 0U;
     std::vector<std::uint8_t> pixels_;

@@ -219,7 +219,7 @@ ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool r
         return ecs::Entity{};
     }
     const ecs::Entity canvas =
-        ui::instantiate(world, *document, &contentComponents(), std::move(font));
+        ui::instantiate(world, *document, &contentComponents(), {std::move(font)});
     if (!canvas.valid())
     {
         return ecs::Entity{};

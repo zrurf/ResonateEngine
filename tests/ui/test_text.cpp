@@ -67,7 +67,7 @@ TEST_CASE("ui text: a Label shapes into glyph quads and one canvas atlas", "[ui]
     CHECK(diagnostics.empty());
 
     Fixture fixture;
-    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, loadFont());
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, {loadFont()});
     REQUIRE(root.valid());
 
     const TextAtlasPage* page = fixture.world.get<TextAtlasPage>(root);
@@ -139,7 +139,7 @@ TEST_CASE("ui text: the demo's title keeps its text color", "[ui][text]")
     REQUIRE(document != nullptr);
 
     Fixture fixture;
-    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, loadFont());
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, {loadFont()});
     REQUIRE(root.valid());
     const auto panel = resonate::hierarchy::children(fixture.world, root)[0];
     const auto labels = resonate::hierarchy::children(fixture.world, panel);
@@ -198,7 +198,7 @@ TEST_CASE("ui text: wrapping and alignment lay glyphs out in lines", "[ui][text]
     REQUIRE(document != nullptr);
 
     Fixture fixture;
-    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, loadFont());
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, {loadFont()});
     REQUIRE(root.valid());
     REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
 
@@ -235,7 +235,7 @@ TEST_CASE("ui text: CJK wraps between glyphs", "[ui][text]")
     REQUIRE(document != nullptr);
 
     Fixture fixture;
-    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, loadFont());
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, {loadFont()});
     REQUIRE(root.valid());
     REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
 
@@ -273,7 +273,7 @@ TEST_CASE("ui text: a zero-sized Label takes its measured text extent", "[ui][te
     REQUIRE(document != nullptr);
 
     Fixture fixture;
-    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, loadFont());
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, {loadFont()});
     REQUIRE(root.valid());
     REQUIRE(resonate::ui::layout(fixture.world, root, 320.0F, 200.0F));
 

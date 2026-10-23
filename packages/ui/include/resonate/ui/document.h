@@ -2,6 +2,7 @@
 #define RESONATE_UI_DOCUMENT_H
 
 #include <memory>
+#include <vector>
 
 #include <resonate/dom/document.h>
 #include <resonate/dom/schema.h>
@@ -17,13 +18,14 @@ namespace resonate::ui
    become hierarchy children and ComputedRect is attached as the derived
    layout output. The root must carry Canvas. A component registry, when given,
    binds components from other modules (scene/2D) through their schema
-   descriptors. When a font is given, Label text is shaped and rasterized into
-   the canvas's shared TextAtlasPage. Reports and answers an invalid entity on a
+   descriptors. When fonts are given, Label text is shaped through the chain and
+   rasterized into the canvas's shared TextAtlasPage; the first font supplies
+   the line metrics and the rest cover missing glyphs. Reports and answers an invalid entity on a
    malformed component value or an unknown component. */
 [[nodiscard]] ecs::Entity instantiate(
     ecs::World& world, dom::Document& document,
     const dom::ComponentRegistry* components = nullptr,
-    std::shared_ptr<const text::Font> font = nullptr);
+    std::vector<std::shared_ptr<const text::Font>> fonts = {});
 
 } // namespace resonate::ui
 

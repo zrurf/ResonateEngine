@@ -12,20 +12,25 @@
 namespace
 {
 
-std::shared_ptr<const resonate::text::Font> loadFont()
+std::shared_ptr<const resonate::text::Font> loadFontFile(const char* name)
 {
     std::string error;
     auto font = resonate::text::Font::loadFile(
-        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Subset.ttf", error);
+        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/" + name, error);
     REQUIRE(font != nullptr);
     return font;
+}
+
+std::shared_ptr<const resonate::text::Font> loadFont()
+{
+    return loadFontFile("ResonateSansSC-Subset.ttf");
 }
 
 } // namespace
 
 TEST_CASE("ui atlas: a full page grows and repacks its glyphs", "[ui][text][atlas]")
 {
-    resonate::ui::detail::TextAtlasBuilder atlas(loadFont(), 32U);
+    resonate::ui::detail::TextAtlasBuilder atlas({loadFont()}, 32U);
     std::vector<resonate::ui::detail::GlyphQuad> quads;
     std::string error;
     REQUIRE(atlas.buildRun(
@@ -45,4 +50,20 @@ TEST_CASE("ui atlas: a full page grows and repacks its glyphs", "[ui][text][atla
         CHECK(quad.u1 <= 1.0F);
         CHECK(quad.v1 <= 1.0F);
     }
+}
+
+TEST_CASE("ui atlas: a missing glyph falls through the font chain", "[ui][text][atlas]")
+{
+    const auto latin = loadFontFile("ResonateSansLatin-Subset.ttf");
+    const auto full = loadFont();
+    CHECK(latin->glyphIndex(0x4F60U) == 0U);
+    CHECK(full->glyphIndex(0x4F60U) != 0U);
+
+    resonate::ui::detail::TextAtlasBuilder atlas({latin, full}, 128U);
+    std::vector<resonate::ui::detail::GlyphQuad> quads;
+    std::string error;
+    REQUIRE(atlas.buildRun("A\xE4\xBD\xA0", 24.0F, 400.0F, 0.0F, 0U, false, quads, error));
+    REQUIRE(quads.size() == 2U);
+    CHECK((quads[0].key >> 56U) == 0U);
+    CHECK((quads[1].key >> 56U) == 1U);
 }

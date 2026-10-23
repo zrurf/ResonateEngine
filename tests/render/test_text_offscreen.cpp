@@ -71,7 +71,7 @@ TEST_CASE("offscreen: a UI Label draws its glyphs from the font atlas",
         kGlyphDocument, &resonate::ui::documentSchema(), diagnostics);
     REQUIRE(document != nullptr);
     CHECK(diagnostics.empty());
-    const resonate::ecs::Entity canvas = resonate::ui::instantiate(world, *document, nullptr, font);
+    const resonate::ecs::Entity canvas = resonate::ui::instantiate(world, *document, nullptr, {font});
     REQUIRE(canvas.valid());
     REQUIRE(resonate::ui::layout(world, canvas, 320.0F, 240.0F));
 

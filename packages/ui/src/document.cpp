@@ -682,6 +682,7 @@ struct BindingContext
     ecs::ComponentIndex data_component = ecs::kInvalidComponent;
     std::vector<detail::BindingRecord> records;
     dom::StringId text_property = dom::kInvalidString;
+    std::vector<std::shared_ptr<const text::Font>> fonts;
     std::unique_ptr<detail::TextAtlasBuilder> atlas;
     std::vector<PendingRun> runs;
 };
@@ -1217,7 +1218,7 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
 
 Entity instantiate(World& world, dom::Document& document,
                    const dom::ComponentRegistry* component_registry,
-                   std::shared_ptr<const text::Font> font)
+                   std::vector<std::shared_ptr<const text::Font>> fonts)
 {
     const dom::NodeHandle root = document.root();
     if (!root.valid())
@@ -1246,9 +1247,9 @@ Entity instantiate(World& world, dom::Document& document,
     std::vector<Entity> created;
     BindingContext bindings;
     bindings.text_property = document.intern("text");
-    if (font != nullptr)
+    if (!fonts.empty())
     {
-        bindings.atlas = std::make_unique<detail::TextAtlasBuilder>(std::move(font));
+        bindings.atlas = std::make_unique<detail::TextAtlasBuilder>(std::move(fonts));
     }
     const Entity entity = instantiateNode(world, commands, document, root, styles, bindings,
                                           component_registry, created);
