@@ -34,6 +34,12 @@
     <value name="Stretch"/>
   </enum>
 
+  <enum name="TextAlign" width="u8">
+    <value name="Start"/>
+    <value name="Center"/>
+    <value name="End"/>
+  </enum>
+
   <enum name="WidgetState" width="u8">
     <value name="Normal"/>
     <value name="Hovered"/>
@@ -110,6 +116,8 @@
     <field name="content" type="blob"/>
     <field name="font_size" type="f32" default="24"/>
     <field name="text_color" type="vec4" default="1 1 1 1"/>
+    <field name="align" type="TextAlign" default="Start"/>
+    <field name="wrap" type="bool" default="true"/>
   </component>
 
   <!-- Compiled glyph quads in widget-local pixels: x/y/width/height plus the
@@ -193,7 +201,7 @@
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color"/>
-    <uses component="Text" expose="font_size text_color"/>
+    <uses component="Text" expose="font_size text_color align wrap"/>
     <field name="text" type="string"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>

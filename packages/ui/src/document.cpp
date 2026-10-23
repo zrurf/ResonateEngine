@@ -617,6 +617,35 @@ bool applyText(const dom::Document& document, const dom::Component& component, T
                 return false;
             }
         }
+        else if (name == "align")
+        {
+            if (field.value == "Start")
+            {
+                text.align = TextAlign::Start;
+            }
+            else if (field.value == "Center")
+            {
+                text.align = TextAlign::Center;
+            }
+            else if (field.value == "End")
+            {
+                text.align = TextAlign::End;
+            }
+            else
+            {
+                error = "Text.align is Start, Center or End";
+                return false;
+            }
+        }
+        else if (name == "wrap")
+        {
+            if (field.value != "true" && field.value != "false")
+            {
+                error = "Text.wrap is not a bool";
+                return false;
+            }
+            text.wrap = field.value == "true";
+        }
         else if (name == "content")
         {
             error = "Text.content is written by the adapter and cannot be authored";
@@ -789,9 +818,13 @@ bool buildTextRun(World& world, const dom::Document& document, dom::NodeHandle n
         return true;
     }
 
+    const RectTransform* rect = world.get<RectTransform>(entity);
+    const float width = rect != nullptr ? rect->width : 0.0F;
     std::vector<detail::GlyphQuad> glyphs;
     std::string error;
-    if (!context.atlas->buildRun(std::string_view(bytes, size), text->font_size, glyphs, error))
+    if (!context.atlas->buildRun(std::string_view(bytes, size), text->font_size, width,
+                                 static_cast<std::uint32_t>(text->align), text->wrap, glyphs,
+                                 error))
     {
         return report(world, document, node, "text: " + error);
     }

@@ -17,6 +17,34 @@ std::uint64_t glyphKey(std::uint32_t glyph, float size)
     return (static_cast<std::uint64_t>(scaled) << 32U) | glyph;
 }
 
+std::uint32_t codepointAt(std::string_view utf8, std::uint32_t cluster)
+{
+    if (cluster >= utf8.size())
+    {
+        return 0U;
+    }
+    const auto* bytes = reinterpret_cast<const unsigned char*>(utf8.data() + cluster);
+    const unsigned char first = bytes[0];
+    if (first < 0x80U)
+    {
+        return first;
+    }
+    if ((first & 0xE0U) == 0xC0U && cluster + 1U < utf8.size())
+    {
+        return ((first & 0x1FU) << 6U) | (bytes[1] & 0x3FU);
+    }
+    if ((first & 0xF0U) == 0xE0U && cluster + 2U < utf8.size())
+    {
+        return ((first & 0x0FU) << 12U) | ((bytes[1] & 0x3FU) << 6U) | (bytes[2] & 0x3FU);
+    }
+    if ((first & 0xF8U) == 0xF0U && cluster + 3U < utf8.size())
+    {
+        return ((first & 0x07U) << 18U) | ((bytes[1] & 0x3FU) << 12U) |
+               ((bytes[2] & 0x3FU) << 6U) | (bytes[3] & 0x3FU);
+    }
+    return first;
+}
+
 } // namespace
 
 TextAtlasBuilder::TextAtlasBuilder(std::shared_ptr<const text::Font> font, std::uint32_t size)
@@ -100,8 +128,8 @@ bool TextAtlasBuilder::getGlyph(std::uint32_t glyph, float size, AtlasGlyph& out
     return true;
 }
 
-bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, std::vector<GlyphQuad>& out,
-                                std::string& out_error)
+bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float width, std::uint32_t align,
+                                bool wrap, std::vector<GlyphQuad>& out, std::string& out_error)
 {
     if (font_ == nullptr || !(size > 0.0F))
     {
@@ -125,8 +153,69 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, std::vector<G
         out_error = "font metrics are unavailable";
         return false;
     }
+    float line_height = metrics.ascent - metrics.descent + metrics.leading;
+    if (!(line_height > 0.0F))
+    {
+        line_height = size * 1.2F;
+    }
 
+    struct LineGlyph
+    {
+        text::ShapedGlyph glyph;
+        AtlasGlyph atlas;
+        bool space = false;
+    };
+
+    std::vector<LineGlyph> line;
     float pen = 0.0F;
+    float line_width = 0.0F;
+    std::int32_t last_space = -1;
+    std::uint32_t line_index = 0U;
+    auto refresh = [&]
+    {
+        line_width = 0.0F;
+        last_space = -1;
+        for (std::size_t index = 0; index < line.size(); ++index)
+        {
+            line_width += line[index].glyph.x_advance;
+            if (line[index].space)
+            {
+                last_space = static_cast<std::int32_t>(index);
+            }
+        }
+    };
+    auto flush = [&](std::size_t count, bool force)
+    {
+        if (count == 0U && !force)
+        {
+            return;
+        }
+        const float offset = width > 0.0F && align != 0U
+                                 ? (align == 1U ? (width - line_width) * 0.5F : width - line_width)
+                                 : 0.0F;
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const LineGlyph& entry = line[index];
+            if (entry.atlas.quad.width > 0.0F && entry.atlas.quad.height > 0.0F)
+            {
+                GlyphQuad quad = entry.atlas.quad;
+                quad.x = offset + pen + entry.glyph.x_offset +
+                         static_cast<float>(entry.atlas.bearing_x);
+                quad.y = metrics.ascent + static_cast<float>(line_index) * line_height -
+                         entry.glyph.y_offset - static_cast<float>(entry.atlas.bearing_y);
+                out.push_back(quad);
+            }
+            pen += entry.glyph.x_advance;
+        }
+        line.erase(line.begin(), line.begin() + static_cast<std::ptrdiff_t>(count));
+        if (count > 0U || force)
+        {
+            ++line_index;
+        }
+        pen = 0.0F;
+        refresh();
+    };
+
     for (const text::ShapedGlyph& glyph : shaped)
     {
         AtlasGlyph atlas;
@@ -134,15 +223,38 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, std::vector<G
         {
             return false;
         }
-        if (atlas.quad.width > 0.0F && atlas.quad.height > 0.0F)
+        const std::uint32_t codepoint = codepointAt(utf8, glyph.cluster);
+        if (codepoint == '\n' || codepoint == '\r')
         {
-            GlyphQuad quad = atlas.quad;
-            quad.x = pen + glyph.x_offset + static_cast<float>(atlas.bearing_x);
-            quad.y = metrics.ascent - glyph.y_offset - static_cast<float>(atlas.bearing_y);
-            out.push_back(quad);
+            flush(line.size(), true);
+            continue;
         }
-        pen += glyph.x_advance;
+        const bool space = codepoint == ' ' || codepoint == '\t';
+        const float advance = glyph.x_advance;
+        if (wrap && width > 0.0F && !line.empty() && line_width + advance > width)
+        {
+            if (last_space >= 0)
+            {
+                flush(static_cast<std::size_t>(last_space), true);
+                if (!line.empty() && line.front().space)
+                {
+                    line.erase(line.begin());
+                    refresh();
+                }
+            }
+            else
+            {
+                flush(line.size(), true);
+            }
+        }
+        line.push_back(LineGlyph{glyph, atlas, space});
+        line_width += advance;
+        if (space)
+        {
+            last_space = static_cast<std::int32_t>(line.size() - 1U);
+        }
     }
+    flush(line.size(), false);
     return true;
 }
 

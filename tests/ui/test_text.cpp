@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <iterator>
@@ -181,4 +182,76 @@ TEST_CASE("ui text: without a font the Label keeps its box but has no glyph run"
     const auto children = resonate::hierarchy::children(fixture.world, root);
     REQUIRE(children.size() == 1U);
     CHECK(fixture.world.get<Glyphs>(children[0]) == nullptr);
+}
+
+TEST_CASE("ui text: wrapping and alignment lay glyphs out in lines", "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="wrapped" text="W W W" font_size="20" width="50" height="120"
+           color="0 0 0 0" align="Center" wrap="true"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, loadFont());
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+    std::vector<float> ys;
+    float minimum_x = 1e9F;
+    for (const resonate::ui::Quad& quad : list.quads())
+    {
+        if (quad.texture != resonate::ui::kTextureFont)
+        {
+            continue;
+        }
+        ys.push_back(quad.y);
+        minimum_x = std::min(minimum_x, quad.x);
+    }
+    REQUIRE(ys.size() == 3U);
+    std::sort(ys.begin(), ys.end());
+    CHECK(ys[2] > ys[0] + 10.0F);
+    CHECK(minimum_x > 0.0F);
+}
+
+TEST_CASE("ui text: CJK wraps between glyphs", "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="wrapped" text="生命值生命值" font_size="20" width="40" height="120"
+           color="0 0 0 0"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, loadFont());
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+    std::vector<float> ys;
+    std::size_t glyphs = 0;
+    for (const resonate::ui::Quad& quad : list.quads())
+    {
+        if (quad.texture == resonate::ui::kTextureFont)
+        {
+            ys.push_back(quad.y);
+            ++glyphs;
+        }
+    }
+    CHECK(glyphs == 6U);
+    std::sort(ys.begin(), ys.end());
+    CHECK(ys.back() > ys.front() + 40.0F);
 }
