@@ -371,6 +371,22 @@ TEST_CASE("ui text: typing edits the focused field", "[ui][text]")
     REQUIRE(pointer != nullptr);
     CHECK(pointer->focused == field);
 
+    const auto carets = [&]
+    {
+        resonate::ui::DisplayList list;
+        REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+        std::size_t count = 0;
+        for (const resonate::ui::Quad& quad : list.quads())
+        {
+            if (quad.texture == resonate::ui::kTextureWhite && quad.width == 1.0F)
+            {
+                ++count;
+            }
+        }
+        return count;
+    };
+    CHECK(carets() == 1U);
+
     const auto content = [&]
     {
         const Text* component = fixture.world.get<Text>(field);
@@ -407,6 +423,7 @@ TEST_CASE("ui text: typing edits the focused field", "[ui][text]")
     pointer = fixture.world.get<PointerState>(root);
     REQUIRE(pointer != nullptr);
     CHECK_FALSE(pointer->focused.valid());
+    CHECK(carets() == 0U);
     REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "Z", false, error));
     CHECK(content() == "A");
 }

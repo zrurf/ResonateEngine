@@ -15,9 +15,10 @@
  *
  * The list is the boundary between the retained tree and a renderer: widgets
  * are walked parent first, siblings by ascending RectTransform::z and then
- * hierarchy order, and every widget carrying Background or Image contributes a
- * rectangle. The caller reuses one list across frames; the scratch the walk
- * needs grows to the tree once and is then allocation-free.
+ * hierarchy order, and every widget carrying Background, Image or Text
+ * contributes geometry; the focused text field also contributes its caret. The
+ * caller reuses one list across frames; the scratch the walk needs grows to the
+ * tree once and is then allocation-free.
  */
 namespace resonate::ui
 {
@@ -70,6 +71,7 @@ class DisplayList
 
     std::vector<Quad> quads_;
     std::vector<OrderEntry> order_;
+    ecs::Entity focused_{};
 };
 
 /* Fills `out` with the subtree rooted at `root` in paint order. The root may be

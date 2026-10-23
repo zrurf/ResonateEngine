@@ -105,23 +105,55 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
     if (const Text* text = world.get<Text>(entity))
     {
         const Glyphs* glyphs = world.get<Glyphs>(entity);
-        if (glyphs != nullptr && world.alive(glyphs->records))
+        const bool has_glyphs = glyphs != nullptr && world.alive(glyphs->records);
+        const ComputedRect* rect = world.get<ComputedRect>(entity);
+        if (rect == nullptr)
         {
-            const ComputedRect* rect = world.get<ComputedRect>(entity);
-            if (rect == nullptr)
+            if (has_glyphs || focused_ == entity)
             {
                 return report(world, entity, "has Text but no ComputedRect");
             }
-            const auto* records = static_cast<const detail::GlyphQuad*>(
-                world.blobData(glyphs->records));
-            const std::size_t count =
-                world.blobSize(glyphs->records) / sizeof(detail::GlyphQuad);
+        }
+        else
+        {
+            const detail::GlyphQuad* records = nullptr;
+            std::size_t count = 0;
+            if (has_glyphs)
+            {
+                records = static_cast<const detail::GlyphQuad*>(world.blobData(glyphs->records));
+                count = world.blobSize(glyphs->records) / sizeof(detail::GlyphQuad);
+            }
             for (std::size_t index = 0; index < count; ++index)
             {
                 const detail::GlyphQuad& glyph = records[index];
                 quads_.push_back(Quad{rect->x + glyph.x, rect->y + glyph.y, glyph.width,
                                       glyph.height, text->text_color, kTextureFont,
                                       Vec2{glyph.u0, glyph.v0}, Vec2{glyph.u1, glyph.v1}});
+            }
+            if (focused_ == entity)
+            {
+                /* The caret sits past the last glyph's ink; an empty field
+                   starts it at the alignment edge. */
+                float caret_x = rect->x;
+                float caret_y = rect->y;
+                const float caret_height = text->font_size > 0.0F ? text->font_size
+                                                                  : rect->height;
+                if (count > 0U)
+                {
+                    const detail::GlyphQuad& last = records[count - 1U];
+                    caret_x = rect->x + last.x + last.width + 1.0F;
+                    caret_y = rect->y + last.y;
+                }
+                else if (text->align == TextAlign::Center)
+                {
+                    caret_x = rect->x + (rect->width - 1.0F) * 0.5F;
+                }
+                else if (text->align == TextAlign::End)
+                {
+                    caret_x = rect->x + rect->width - 1.0F;
+                }
+                quads_.push_back(
+                    Quad{caret_x, caret_y, 1.0F, caret_height, text->text_color});
             }
         }
     }
@@ -156,6 +188,7 @@ void DisplayList::clear()
 {
     quads_.clear();
     order_.clear();
+    focused_ = ecs::Entity{};
 }
 
 void DisplayList::push(const Quad& quad)
@@ -181,6 +214,11 @@ Span<const Quad> DisplayList::quads() const noexcept
 bool buildDisplayList(ecs::World& world, ecs::Entity root, DisplayList& out)
 {
     out.clear();
+    const PointerState* pointer = world.get<PointerState>(root);
+    if (pointer != nullptr)
+    {
+        out.focused_ = pointer->focused;
+    }
     return out.paint(world, root, 0U);
 }
 
