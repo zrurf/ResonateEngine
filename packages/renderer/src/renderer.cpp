@@ -487,6 +487,7 @@ struct RenderSystem::Impl
     std::uint32_t slotOf(ResonateRenderBuffer handle) const;
     std::uint32_t slotOf(ResonateRenderImage handle) const;
     std::uint32_t uiTextureSlot(std::uint32_t texture) const;
+    bool updateFontAtlas(const FrameSnapshot& snapshot);
     void bindQueries(ecs::World& world);
     void resolveCapabilities();
     void ensureThread();
@@ -887,6 +888,50 @@ std::uint32_t RenderSystem::Impl::uiTextureSlot(std::uint32_t texture) const
         return kSolidUiTextureSlot;
     }
     return texture == ui::kTextureChecker ? checker_texture_slot : white_texture_slot;
+}
+
+bool RenderSystem::Impl::updateFontAtlas(const FrameSnapshot& snapshot)
+{
+    if (!albedo_ready || snapshot.text_atlas == nullptr)
+    {
+        return true;
+    }
+    const UiAtlas& atlas = *snapshot.text_atlas;
+    if (font_atlas_ready && atlas.revision == font_atlas_revision)
+    {
+        return true;
+    }
+    if (atlas.width == 0U || atlas.height == 0U ||
+        atlas.pixels.size() != static_cast<std::size_t>(atlas.width) * atlas.height * 4U)
+    {
+        complain("the font atlas page is malformed");
+        return false;
+    }
+    device->wait_idle(device->self);
+    if (font_atlas.value != 0U)
+    {
+        device->destroy_image(device->self, font_atlas);
+        font_atlas = ResonateRenderImage{};
+    }
+    font_atlas_ready = false;
+    if (!createSampledTexture(*device, atlas.width, atlas.height,
+                              RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, atlas.pixels, font_atlas,
+                              true))
+    {
+        complain("the font atlas texture was not created");
+        return false;
+    }
+    font_atlas_slot = slotOf(font_atlas);
+    if (device->header.struct_size >=
+            offsetof(ResonateRenderDevice, bind_image_slot) +
+                sizeof(device->bind_image_slot) &&
+        device->bind_image_slot != nullptr)
+    {
+        device->bind_image_slot(device->self, font_atlas_slot, font_atlas, 1U);
+    }
+    font_atlas_revision = atlas.revision;
+    font_atlas_ready = true;
+    return true;
 }
 
 bool RenderSystem::Impl::ensurePipelines()
@@ -2249,6 +2294,7 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
             complain("albedo textures unavailable");
         }
     }
+    updateFontAtlas(snapshot);
 }
 
 void composeDemoScene(ecs::World& world)

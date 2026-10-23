@@ -16,6 +16,7 @@
 #include <resonate/ui/document.h>
 #include <resonate/ui/document_schema.h>
 #include <resonate/ui/layout.h>
+#include <resonate/ui/text_runtime.h>
 
 #include "resonate.ui/components.gen.h"
 
@@ -288,4 +289,47 @@ TEST_CASE("ui text: a zero-sized Label takes its measured text extent", "[ui][te
     CHECK(first->height > 10.0F);
     CHECK(second->x >= first->x + first->width - 0.01F);
     CHECK(second->width > 10.0F);
+}
+
+TEST_CASE("ui text: a TextRuntime replaces a label's text after instantiation", "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="label" text="A" font_size="24" width="120" height="40"
+           color="0 0 0 0"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root =
+        resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+    const auto children = resonate::hierarchy::children(fixture.world, root);
+    REQUIRE(children.size() == 1U);
+    const Entity label = children[0];
+    const TextAtlasPage* page = fixture.world.get<TextAtlasPage>(root);
+    REQUIRE(page != nullptr);
+    const std::uint32_t revision = page->revision;
+
+    std::string error;
+    REQUIRE(runtime.setText(fixture.world, root, label, "BC", error));
+    CHECK(error.empty());
+
+    const Text* replaced = fixture.world.get<Text>(label);
+    REQUIRE(replaced != nullptr);
+    REQUIRE(fixture.world.alive(replaced->content));
+    CHECK(fixture.world.blobSize(replaced->content) == 2U);
+    CHECK(std::string(static_cast<const char*>(fixture.world.blobData(replaced->content)), 2U) ==
+          "BC");
+    const Glyphs* glyphs = fixture.world.get<Glyphs>(label);
+    REQUIRE(glyphs != nullptr);
+    CHECK(fixture.world.blobSize(glyphs->records) > 0U);
+    page = fixture.world.get<TextAtlasPage>(root);
+    REQUIRE(page != nullptr);
+    CHECK(page->revision == revision + 1U);
 }

@@ -2,6 +2,7 @@
 
 #include <resonate/ui/document_schema.h>
 #include <resonate/ui/style.h>
+#include <resonate/ui/text_runtime.h>
 
 #include "binding_internal.h"
 #include "component_bind.h"
@@ -690,8 +691,10 @@ struct BindingContext
     ecs::ComponentIndex data_component = ecs::kInvalidComponent;
     std::vector<detail::BindingRecord> records;
     dom::StringId text_property = dom::kInvalidString;
-    std::vector<std::shared_ptr<const text::Font>> fonts;
-    std::unique_ptr<detail::TextAtlasBuilder> atlas;
+    std::unique_ptr<detail::TextAtlasBuilder> owned_atlas;
+    detail::TextAtlasBuilder* atlas = nullptr;
+    TextRuntime* runtime = nullptr;
+    std::uint32_t page_revision = 1U;
     std::vector<PendingRun> runs;
 };
 
@@ -1222,11 +1225,9 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
     return entity;
 }
 
-} // namespace
-
-Entity instantiate(World& world, dom::Document& document,
-                   const dom::ComponentRegistry* component_registry,
-                   std::vector<std::shared_ptr<const text::Font>> fonts)
+Entity instantiateConfigured(World& world, dom::Document& document,
+                             const dom::ComponentRegistry* component_registry,
+                             BindingContext& bindings)
 {
     const dom::NodeHandle root = document.root();
     if (!root.valid())
@@ -1253,12 +1254,7 @@ Entity instantiate(World& world, dom::Document& document,
 
     CommandBuffer commands(world);
     std::vector<Entity> created;
-    BindingContext bindings;
     bindings.text_property = document.intern("text");
-    if (!fonts.empty())
-    {
-        bindings.atlas = std::make_unique<detail::TextAtlasBuilder>(std::move(fonts));
-    }
     const Entity entity = instantiateNode(world, commands, document, root, styles, bindings,
                                           component_registry, created);
     if (!entity.valid())
@@ -1326,6 +1322,11 @@ Entity instantiate(World& world, dom::Document& document,
             return Entity{};
         }
     }
+    if (bindings.runtime != nullptr)
+    {
+        TextRuntimeAccess::attach(*bindings.runtime, entity);
+        bindings.page_revision = TextRuntimeAccess::revision(*bindings.runtime);
+    }
     if (world.add(entity, PointerState{}) == nullptr)
     {
         report(world, document, root, "PointerState could not be attached");
@@ -1340,8 +1341,8 @@ Entity instantiate(World& world, dom::Document& document,
         const std::vector<std::uint8_t>& pixels = bindings.atlas->pixels();
         const ecs::BlobHandle page = world.createBlob(entity, pixels.size(), pixels.data());
         if (!page.valid() ||
-            world.add(entity, TextAtlasPage{bindings.atlas->width(), bindings.atlas->height(), 1U,
-                                            page}) == nullptr)
+            world.add(entity, TextAtlasPage{bindings.atlas->width(), bindings.atlas->height(),
+                                            bindings.page_revision, page}) == nullptr)
         {
             report(world, document, root, "the font atlas page could not be attached");
             for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)
@@ -1368,6 +1369,30 @@ Entity instantiate(World& world, dom::Document& document,
     }
     world.play(commands);
     return entity;
+}
+
+} // namespace
+
+Entity instantiate(World& world, dom::Document& document,
+                   const dom::ComponentRegistry* component_registry,
+                   std::vector<std::shared_ptr<const text::Font>> fonts)
+{
+    BindingContext bindings;
+    if (!fonts.empty())
+    {
+        bindings.owned_atlas = std::make_unique<detail::TextAtlasBuilder>(std::move(fonts));
+        bindings.atlas = bindings.owned_atlas.get();
+    }
+    return instantiateConfigured(world, document, component_registry, bindings);
+}
+
+Entity instantiate(World& world, dom::Document& document,
+                   const dom::ComponentRegistry* component_registry, TextRuntime& runtime)
+{
+    BindingContext bindings;
+    bindings.atlas = TextRuntimeAccess::atlas(runtime);
+    bindings.runtime = &runtime;
+    return instantiateConfigured(world, document, component_registry, bindings);
 }
 
 } // namespace resonate::ui

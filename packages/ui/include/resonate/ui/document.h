@@ -13,6 +13,8 @@
 namespace resonate::ui
 {
 
+class TextRuntime;
+
 /* Instantiates a document parsed with documentSchema() into widget entities.
    Every node becomes one entity, components become ECS components, child nodes
    become hierarchy children and ComputedRect is attached as the derived
@@ -26,6 +28,12 @@ namespace resonate::ui
     ecs::World& world, dom::Document& document,
     const dom::ComponentRegistry* components = nullptr,
     std::vector<std::shared_ptr<const text::Font>> fonts = {});
+
+/* Instantiates through a live TextRuntime, whose font chain owns the atlas and
+   allows setText after the document is built. */
+[[nodiscard]] ecs::Entity instantiate(ecs::World& world, dom::Document& document,
+                                      const dom::ComponentRegistry* components,
+                                      TextRuntime& text);
 
 } // namespace resonate::ui
 
