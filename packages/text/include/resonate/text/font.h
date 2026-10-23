@@ -60,17 +60,19 @@ class Font
     [[nodiscard]] static std::shared_ptr<Font> fromMemory(std::vector<std::uint8_t> bytes,
                                                           std::string& out_error);
 
-    [[nodiscard]] bool metrics(float size, FontMetrics& out) const;
+    [[nodiscard]] bool metrics(float size, float weight, FontMetrics& out) const;
     [[nodiscard]] std::uint32_t glyphIndex(std::uint32_t codepoint) const;
 
-    /* The glyph's coverage bitmap at `size` pixels per em. A blank glyph (a
-       space) answers true with an empty bitmap and its advance. */
-    [[nodiscard]] bool rasterize(std::uint32_t glyph, float size, GlyphBitmap& out) const;
+    /* The glyph's SDF bitmap at `size` pixels per em and variable-axis weight.
+       A blank glyph (a space) answers true with an empty bitmap and its
+       advance. */
+    [[nodiscard]] bool rasterize(std::uint32_t glyph, float size, float weight,
+                                 GlyphBitmap& out) const;
 
   private:
     Font() = default;
     struct Impl;
-    friend bool shape(const Font& font, std::string_view utf8, float size,
+    friend bool shape(const Font& font, std::string_view utf8, float size, float weight,
                       std::vector<ShapedGlyph>& out, std::string& out_error);
     std::unique_ptr<Impl> impl_;
 };
@@ -78,7 +80,7 @@ class Font
 /* Shapes UTF-8 into positioned glyphs at `size` pixels per em. The result is
    in font order with advances already scaled to pixels; the caller draws each
    glyph at its pen plus the reported offsets. */
-[[nodiscard]] bool shape(const Font& font, std::string_view utf8, float size,
+[[nodiscard]] bool shape(const Font& font, std::string_view utf8, float size, float weight,
                          std::vector<ShapedGlyph>& out, std::string& out_error);
 
 } // namespace resonate::text

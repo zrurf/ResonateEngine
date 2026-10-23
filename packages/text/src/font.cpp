@@ -87,13 +87,13 @@ std::shared_ptr<Font> Font::loadFile(const std::string& path, std::string& out_e
     return fromMemory(std::move(bytes), out_error);
 }
 
-bool Font::metrics(float size, FontMetrics& out) const
+bool Font::metrics(float size, float weight, FontMetrics& out) const
 {
     if (impl_ == nullptr || impl_->rust == nullptr || !(size > 0.0F))
     {
         return false;
     }
-    return resonate_text_font_metrics(impl_->rust, size, &out.ascent, &out.descent,
+    return resonate_text_font_metrics(impl_->rust, size, weight, &out.ascent, &out.descent,
                                       &out.leading) != 0;
 }
 
@@ -106,14 +106,14 @@ std::uint32_t Font::glyphIndex(std::uint32_t codepoint) const
     return resonate_text_font_glyph_index(impl_->rust, codepoint);
 }
 
-bool Font::rasterize(std::uint32_t glyph, float size, GlyphBitmap& out) const
+bool Font::rasterize(std::uint32_t glyph, float size, float weight, GlyphBitmap& out) const
 {
     if (impl_ == nullptr || impl_->rust == nullptr || !(size > 0.0F))
     {
         return false;
     }
     ResonateTextBitmap bitmap{};
-    if (resonate_text_glyph_raster(impl_->rust, glyph, size, &bitmap) == 0)
+    if (resonate_text_glyph_raster(impl_->rust, glyph, size, weight, &bitmap) == 0)
     {
         return false;
     }
@@ -132,8 +132,8 @@ bool Font::rasterize(std::uint32_t glyph, float size, GlyphBitmap& out) const
     return true;
 }
 
-bool shape(const Font& font, std::string_view utf8, float size, std::vector<ShapedGlyph>& out,
-           std::string& out_error)
+bool shape(const Font& font, std::string_view utf8, float size, float weight,
+           std::vector<ShapedGlyph>& out, std::string& out_error)
 {
     out.clear();
     if (font.impl_ == nullptr || font.impl_->face == nullptr || !(size > 0.0F))
@@ -155,10 +155,10 @@ bool shape(const Font& font, std::string_view utf8, float size, std::vector<Shap
     }
     const int scale = static_cast<int>(size * 64.0F + 0.5F);
     hb_font_set_scale(hb_font, scale, scale);
-    hb_variation_t weight{};
-    weight.tag = HB_TAG('w', 'g', 'h', 't');
-    weight.value = 400.0F;
-    hb_font_set_variations(hb_font, &weight, 1U);
+    hb_variation_t variation{};
+    variation.tag = HB_TAG('w', 'g', 'h', 't');
+    variation.value = weight;
+    hb_font_set_variations(hb_font, &variation, 1U);
 
     hb_buffer_t* buffer = hb_buffer_create();
     if (buffer == nullptr)

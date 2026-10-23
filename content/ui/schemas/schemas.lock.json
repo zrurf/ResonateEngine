@@ -139,7 +139,7 @@
         "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
         "  uses Background expose color",
-        "  uses Text expose align font_size text_color wrap"
+        "  uses Text expose align font_size font_weight text_color wrap"
       ]
     },
     {
@@ -276,12 +276,13 @@
       "version": 1,
       "shape": [
         "component Text version 1",
-        "  size 32 align 4",
+        "  size 36 align 4",
         "  field content blob @0 size 8",
         "  field font_size f32 @8 size 4 default=24",
-        "  field text_color vec4 @12 size 16 default=1 1 1 1",
-        "  field align resonate.ui.TextAlign @28 size 1 default=Start",
-        "  field wrap bool @29 size 1 default=true",
+        "  field font_weight u16 @12 size 2 default=400",
+        "  field text_color vec4 @16 size 16 default=1 1 1 1",
+        "  field align resonate.ui.TextAlign @32 size 1 default=Start",
+        "  field wrap bool @33 size 1 default=true",
         "  enum TextAlign u8 values Start=0, Center=1, End=2"
       ]
     },

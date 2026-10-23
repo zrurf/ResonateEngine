@@ -609,6 +609,16 @@ bool applyText(const dom::Document& document, const dom::Component& component, T
                 return false;
             }
         }
+        else if (name == "font_weight")
+        {
+            std::uint32_t weight = 0U;
+            if (!parseU32(field.value, weight) || weight < 1U || weight > 1000U)
+            {
+                error = "Text.font_weight is not a weight between 1 and 1000";
+                return false;
+            }
+            text.font_weight = static_cast<std::uint16_t>(weight);
+        }
         else if (name == "text_color")
         {
             if (!parseVec4(field.value, text.text_color))
@@ -822,7 +832,8 @@ bool buildTextRun(World& world, const dom::Document& document, dom::NodeHandle n
     const float width = rect != nullptr ? rect->width : 0.0F;
     std::vector<detail::GlyphQuad> glyphs;
     std::string error;
-    if (!context.atlas->buildRun(std::string_view(bytes, size), text->font_size, width,
+    if (!context.atlas->buildRun(std::string_view(bytes, size), text->font_size,
+                                 static_cast<float>(text->font_weight), width,
                                  static_cast<std::uint32_t>(text->align), text->wrap, glyphs,
                                  error))
     {

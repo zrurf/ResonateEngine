@@ -24,7 +24,7 @@ TEST_CASE("text: the sample font shapes latin and CJK", "[text]")
     CHECK(error.empty());
 
     resonate::text::FontMetrics metrics;
-    REQUIRE(font->metrics(32.0F, metrics));
+    REQUIRE(font->metrics(32.0F, 400.0F, metrics));
     CHECK(metrics.ascent > 0.0F);
     CHECK(metrics.descent < 0.0F);
 
@@ -32,7 +32,8 @@ TEST_CASE("text: the sample font shapes latin and CJK", "[text]")
     CHECK(font->glyphIndex(0x4F60U) != 0U); /* 你 */
 
     std::vector<resonate::text::ShapedGlyph> glyphs;
-    REQUIRE(resonate::text::shape(*font, "Hi \xE4\xBD\xA0\xE5\xA5\xBD", 32.0F, glyphs, error));
+    REQUIRE(resonate::text::shape(*font, "Hi \xE4\xBD\xA0\xE5\xA5\xBD", 32.0F, 400.0F, glyphs,
+                                  error));
     REQUIRE(glyphs.size() == 5U);
     CHECK(glyphs[0].glyph != 0U);
     CHECK(glyphs[3].glyph != 0U);
@@ -40,7 +41,7 @@ TEST_CASE("text: the sample font shapes latin and CJK", "[text]")
     CHECK(glyphs[3].x_advance > 0.0F);
 
     std::vector<resonate::text::ShapedGlyph> empty;
-    REQUIRE(resonate::text::shape(*font, "", 32.0F, empty, error));
+    REQUIRE(resonate::text::shape(*font, "", 32.0F, 400.0F, empty, error));
     CHECK(empty.empty());
 }
 
@@ -51,7 +52,7 @@ TEST_CASE("text: a glyph rasterizes into a placement bitmap", "[text]")
     REQUIRE(font != nullptr);
 
     resonate::text::GlyphBitmap glyph;
-    REQUIRE(font->rasterize(font->glyphIndex('A'), 32.0F, glyph));
+    REQUIRE(font->rasterize(font->glyphIndex('A'), 32.0F, 400.0F, glyph));
     CHECK(glyph.width > 0U);
     CHECK(glyph.height > 0U);
     CHECK(glyph.bearing_y > 0);
@@ -70,7 +71,7 @@ TEST_CASE("text: a glyph rasterizes into a placement bitmap", "[text]")
 
     /* A space has an advance but no outline. */
     resonate::text::GlyphBitmap space;
-    REQUIRE(font->rasterize(font->glyphIndex(' '), 32.0F, space));
+    REQUIRE(font->rasterize(font->glyphIndex(' '), 32.0F, 400.0F, space));
     CHECK(space.width == 0U);
     CHECK(space.height == 0U);
     CHECK(space.coverage.empty());
@@ -83,4 +84,25 @@ TEST_CASE("text: bad font bytes are refused", "[text]")
     const std::vector<std::uint8_t> bytes(64U, 0x42U);
     CHECK(resonate::text::Font::fromMemory(bytes, error) == nullptr);
     CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("text: the variable weight changes the glyph ink", "[text]")
+{
+    std::string error;
+    const auto font = resonate::text::Font::loadFile(fontPath(), error);
+    REQUIRE(font != nullptr);
+
+    resonate::text::GlyphBitmap regular;
+    resonate::text::GlyphBitmap bold;
+    REQUIRE(font->rasterize(font->glyphIndex('A'), 32.0F, 400.0F, regular));
+    REQUIRE(font->rasterize(font->glyphIndex('A'), 32.0F, 700.0F, bold));
+    CHECK(regular.coverage.size() != bold.coverage.size());
+    std::uint32_t regular_ink = 0;
+    std::uint32_t bold_ink = 0;
+    for (std::size_t index = 0; index < regular.coverage.size(); ++index)
+    {
+        regular_ink += regular.coverage[index] > 128U ? 1U : 0U;
+        bold_ink += bold.coverage[index] > 128U ? 1U : 0U;
+    }
+    CHECK(bold_ink > regular_ink);
 }

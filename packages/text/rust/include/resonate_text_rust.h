@@ -27,16 +27,17 @@ typedef struct ResonateTextBitmap
 ResonateTextFont* resonate_text_font_create(const uint8_t* data, size_t len);
 void resonate_text_font_destroy(ResonateTextFont* font);
 
-/* 1 on success; the metrics are in pixels for the requested ppem. */
-int32_t resonate_text_font_metrics(const ResonateTextFont* font, float size, float* ascent,
-                                   float* descent, float* leading);
+/* 1 on success; the metrics are in pixels for the requested ppem and the
+   variable-axis weight (100..900, clamped by the font). */
+int32_t resonate_text_font_metrics(const ResonateTextFont* font, float size, float weight,
+                                   float* ascent, float* descent, float* leading);
 
 uint32_t resonate_text_font_glyph_index(const ResonateTextFont* font, uint32_t codepoint);
 
 /* 1 on success. A glyph with no outline answers success with a zero-size
    bitmap and its advance. */
 int32_t resonate_text_glyph_raster(const ResonateTextFont* font, uint32_t glyph_id, float size,
-                                   ResonateTextBitmap* out);
+                                   float weight, ResonateTextBitmap* out);
 
 void resonate_text_bitmap_free(ResonateTextBitmap* bitmap);
 

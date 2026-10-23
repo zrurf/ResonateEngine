@@ -11,10 +11,12 @@ namespace
 
 constexpr std::uint32_t kGlyphPadding = 1U;
 
-std::uint64_t glyphKey(std::uint32_t glyph, float size)
+std::uint64_t glyphKey(std::uint32_t glyph, float size, float weight)
 {
     const auto scaled = static_cast<std::uint32_t>(std::lround(size * 64.0F));
-    return (static_cast<std::uint64_t>(scaled) << 32U) | glyph;
+    const auto weighted = static_cast<std::uint32_t>(std::lround(weight));
+    return (static_cast<std::uint64_t>(scaled & 0xFFFFU) << 48U) |
+           (static_cast<std::uint64_t>(weighted & 0xFFFFU) << 32U) | glyph;
 }
 
 std::uint32_t codepointAt(std::string_view utf8, std::uint32_t cluster)
@@ -61,10 +63,10 @@ TextAtlasBuilder::TextAtlasBuilder(std::shared_ptr<const text::Font> font, std::
     }
 }
 
-bool TextAtlasBuilder::getGlyph(std::uint32_t glyph, float size, AtlasGlyph& out,
+bool TextAtlasBuilder::getGlyph(std::uint32_t glyph, float size, float weight, AtlasGlyph& out,
                                 std::string& out_error)
 {
-    const std::uint64_t key = glyphKey(glyph, size);
+    const std::uint64_t key = glyphKey(glyph, size, weight);
     if (const auto found = glyphs_.find(key); found != glyphs_.end())
     {
         out = found->second;
@@ -72,7 +74,7 @@ bool TextAtlasBuilder::getGlyph(std::uint32_t glyph, float size, AtlasGlyph& out
     }
 
     text::GlyphBitmap bitmap;
-    if (!font_->rasterize(glyph, size, bitmap))
+    if (!font_->rasterize(glyph, size, weight, bitmap))
     {
         out_error = "glyph rasterization failed";
         return false;
@@ -128,8 +130,9 @@ bool TextAtlasBuilder::getGlyph(std::uint32_t glyph, float size, AtlasGlyph& out
     return true;
 }
 
-bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float width, std::uint32_t align,
-                                bool wrap, std::vector<GlyphQuad>& out, std::string& out_error)
+bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight, float width,
+                                std::uint32_t align, bool wrap, std::vector<GlyphQuad>& out,
+                                std::string& out_error)
 {
     if (font_ == nullptr || !(size > 0.0F))
     {
@@ -138,7 +141,7 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float width, 
     }
 
     std::vector<text::ShapedGlyph> shaped;
-    if (!text::shape(*font_, utf8, size, shaped, out_error))
+    if (!text::shape(*font_, utf8, size, weight, shaped, out_error))
     {
         return false;
     }
@@ -148,7 +151,7 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float width, 
     }
 
     text::FontMetrics metrics;
-    if (!font_->metrics(size, metrics))
+    if (!font_->metrics(size, weight, metrics))
     {
         out_error = "font metrics are unavailable";
         return false;
@@ -219,7 +222,7 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float width, 
     for (const text::ShapedGlyph& glyph : shaped)
     {
         AtlasGlyph atlas;
-        if (!getGlyph(glyph.glyph, size, atlas, out_error))
+        if (!getGlyph(glyph.glyph, size, weight, atlas, out_error))
         {
             return false;
         }

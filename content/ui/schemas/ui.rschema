@@ -115,6 +115,7 @@
   <component name="Text" version="1">
     <field name="content" type="blob"/>
     <field name="font_size" type="f32" default="24"/>
+    <field name="font_weight" type="u16" default="400"/>
     <field name="text_color" type="vec4" default="1 1 1 1"/>
     <field name="align" type="TextAlign" default="Start"/>
     <field name="wrap" type="bool" default="true"/>
@@ -208,7 +209,7 @@
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color"/>
-    <uses component="Text" expose="font_size text_color align wrap"/>
+    <uses component="Text" expose="font_size font_weight text_color align wrap"/>
     <field name="text" type="string"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>

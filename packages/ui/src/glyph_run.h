@@ -41,8 +41,8 @@ class TextAtlasBuilder
        between glyphs, and `align` (0 start, 1 center, 2 end) offsets each line
        within it. False with a named error when the page is full or a glyph
        cannot be rasterized. */
-    bool buildRun(std::string_view utf8, float size, float width, std::uint32_t align, bool wrap,
-                  std::vector<GlyphQuad>& out, std::string& out_error);
+    bool buildRun(std::string_view utf8, float size, float weight, float width, std::uint32_t align,
+                  bool wrap, std::vector<GlyphQuad>& out, std::string& out_error);
 
     [[nodiscard]] bool used() const noexcept { return used_; }
     [[nodiscard]] std::uint32_t width() const noexcept { return width_; }
@@ -58,7 +58,8 @@ class TextAtlasBuilder
         std::int32_t bearing_y = 0;
     };
 
-    bool getGlyph(std::uint32_t glyph, float size, AtlasGlyph& out, std::string& out_error);
+    bool getGlyph(std::uint32_t glyph, float size, float weight, AtlasGlyph& out,
+                  std::string& out_error);
 
     std::shared_ptr<const text::Font> font_;
     std::uint32_t width_ = 0U;

@@ -33,7 +33,7 @@
            direction="Column" align="Start" gap="8"
            padding_left="12" padding_top="12" padding_right="12" padding_bottom="12">
       <Label key="title" name="Title" class="title" width="336" height="28"
-             text="动作演示" font_size="20" text_color="1 1 1 1"/>
+             text="动作演示" font_size="20" font_weight="700" text_color="1 1 1 1"/>
       <Label key="bar.health" name="Health" class="bar" height="16"
              text="生命值 240" font_size="13" text_color="0.05 0.12 0.05 1"
              bind-width="DataContext.health"/>

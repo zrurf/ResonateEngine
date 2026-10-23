@@ -105,7 +105,8 @@ pub extern "C" fn resonate_text_font_destroy(font: *mut ResonateTextFont)
 }
 
 #[no_mangle]
-pub extern "C" fn resonate_text_font_metrics(font: *const ResonateTextFont, size: f32, ascent: *mut f32,
+pub extern "C" fn resonate_text_font_metrics(font: *const ResonateTextFont, size: f32,
+                                             weight: f32, ascent: *mut f32,
                                              descent: *mut f32, leading: *mut f32) -> i32
 {
     if ascent.is_null() || descent.is_null() || leading.is_null() || size <= 0.0
@@ -114,7 +115,8 @@ pub extern "C" fn resonate_text_font_metrics(font: *const ResonateTextFont, size
     }
     let result = catch_unwind(AssertUnwindSafe(|| {
         let font = unsafe { font_ref(font) }?;
-        let location = font.axes().location([("wght", 400.0)]);
+        let weight = if weight > 0.0 { weight } else { 400.0 };
+        let location = font.axes().location([("wght", weight)]);
         let metrics = font.metrics(Size::new(size), LocationRef::from(&location));
         unsafe
         {
@@ -243,7 +245,8 @@ fn coverage_to_sdf(coverage: &[u8], width: usize, height: usize) -> Vec<u8>
 }
 
 #[no_mangle]
-pub extern "C" fn resonate_text_glyph_raster(font: *const ResonateTextFont, glyph_id: u32, size: f32,
+pub extern "C" fn resonate_text_glyph_raster(font: *const ResonateTextFont, glyph_id: u32,
+                                             size: f32, weight: f32,
                                              out: *mut ResonateTextBitmap) -> i32
 {
     if out.is_null() || size <= 0.0
@@ -254,7 +257,8 @@ pub extern "C" fn resonate_text_glyph_raster(font: *const ResonateTextFont, glyp
         let font = unsafe { font_ref(font) }?;
         let glyphs = font.outline_glyphs();
         let glyph = glyphs.get(GlyphId::new(glyph_id))?;
-        let location = font.axes().location([("wght", 400.0)]);
+        let weight = if weight > 0.0 { weight } else { 400.0 };
+        let location = font.axes().location([("wght", weight)]);
         let mut pen = PathPen { commands: Vec::new() };
         let metrics = glyph
             .draw(
