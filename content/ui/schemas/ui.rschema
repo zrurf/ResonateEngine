@@ -107,6 +107,7 @@
     <field name="uv_min" type="vec2" default="0 0"/>
     <field name="uv_max" type="vec2" default="1 1"/>
     <field name="tint" type="vec4" default="1 1 1 1"/>
+    <field name="slice" type="vec4" default="0 0 0 0"/>
   </component>
 
   <!-- A shaped run: the UTF-8 bytes in a blob, the size in pixels and the
@@ -230,7 +231,7 @@
   <node name="Picture" version="1">
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
-    <uses component="Image" expose="texture uv_min uv_max tint"/>
+    <uses component="Image" expose="texture uv_min uv_max tint slice"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>
     <field name="bind-width" type="binding"/>

@@ -461,6 +461,14 @@ bool applyImage(const dom::Document& document, const dom::Component& component, 
                 return false;
             }
         }
+        else if (name == "slice")
+        {
+            if (!parseVec4(field.value, image.slice))
+            {
+                error = "Image.slice is not a vec4";
+                return false;
+            }
+        }
         else
         {
             error = "unknown Image field '" + std::string(name) + "'";

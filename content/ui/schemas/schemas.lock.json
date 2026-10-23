@@ -106,11 +106,12 @@
       "version": 1,
       "shape": [
         "component Image version 1",
-        "  size 36 align 4",
+        "  size 52 align 4",
         "  field texture u32 @0 size 4 default=0",
         "  field uv_min vec2 @4 size 8 default=0 0",
         "  field uv_max vec2 @12 size 8 default=1 1",
-        "  field tint vec4 @20 size 16 default=1 1 1 1"
+        "  field tint vec4 @20 size 16 default=1 1 1 1",
+        "  field slice vec4 @36 size 16 default=0 0 0 0"
       ]
     },
     {
@@ -188,7 +189,7 @@
         "  field bind-width binding",
         "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
-        "  uses Image expose texture tint uv_max uv_min"
+        "  uses Image expose slice texture tint uv_max uv_min"
       ]
     },
     {

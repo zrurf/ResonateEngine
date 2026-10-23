@@ -218,3 +218,44 @@ TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]
     CHECK(list.quads()[6].texture == resonate::ui::kTextureChecker);
     CHECK(near(list.quads()[6].width, 48.0F));
 }
+
+TEST_CASE("ui document: a nine-sliced Picture emits the nine regions", "[ui][document]")
+{
+    const char* const text = R"xml(<document version="1">
+  <Screen key="hud">
+    <Picture key="frame" texture="1" x="10" y="20" width="100" height="80"
+             uv_min="0 0" uv_max="1 1" slice="0.25 0.25 0.25 0.25"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(text, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+    REQUIRE(list.size() == 9U);
+    const auto quads = list.quads();
+    CHECK(near(quads[0].x, 10.0F));
+    CHECK(near(quads[0].y, 20.0F));
+    CHECK(near(quads[0].width, 25.0F));
+    CHECK(near(quads[0].height, 20.0F));
+    CHECK(near(quads[0].uv_min.x, 0.0F));
+    CHECK(near(quads[0].uv_max.x, 0.25F));
+    CHECK(near(quads[4].x, 35.0F));
+    CHECK(near(quads[4].y, 40.0F));
+    CHECK(near(quads[4].width, 50.0F));
+    CHECK(near(quads[4].height, 40.0F));
+    CHECK(near(quads[4].uv_min.x, 0.25F));
+    CHECK(near(quads[4].uv_max.x, 0.75F));
+    CHECK(near(quads[8].x, 85.0F));
+    CHECK(near(quads[8].y, 80.0F));
+    CHECK(near(quads[8].width, 25.0F));
+    CHECK(near(quads[8].height, 20.0F));
+}

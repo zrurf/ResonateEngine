@@ -45,8 +45,62 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         {
             return report(world, entity, "has Image but no ComputedRect");
         }
-        quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, image->tint,
-                              image->texture, image->uv_min, image->uv_max});
+        float left = std::clamp(image->slice.x, 0.0F, 1.0F);
+        float top = std::clamp(image->slice.y, 0.0F, 1.0F);
+        float right = std::clamp(image->slice.z, 0.0F, 1.0F);
+        float bottom = std::clamp(image->slice.w, 0.0F, 1.0F);
+        if (left + right > 1.0F)
+        {
+            const float sum = left + right;
+            left /= sum;
+            right /= sum;
+        }
+        if (top + bottom > 1.0F)
+        {
+            const float sum = top + bottom;
+            top /= sum;
+            bottom /= sum;
+        }
+        if (left + right <= 0.0F && top + bottom <= 0.0F)
+        {
+            quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, image->tint,
+                                  image->texture, image->uv_min, image->uv_max});
+        }
+        else
+        {
+            /* A nine-slice splits both the quad and its UV rect at the same
+               fractions; the corners and edges keep their source region. */
+            const float xs[4] = {rect->x, rect->x + rect->width * left,
+                                 rect->x + rect->width * (1.0F - right),
+                                 rect->x + rect->width};
+            const float ys[4] = {rect->y, rect->y + rect->height * top,
+                                 rect->y + rect->height * (1.0F - bottom),
+                                 rect->y + rect->height};
+            const float us[4] = {image->uv_min.x,
+                                 image->uv_min.x + (image->uv_max.x - image->uv_min.x) * left,
+                                 image->uv_max.x - (image->uv_max.x - image->uv_min.x) * right,
+                                 image->uv_max.x};
+            const float vs[4] = {image->uv_min.y,
+                                 image->uv_min.y + (image->uv_max.y - image->uv_min.y) * top,
+                                 image->uv_max.y - (image->uv_max.y - image->uv_min.y) * bottom,
+                                 image->uv_max.y};
+            for (std::uint32_t row = 0; row < 3U; ++row)
+            {
+                for (std::uint32_t column = 0; column < 3U; ++column)
+                {
+                    const float quad_width = xs[column + 1U] - xs[column];
+                    const float quad_height = ys[row + 1U] - ys[row];
+                    if (quad_width <= 0.0F || quad_height <= 0.0F)
+                    {
+                        continue;
+                    }
+                    quads_.push_back(Quad{xs[column], ys[row], quad_width, quad_height,
+                                          image->tint, image->texture,
+                                          Vec2{us[column], vs[row]},
+                                          Vec2{us[column + 1U], vs[row + 1U]}});
+                }
+            }
+        }
     }
     if (const Text* text = world.get<Text>(entity))
     {
