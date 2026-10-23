@@ -670,6 +670,12 @@ bool applyText(const dom::Document& document, const dom::Component& component, T
     return true;
 }
 
+struct PendingRun
+{
+    Entity entity{};
+    std::vector<detail::GlyphQuad> quads;
+};
+
 struct BindingContext
 {
     Entity canvas{};
@@ -677,6 +683,7 @@ struct BindingContext
     std::vector<detail::BindingRecord> records;
     dom::StringId text_property = dom::kInvalidString;
     std::unique_ptr<detail::TextAtlasBuilder> atlas;
+    std::vector<PendingRun> runs;
 };
 
 bool collectBindings(World& world, const dom::Document& document, dom::NodeHandle node,
@@ -843,28 +850,7 @@ bool buildTextRun(World& world, const dom::Document& document, dom::NodeHandle n
     {
         return true;
     }
-    const ecs::BlobHandle records =
-        world.createBlob(entity, glyphs.size() * sizeof(detail::GlyphQuad), glyphs.data());
-    if (!records.valid() || world.add(entity, Glyphs{records}) == nullptr)
-    {
-        return report(world, document, node, "glyph quads could not be attached");
-    }
-
-    float minimum_x = glyphs[0].x;
-    float minimum_y = glyphs[0].y;
-    float maximum_x = glyphs[0].x + glyphs[0].width;
-    float maximum_y = glyphs[0].y + glyphs[0].height;
-    for (const detail::GlyphQuad& glyph : glyphs)
-    {
-        minimum_x = std::fmin(minimum_x, glyph.x);
-        minimum_y = std::fmin(minimum_y, glyph.y);
-        maximum_x = std::fmax(maximum_x, glyph.x + glyph.width);
-        maximum_y = std::fmax(maximum_y, glyph.y + glyph.height);
-    }
-    if (world.add(entity, TextMetrics{maximum_x - minimum_x, maximum_y - minimum_y}) == nullptr)
-    {
-        return report(world, document, node, "text metrics could not be attached");
-    }
+    context.runs.push_back(PendingRun{entity, std::move(glyphs)});
     return true;
 }
 
@@ -1282,6 +1268,54 @@ Entity instantiate(World& world, dom::Document& document,
             world.destroy(*iterator);
         }
         return Entity{};
+    }
+    for (PendingRun& run : bindings.runs)
+    {
+        for (detail::GlyphQuad& glyph : run.quads)
+        {
+            if (!bindings.atlas->updateQuad(glyph))
+            {
+                report(world, document, root, "a glyph is missing from the atlas");
+                for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)
+                {
+                    world.destroy(*iterator);
+                }
+                return Entity{};
+            }
+        }
+        const ecs::BlobHandle records = world.createBlob(
+            run.entity, run.quads.size() * sizeof(detail::GlyphQuad), run.quads.data());
+        if (!records.valid() || world.add(run.entity, Glyphs{records}) == nullptr)
+        {
+            report(world, document, root, "glyph quads could not be attached");
+            for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)
+            {
+                world.destroy(*iterator);
+            }
+            return Entity{};
+        }
+
+        float minimum_x = run.quads[0].x;
+        float minimum_y = run.quads[0].y;
+        float maximum_x = run.quads[0].x + run.quads[0].width;
+        float maximum_y = run.quads[0].y + run.quads[0].height;
+        for (const detail::GlyphQuad& glyph : run.quads)
+        {
+            minimum_x = std::fmin(minimum_x, glyph.x);
+            minimum_y = std::fmin(minimum_y, glyph.y);
+            maximum_x = std::fmax(maximum_x, glyph.x + glyph.width);
+            maximum_y = std::fmax(maximum_y, glyph.y + glyph.height);
+        }
+        if (world.add(run.entity,
+                      TextMetrics{maximum_x - minimum_x, maximum_y - minimum_y}) == nullptr)
+        {
+            report(world, document, root, "text metrics could not be attached");
+            for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)
+            {
+                world.destroy(*iterator);
+            }
+            return Entity{};
+        }
     }
     if (world.add(entity, PointerState{}) == nullptr)
     {

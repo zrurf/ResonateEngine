@@ -24,12 +24,15 @@ struct GlyphQuad
     float v0 = 0.0F;
     float u1 = 0.0F;
     float v1 = 0.0F;
+    /* The atlas key, so a repack can refresh the UV rect before the run is
+       attached to the world. */
+    std::uint64_t key = 0U;
 };
 
-/* One canvas's shelf-packed coverage atlas. Glyphs are cached by size and
+/* One canvas's shelf-packed SDF atlas. Glyphs are cached by size, weight and
    glyph id, so a repeated run rasterizes each glyph once. The page is RGBA8
-   with white RGB and coverage in alpha, the layout the UI shader multiplies
-   by the text color. */
+   with white RGB and the signed distance in alpha. A full page grows (up to
+   2048²) and repacks; pending quads refresh their UVs before attachment. */
 class TextAtlasBuilder
 {
   public:
@@ -44,6 +47,10 @@ class TextAtlasBuilder
     bool buildRun(std::string_view utf8, float size, float weight, float width, std::uint32_t align,
                   bool wrap, std::vector<GlyphQuad>& out, std::string& out_error);
 
+    /* Refreshes a quad's UV rect after a repack. False when the key is not in
+       the atlas. */
+    [[nodiscard]] bool updateQuad(GlyphQuad& quad) const;
+
     [[nodiscard]] bool used() const noexcept { return used_; }
     [[nodiscard]] std::uint32_t width() const noexcept { return width_; }
     [[nodiscard]] std::uint32_t height() const noexcept { return height_; }
@@ -56,10 +63,16 @@ class TextAtlasBuilder
         float advance = 0.0F;
         std::int32_t bearing_x = 0;
         std::int32_t bearing_y = 0;
+        std::vector<std::uint8_t> coverage;
     };
+
+    static constexpr std::uint32_t kMaxSize = 2048U;
 
     bool getGlyph(std::uint32_t glyph, float size, float weight, AtlasGlyph& out,
                   std::string& out_error);
+    bool placeGlyph(AtlasGlyph& glyph);
+    bool grow();
+    void resetPage(std::uint32_t size);
 
     std::shared_ptr<const text::Font> font_;
     std::uint32_t width_ = 0U;

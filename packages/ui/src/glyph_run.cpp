@@ -50,9 +50,16 @@ std::uint32_t codepointAt(std::string_view utf8, std::uint32_t cluster)
 } // namespace
 
 TextAtlasBuilder::TextAtlasBuilder(std::shared_ptr<const text::Font> font, std::uint32_t size)
-    : font_(std::move(font)), width_(size), height_(size),
-      pixels_(static_cast<std::size_t>(size) * size * 4U, 0U)
+    : font_(std::move(font))
 {
+    resetPage(size);
+}
+
+void TextAtlasBuilder::resetPage(std::uint32_t size)
+{
+    width_ = size;
+    height_ = size;
+    pixels_.assign(static_cast<std::size_t>(size) * size * 4U, 0U);
     /* Empty texels are transparent white, so a filter tap that reaches into
        them cannot darken the glyph's ink. */
     for (std::size_t index = 0; index < pixels_.size(); index += 4U)
@@ -61,6 +68,85 @@ TextAtlasBuilder::TextAtlasBuilder(std::shared_ptr<const text::Font> font, std::
         pixels_[index + 1U] = 255U;
         pixels_[index + 2U] = 255U;
     }
+    cursor_x_ = kGlyphPadding;
+    cursor_y_ = kGlyphPadding;
+    row_height_ = 0U;
+    used_ = false;
+}
+
+bool TextAtlasBuilder::placeGlyph(AtlasGlyph& glyph)
+{
+    const auto width = static_cast<std::uint32_t>(glyph.quad.width);
+    const auto height = static_cast<std::uint32_t>(glyph.quad.height);
+    std::uint32_t x = cursor_x_;
+    std::uint32_t y = cursor_y_;
+    std::uint32_t row_height = row_height_;
+    if (x + width + kGlyphPadding > width_)
+    {
+        x = kGlyphPadding;
+        y = cursor_y_ + row_height_ + kGlyphPadding;
+        row_height = 0U;
+    }
+    if (y + height + kGlyphPadding > height_)
+    {
+        return false;
+    }
+
+    for (std::uint32_t row = 0; row < height; ++row)
+    {
+        const std::size_t source = static_cast<std::size_t>(row) * width;
+        const std::size_t destination = (static_cast<std::size_t>(y + row) * width_ + x) * 4U;
+        for (std::uint32_t column = 0; column < width; ++column)
+        {
+            pixels_[destination + column * 4U + 3U] = glyph.coverage[source + column];
+        }
+    }
+
+    glyph.quad.u0 = static_cast<float>(x) / static_cast<float>(width_);
+    glyph.quad.v0 = static_cast<float>(y) / static_cast<float>(height_);
+    glyph.quad.u1 = static_cast<float>(x + width) / static_cast<float>(width_);
+    glyph.quad.v1 = static_cast<float>(y + height) / static_cast<float>(height_);
+    cursor_x_ = x + width + kGlyphPadding;
+    cursor_y_ = y;
+    row_height_ = std::max(row_height, height);
+    used_ = true;
+    return true;
+}
+
+bool TextAtlasBuilder::grow()
+{
+    std::uint32_t size = width_ < kMaxSize ? width_ * 2U : kMaxSize;
+    if (size > kMaxSize)
+    {
+        size = kMaxSize;
+    }
+    if (size <= width_)
+    {
+        return false;
+    }
+    resetPage(size);
+    for (auto& entry : glyphs_)
+    {
+        if (entry.second.quad.width > 0.0F && !placeGlyph(entry.second))
+        {
+            return grow();
+        }
+    }
+    return true;
+}
+
+bool TextAtlasBuilder::updateQuad(GlyphQuad& quad) const
+{
+    const auto found = glyphs_.find(quad.key);
+    if (found == glyphs_.end())
+    {
+        return false;
+    }
+    quad.u0 = found->second.quad.u0;
+    quad.v0 = found->second.quad.v0;
+    quad.u1 = found->second.quad.u1;
+    quad.v1 = found->second.quad.v1;
+    return true;
 }
 
 bool TextAtlasBuilder::getGlyph(std::uint32_t glyph, float size, float weight, AtlasGlyph& out,
@@ -82,47 +168,22 @@ bool TextAtlasBuilder::getGlyph(std::uint32_t glyph, float size, float weight, A
 
     AtlasGlyph entry;
     entry.advance = bitmap.advance;
+    entry.quad.key = key;
     if (bitmap.width != 0U && bitmap.height != 0U)
     {
-        if (cursor_x_ + bitmap.width + kGlyphPadding > width_)
-        {
-            cursor_x_ = kGlyphPadding;
-            cursor_y_ += row_height_ + kGlyphPadding;
-            row_height_ = 0U;
-        }
-        if (cursor_y_ + bitmap.height + kGlyphPadding > height_)
-        {
-            out_error = "the font atlas is full";
-            return false;
-        }
-
-        for (std::uint32_t row = 0; row < bitmap.height; ++row)
-        {
-            const std::size_t source = static_cast<std::size_t>(row) * bitmap.width;
-            const std::size_t destination =
-                (static_cast<std::size_t>(cursor_y_ + row) * width_ + cursor_x_) * 4U;
-            for (std::uint32_t column = 0; column < bitmap.width; ++column)
-            {
-                std::uint8_t* texel = pixels_.data() + destination + column * 4U;
-                texel[0] = 255U;
-                texel[1] = 255U;
-                texel[2] = 255U;
-                texel[3] = bitmap.coverage[source + column];
-            }
-        }
-
         entry.quad.width = static_cast<float>(bitmap.width);
         entry.quad.height = static_cast<float>(bitmap.height);
         entry.bearing_x = bitmap.bearing_x;
         entry.bearing_y = bitmap.bearing_y;
-        entry.quad.u0 = static_cast<float>(cursor_x_) / static_cast<float>(width_);
-        entry.quad.v0 = static_cast<float>(cursor_y_) / static_cast<float>(height_);
-        entry.quad.u1 = static_cast<float>(cursor_x_ + bitmap.width) / static_cast<float>(width_);
-        entry.quad.v1 = static_cast<float>(cursor_y_ + bitmap.height) / static_cast<float>(height_);
-
-        cursor_x_ += bitmap.width + kGlyphPadding;
-        row_height_ = std::max(row_height_, bitmap.height);
-        used_ = true;
+        entry.coverage = std::move(bitmap.coverage);
+        while (!placeGlyph(entry))
+        {
+            if (!grow())
+            {
+                out_error = "the font atlas is full";
+                return false;
+            }
+        }
     }
 
     glyphs_.emplace(key, entry);
