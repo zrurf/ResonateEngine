@@ -126,6 +126,13 @@
     <field name="records" type="blob"/>
   </component>
 
+  <!-- The shaped run's measured extent, written by the adapter. Layout uses it
+       when the RectTransform leaves a dimension at zero. -->
+  <component name="TextMetrics" version="1" derived="true">
+    <field name="width" type="f32"/>
+    <field name="height" type="f32"/>
+  </component>
+
   <!-- The canvas's single font atlas: RGBA8 coverage pages and the revision
        the renderer compares before re-uploading. Derived by the adapter. -->
   <component name="TextAtlasPage" version="1" derived="true">

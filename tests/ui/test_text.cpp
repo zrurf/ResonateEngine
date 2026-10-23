@@ -255,3 +255,37 @@ TEST_CASE("ui text: CJK wraps between glyphs", "[ui][text]")
     std::sort(ys.begin(), ys.end());
     CHECK(ys.back() > ys.front() + 40.0F);
 }
+
+TEST_CASE("ui text: a zero-sized Label takes its measured text extent", "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Panel key="row" x="0" y="0" width="300" height="60"
+           direction="Row" align="Start">
+      <Label key="first" text="AB" font_size="20" color="0 0 0 0"/>
+      <Label key="second" text="CD" font_size="20" color="0 0 0 0"/>
+    </Panel>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, loadFont());
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 320.0F, 200.0F));
+
+    const auto panel = resonate::hierarchy::children(fixture.world, root)[0];
+    const auto labels = resonate::hierarchy::children(fixture.world, panel);
+    REQUIRE(labels.size() == 2U);
+    const auto* first = fixture.world.get<resonate::ui::ComputedRect>(labels[0]);
+    const auto* second = fixture.world.get<resonate::ui::ComputedRect>(labels[1]);
+    REQUIRE(first != nullptr);
+    REQUIRE(second != nullptr);
+    CHECK(first->width > 10.0F);
+    CHECK(first->height > 10.0F);
+    CHECK(second->x >= first->x + first->width - 0.01F);
+    CHECK(second->width > 10.0F);
+}

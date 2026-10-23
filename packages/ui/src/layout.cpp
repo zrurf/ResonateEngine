@@ -75,12 +75,32 @@ bool writeRect(ecs::World& world, ecs::Entity entity, const Box& box, float scal
     return true;
 }
 
-/* The parent fraction the widget is tied to, plus its offsets and size. */
-Box anchoredBox(const Box& parent, const RectTransform& rect)
+/* A zero authored dimension takes the widget's measured text extent. */
+Vec2 effectiveSize(ecs::World& world, ecs::Entity entity, const RectTransform& rect)
 {
+    Vec2 size{rect.width, rect.height};
+    if (const TextMetrics* metrics = world.get<TextMetrics>(entity))
+    {
+        if (size.x <= 0.0F)
+        {
+            size.x = metrics->width;
+        }
+        if (size.y <= 0.0F)
+        {
+            size.y = metrics->height;
+        }
+    }
+    return size;
+}
+
+/* The parent fraction the widget is tied to, plus its offsets and size. */
+Box anchoredBox(ecs::World& world, ecs::Entity entity, const Box& parent,
+                const RectTransform& rect)
+{
+    const Vec2 size = effectiveSize(world, entity, rect);
     Box box;
-    box.width = (rect.anchor_max.x - rect.anchor_min.x) * parent.width + rect.width;
-    box.height = (rect.anchor_max.y - rect.anchor_min.y) * parent.height + rect.height;
+    box.width = (rect.anchor_max.x - rect.anchor_min.x) * parent.width + size.x;
+    box.height = (rect.anchor_max.y - rect.anchor_min.y) * parent.height + size.y;
     if (box.width < 0.0F)
     {
         box.width = 0.0F;
@@ -118,7 +138,7 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
             {
                 return reportMissing(world, child, "RectTransform");
             }
-            const Box box = anchoredBox(content, *rect);
+            const Box box = anchoredBox(world, child, content, *rect);
             if (!writeRect(world, child, box, scale) ||
                 !placeChildren(world, child, box, scale, depth + 1U))
             {
@@ -148,8 +168,9 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
         {
             continue;
         }
-        const float size = row ? rect->width : rect->height;
-        used += size > 0.0F ? size : 0.0F;
+        const Vec2 size = effectiveSize(world, child, *rect);
+        const float main_size = row ? size.x : size.y;
+        used += main_size > 0.0F ? main_size : 0.0F;
         ++flow_count;
     }
     if (flow_count > 1U)
@@ -191,7 +212,7 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
         }
         if (rect->position == PositionMode::Absolute)
         {
-            const Box box = anchoredBox(content, *rect);
+            const Box box = anchoredBox(world, child, content, *rect);
             if (!writeRect(world, child, box, scale) ||
                 !placeChildren(world, child, box, scale, depth + 1U))
             {
@@ -200,8 +221,9 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
             continue;
         }
 
-        float main_size = row ? rect->width : rect->height;
-        float cross_size = row ? rect->height : rect->width;
+        const Vec2 size = effectiveSize(world, child, *rect);
+        float main_size = row ? size.x : size.y;
+        float cross_size = row ? size.y : size.x;
         if (main_size < 0.0F)
         {
             main_size = 0.0F;
@@ -259,6 +281,7 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<Image>() != ecs::kInvalidComponent &&
            world.registerComponent<Text>() != ecs::kInvalidComponent &&
            world.registerComponent<Glyphs>() != ecs::kInvalidComponent &&
+           world.registerComponent<TextMetrics>() != ecs::kInvalidComponent &&
            world.registerComponent<TextAtlasPage>() != ecs::kInvalidComponent &&
            world.registerComponent<DataContext>() != ecs::kInvalidComponent &&
            world.registerComponent<Bindings>() != ecs::kInvalidComponent &&

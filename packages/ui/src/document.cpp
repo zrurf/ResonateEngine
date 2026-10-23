@@ -838,6 +838,22 @@ bool buildTextRun(World& world, const dom::Document& document, dom::NodeHandle n
     {
         return report(world, document, node, "glyph quads could not be attached");
     }
+
+    float minimum_x = glyphs[0].x;
+    float minimum_y = glyphs[0].y;
+    float maximum_x = glyphs[0].x + glyphs[0].width;
+    float maximum_y = glyphs[0].y + glyphs[0].height;
+    for (const detail::GlyphQuad& glyph : glyphs)
+    {
+        minimum_x = std::fmin(minimum_x, glyph.x);
+        minimum_y = std::fmin(minimum_y, glyph.y);
+        maximum_x = std::fmax(maximum_x, glyph.x + glyph.width);
+        maximum_y = std::fmax(maximum_y, glyph.y + glyph.height);
+    }
+    if (world.add(entity, TextMetrics{maximum_x - minimum_x, maximum_y - minimum_y}) == nullptr)
+    {
+        return report(world, document, node, "text metrics could not be attached");
+    }
     return true;
 }
 
