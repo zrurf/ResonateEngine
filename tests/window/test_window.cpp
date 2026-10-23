@@ -2,6 +2,9 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
+#include <string>
+
 #include <resonate/window/host.hpp>
 
 namespace
@@ -128,4 +131,39 @@ TEST_CASE("the window capability refuses a size it cannot pass on", "[window]")
     REQUIRE(window.create(window.self, "zero", 0U, 200U) == RESONATE_E_INVALID);
     REQUIRE(window.create(window.self, nullptr, 320U, 200U) == RESONATE_E_INVALID);
     REQUIRE(window.width(window.self) == 0U);
+}
+
+TEST_CASE("typed text reaches the input capability as UTF-8", "[window]")
+{
+    const DummyVideo dummy;
+
+    ResonateWindow& window = resonate::window::windowCapability();
+    REQUIRE(window.self != nullptr);
+    REQUIRE(window.create(window.self, "Resonate test", 320, 200) == RESONATE_OK);
+    const ResonateInput& input = resonate::window::inputCapability();
+    REQUIRE(input.text_input != nullptr);
+
+    SDL_Event event = {};
+    event.type = SDL_EVENT_TEXT_INPUT;
+    event.text.text = const_cast<char*>("你好");
+    REQUIRE(SDL_PushEvent(&event) == true);
+    window.pump_events(window.self);
+
+    char typed[16] = {};
+    REQUIRE(input.text_input(input.self, typed, sizeof(typed)) == 6U);
+    CHECK(std::string(typed, 6U) == "你好");
+    CHECK(input.text_input(input.self, typed, sizeof(typed)) == 0U);
+
+    /* A batch larger than the caller's buffer keeps the tail for the next
+       read instead of dropping it. */
+    event.text.text = const_cast<char*>("abcdef");
+    REQUIRE(SDL_PushEvent(&event) == true);
+    window.pump_events(window.self);
+    char part[5] = {};
+    REQUIRE(input.text_input(input.self, part, 4U) == 4U);
+    CHECK(std::string(part, 4U) == "abcd");
+    REQUIRE(input.text_input(input.self, part, 4U) == 2U);
+    CHECK(std::string(part, 2U) == "ef");
+
+    window.destroy(window.self);
 }
