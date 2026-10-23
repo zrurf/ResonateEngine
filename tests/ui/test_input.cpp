@@ -34,6 +34,7 @@ const char* const kButtons = R"xml(<document version="1" schemas="resonate.ui">
       <StyleRule selector=".action:hover"><Background color="0.4 0.4 0.4 1"/></StyleRule>
       <StyleRule selector=".action:pressed"><Background color="0.6 0.6 0.6 1"/></StyleRule>
       <StyleRule selector=".action:disabled"><Background color="0.8 0.8 0.8 1"/></StyleRule>
+      <StyleRule selector=".action:focus"><Background color="0.7 0.7 0.7 1"/></StyleRule>
     </StyleSheet>
     <Panel key="panel" x="0" y="0" width="200" height="200"
            direction="Column" align="Start">
@@ -139,8 +140,8 @@ TEST_CASE("ui input: leaving while pressed cancels the release", "[ui][input]")
     REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 10.0F, false));
     REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 10.0F, true));
     REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 180.0F, 180.0F, true));
-    CHECK(fixture.world.get<Input>(button)->state == WidgetState::Normal);
-    CHECK(near(fixture.red(button), 0.2F));
+    CHECK(fixture.world.get<Input>(button)->state == WidgetState::Focused);
+    CHECK(near(fixture.red(button), 0.7F));
     CHECK(pointer->press == button);
     CHECK(pointer->down);
 
@@ -189,4 +190,36 @@ TEST_CASE("ui input: an explicit field wins over a state style", "[ui][input]")
     CHECK(fixture.world.get<Input>(button)->state == WidgetState::Hovered);
     CHECK(near(fixture.red(button), 0.1F));
     CHECK(near(fixture.world.get<Background>(button)->color.y, 0.2F));
+}
+
+TEST_CASE("ui input: focus survives leaving the widget", "[ui][input]")
+{
+    Fixture fixture;
+    const Entity first = fixture.buttons[0];
+    const Entity second = fixture.buttons[1];
+    const PointerState* pointer = fixture.world.get<PointerState>(fixture.root);
+    REQUIRE(pointer != nullptr);
+
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 10.0F, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 10.0F, false));
+    CHECK(pointer->focused == first);
+    CHECK(fixture.world.get<Input>(first)->state == WidgetState::Hovered);
+
+    /* Leaving a focused widget drops it to its focus style, not to normal. */
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 180.0F, 180.0F, false));
+    CHECK(fixture.world.get<Input>(first)->state == WidgetState::Focused);
+    CHECK(near(fixture.red(first), 0.7F));
+
+    /* Pressing another widget moves focus; the previous one returns to
+       normal even though it is no longer hovered. */
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 50.0F, true));
+    CHECK(pointer->focused == second);
+    CHECK(fixture.world.get<Input>(first)->state == WidgetState::Normal);
+    CHECK(near(fixture.red(first), 0.2F));
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 50.0F, false));
+    CHECK(fixture.world.get<Input>(second)->state == WidgetState::Hovered);
+
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 180.0F, 180.0F, false));
+    CHECK(fixture.world.get<Input>(second)->state == WidgetState::Focused);
+    CHECK(near(fixture.red(second), 0.7F));
 }

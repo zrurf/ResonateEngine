@@ -45,6 +45,7 @@
     <value name="Hovered"/>
     <value name="Pressed"/>
     <value name="Disabled"/>
+    <value name="Focused"/>
   </enum>
 
   <!-- The root marker. Its rectangle is the target the layout pass is given;

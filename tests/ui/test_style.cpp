@@ -108,7 +108,7 @@ TEST_CASE("ui style: malformed selectors and derived declarations are refused", 
     const char* const invalid[] = {
         R"xml(<document version="1"><Screen><StyleSheet><StyleRule selector=".bad selector"/></StyleSheet></Screen></document>)xml",
         R"xml(<document version="1"><Screen><StyleSheet><StyleRule selector=".x"><ComputedRect/></StyleRule></StyleSheet></Screen></document>)xml",
-        R"xml(<document version="1"><Screen><StyleSheet><StyleRule selector=".x:focus"/></StyleSheet></Screen></document>)xml",
+        R"xml(<document version="1"><Screen><StyleSheet><StyleRule selector=".x:checked"/></StyleSheet></Screen></document>)xml",
         R"xml(<document version="1"><Screen><StyleSheet><StyleRule selector=".x:hover.extra"/></StyleSheet></Screen></document>)xml",
     };
 

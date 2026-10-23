@@ -85,12 +85,18 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         world.markChanged<PointerState>(canvas);
         if (previous.valid() && world.alive(previous))
         {
-            setState(world, previous, WidgetState::Normal);
+            setState(world, previous, previous == pointer->focused ? WidgetState::Focused
+                                                                   : WidgetState::Normal);
         }
     }
 
     if (down && !pointer->down)
     {
+        if (pointer->focused != hover && pointer->focused.valid() &&
+            world.alive(pointer->focused))
+        {
+            setState(world, pointer->focused, WidgetState::Normal);
+        }
         pointer->focused = hover;
         pointer->down = true;
         pointer->press = hover;
@@ -118,7 +124,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                     world.markChanged<PointerState>(canvas);
                 }
             }
-            setState(world, press, press == hover ? WidgetState::Hovered : WidgetState::Normal);
+            setState(world, press, press == hover
+                                      ? WidgetState::Hovered
+                                      : (press == pointer->focused ? WidgetState::Focused
+                                                                   : WidgetState::Normal));
         }
         pointer->press = ecs::Entity{};
         world.markChanged<PointerState>(canvas);
@@ -127,7 +136,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
     if (pointer->down && pointer->press.valid())
     {
         setState(world, pointer->press,
-                 pointer->press == hover ? WidgetState::Pressed : WidgetState::Normal);
+                 pointer->press == hover
+                     ? WidgetState::Pressed
+                     : (pointer->press == pointer->focused ? WidgetState::Focused
+                                                           : WidgetState::Normal));
     }
     if (hover.valid())
     {

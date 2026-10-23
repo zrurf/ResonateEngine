@@ -124,7 +124,7 @@
         "  field state resonate.ui.WidgetState @0 size 1 default=Normal",
         "  field focusable bool @1 size 1 default=true",
         "  field activated bool @2 size 1 default=false",
-        "  enum WidgetState u8 values Normal=0, Hovered=1, Pressed=2, Disabled=3"
+        "  enum WidgetState u8 values Normal=0, Hovered=1, Pressed=2, Disabled=3, Focused=4"
       ]
     },
     {

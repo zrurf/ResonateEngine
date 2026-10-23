@@ -96,6 +96,10 @@ bool parseSelector(dom::Document& document, std::string_view text, Selector& out
             {
                 out.state = 3U;
             }
+            else if (state == "focus")
+            {
+                out.state = 4U;
+            }
             else
             {
                 error = "unknown state pseudo-class ':" + std::string(state) + "'";

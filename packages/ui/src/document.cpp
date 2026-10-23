@@ -573,6 +573,10 @@ bool applyInput(const dom::Document& document, const dom::Component& component, 
             {
                 input.state = WidgetState::Disabled;
             }
+            else if (field.value == "Focused")
+            {
+                input.state = WidgetState::Focused;
+            }
             else
             {
                 error = "Input.state is not a WidgetState";
@@ -926,7 +930,7 @@ bool collectStateStyles(World& world, const dom::Document& document, dom::NodeHa
 
     const std::vector<dom::Component> normal = styles.resolve(document, node, 0U);
     std::vector<detail::StateStyleRecord> records;
-    for (std::uint32_t state = 1U; state <= 3U; ++state)
+    for (std::uint32_t state = 1U; state <= 4U; ++state)
     {
         for (const dom::Component& styled : styles.resolve(document, node, state))
         {
