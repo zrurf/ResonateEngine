@@ -20,6 +20,11 @@ namespace resonate::ui
    activation. */
 [[nodiscard]] bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool down);
 
+/* Moves focus to the next (or previous) focusable Input in tree order and
+   wraps. Non-focusable and disabled widgets are skipped; a canvas with no
+   PointerState or no focusable widget answers false. */
+[[nodiscard]] bool focusNext(ecs::World& world, ecs::Entity canvas, bool backwards);
+
 } // namespace resonate::ui
 
 #endif /* RESONATE_UI_INPUT_H */

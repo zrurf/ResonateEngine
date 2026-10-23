@@ -1,5 +1,7 @@
 #include <resonate/ui/input.h>
 
+#include <vector>
+
 #include <resonate/ui/hit_test.h>
 
 #include <resonate/hierarchy/tree.h>
@@ -40,6 +42,24 @@ ecs::Entity interactiveAt(ecs::World& world, ecs::Entity canvas, float x, float 
         entity = hierarchy::parentOf(world, entity);
     }
     return ecs::Entity{};
+}
+
+void collectFocusable(ecs::World& world, ecs::Entity entity, std::vector<ecs::Entity>& out,
+                      std::uint32_t depth)
+{
+    if (depth > hierarchy::kMaxDepth)
+    {
+        return;
+    }
+    const Input* input = world.get<Input>(entity);
+    if (input != nullptr && input->focusable && input->state != WidgetState::Disabled)
+    {
+        out.push_back(entity);
+    }
+    for (const ecs::Entity child : hierarchy::children(world, entity))
+    {
+        collectFocusable(world, child, out, depth + 1U);
+    }
 }
 
 } // namespace
@@ -147,6 +167,51 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                  pointer->down && pointer->press == hover ? WidgetState::Pressed
                                                           : WidgetState::Hovered);
     }
+    return true;
+}
+
+bool focusNext(ecs::World& world, ecs::Entity canvas, bool backwards)
+{
+    PointerState* pointer = world.get<PointerState>(canvas);
+    if (pointer == nullptr)
+    {
+        return false;
+    }
+    std::vector<ecs::Entity> focusable;
+    collectFocusable(world, canvas, focusable, 0U);
+    if (focusable.empty())
+    {
+        return false;
+    }
+
+    std::size_t current = focusable.size();
+    for (std::size_t index = 0; index < focusable.size(); ++index)
+    {
+        if (focusable[index] == pointer->focused)
+        {
+            current = index;
+            break;
+        }
+    }
+    const std::size_t next =
+        current == focusable.size()
+            ? (backwards ? focusable.size() - 1U : 0U)
+            : (backwards ? (current + focusable.size() - 1U) % focusable.size()
+                         : (current + 1U) % focusable.size());
+    const ecs::Entity target = focusable[next];
+    if (pointer->focused != target)
+    {
+        if (pointer->focused.valid() && world.alive(pointer->focused))
+        {
+            setState(world, pointer->focused, pointer->hover == pointer->focused
+                                                  ? WidgetState::Hovered
+                                                  : WidgetState::Normal);
+        }
+        pointer->focused = target;
+        world.markChanged<PointerState>(canvas);
+    }
+    setState(world, target,
+             pointer->hover == target ? WidgetState::Hovered : WidgetState::Focused);
     return true;
 }
 

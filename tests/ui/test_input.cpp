@@ -192,6 +192,30 @@ TEST_CASE("ui input: an explicit field wins over a state style", "[ui][input]")
     CHECK(near(fixture.world.get<Background>(button)->color.y, 0.2F));
 }
 
+TEST_CASE("ui input: Tab moves focus in tree order and wraps", "[ui][input]")
+{
+    Fixture fixture;
+    const PointerState* pointer = fixture.world.get<PointerState>(fixture.root);
+    REQUIRE(pointer != nullptr);
+
+    REQUIRE(resonate::ui::focusNext(fixture.world, fixture.root, false));
+    CHECK(pointer->focused == fixture.buttons[0]);
+    CHECK(fixture.world.get<Input>(fixture.buttons[0])->state == WidgetState::Focused);
+    CHECK(near(fixture.red(fixture.buttons[0]), 0.7F));
+
+    /* The disabled button's non-focusable Input is skipped. */
+    REQUIRE(resonate::ui::focusNext(fixture.world, fixture.root, false));
+    CHECK(pointer->focused == fixture.buttons[1]);
+    REQUIRE(resonate::ui::focusNext(fixture.world, fixture.root, false));
+    CHECK(pointer->focused == fixture.buttons[3]);
+    CHECK(fixture.world.get<Input>(fixture.buttons[1])->state == WidgetState::Normal);
+
+    REQUIRE(resonate::ui::focusNext(fixture.world, fixture.root, false));
+    CHECK(pointer->focused == fixture.buttons[0]);
+    REQUIRE(resonate::ui::focusNext(fixture.world, fixture.root, true));
+    CHECK(pointer->focused == fixture.buttons[3]);
+}
+
 TEST_CASE("ui input: focus survives leaving the widget", "[ui][input]")
 {
     Fixture fixture;

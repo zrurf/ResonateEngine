@@ -100,6 +100,13 @@ struct UiFrame
             {
                 return;
             }
+            if (frame->input->key_pressed(frame->input->self, RESONATE_KEY_TAB) != 0)
+            {
+                const bool backwards =
+                    frame->input->key_down(frame->input->self, RESONATE_KEY_LSHIFT) != 0 ||
+                    frame->input->key_down(frame->input->self, RESONATE_KEY_RSHIFT) != 0;
+                ui::focusNext(world, frame->canvas, backwards);
+            }
             if (frame->text != nullptr)
             {
                 char typed[256] = {};
