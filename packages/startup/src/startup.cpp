@@ -38,6 +38,7 @@
 #include <resonate/ui/document_schema.h>
 #include <resonate/ui/input.h>
 #include <resonate/ui/layout.h>
+#include <resonate/ui/string_table.h>
 #include <resonate/ui/text_runtime.h>
 #include <resonate/window/input.h>
 #include <resonate/window/session.hpp>
@@ -195,11 +196,22 @@ std::string findContentFile(const std::string& relative)
     return {};
 }
 
+bool readTextFile(const std::string& path, std::string& out)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open())
+    {
+        return false;
+    }
+    out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return true;
+}
+
 /* The configured UI document, instantiated into the world. A missing default
    document falls back to the built-in HUD; a configured one or a broken one
    ends the run with the reason. */
 ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool required,
-                        ui::TextRuntime& text_runtime)
+                        ui::TextRuntime& text_runtime, const ui::StringTable* strings)
 {
     /* A host that stages its assets elsewhere (Android) names the document
        directly; the setting and the content walk cover desktop runs. */
@@ -223,14 +235,12 @@ ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool r
         return composeBuiltinHud(world);
     }
 
-    std::ifstream in(path, std::ios::binary);
-    if (!in.is_open())
+    std::string text;
+    if (!readTextFile(path, text))
     {
         std::fprintf(stderr, "resonate: ui document: cannot read %s\n", path.c_str());
         return ecs::Entity{};
     }
-    const std::string text((std::istreambuf_iterator<char>(in)),
-                           std::istreambuf_iterator<char>());
     std::vector<dom::Diagnostic> diagnostics;
     auto document = dom::Document::parse(text, &contentSchema(), diagnostics);
     if (document == nullptr)
@@ -243,7 +253,7 @@ ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool r
         return ecs::Entity{};
     }
     const ecs::Entity canvas =
-        ui::instantiate(world, *document, &contentComponents(), text_runtime);
+        ui::instantiate(world, *document, &contentComponents(), text_runtime, strings);
     if (!canvas.valid())
     {
         return ecs::Entity{};
@@ -669,8 +679,24 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
                 ui_fonts.push_back(std::move(font));
             }
             ui_text = std::make_unique<ui::TextRuntime>(std::move(ui_fonts));
+            std::unique_ptr<ui::StringTable> ui_strings;
+            const std::string strings_path = findContentFile("content/ui/strings.rstrings");
+            if (!strings_path.empty())
+            {
+                std::string xml;
+                std::string strings_error;
+                if (!readTextFile(strings_path, xml) ||
+                    (ui_strings = ui::StringTable::parse(xml, strings_error)) == nullptr)
+                {
+                    std::fprintf(stderr, "resonate: ui strings: %s\n",
+                                 strings_error.empty() ? strings_path.c_str()
+                                                       : strings_error.c_str());
+                    return RESONATE_E_INVALID;
+                }
+            }
             ui_frame.text = ui_text.get();
-            ui_frame.canvas = loadDemoHud(world, ui_document, ui_document_required, *ui_text);
+            ui_frame.canvas =
+                loadDemoHud(world, ui_document, ui_document_required, *ui_text, ui_strings.get());
             if (!ui_frame.canvas.valid())
             {
                 return RESONATE_E_INVALID;

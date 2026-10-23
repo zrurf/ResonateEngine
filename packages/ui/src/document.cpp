@@ -1,6 +1,7 @@
 #include <resonate/ui/document.h>
 
 #include <resonate/ui/document_schema.h>
+#include <resonate/ui/string_table.h>
 #include <resonate/ui/style.h>
 #include <resonate/ui/text_runtime.h>
 
@@ -694,6 +695,7 @@ struct BindingContext
     std::unique_ptr<detail::TextAtlasBuilder> owned_atlas;
     detail::TextAtlasBuilder* atlas = nullptr;
     TextRuntime* runtime = nullptr;
+    const StringTable* strings = nullptr;
     std::uint32_t page_revision = 1U;
     std::vector<PendingRun> runs;
 };
@@ -824,15 +826,35 @@ bool buildTextRun(World& world, const dom::Document& document, dom::NodeHandle n
     {
         if (const dom::Field* property = document.property(node, context.text_property))
         {
-            if (!property->value.empty())
+            std::string_view content = property->value;
+            std::string resolved;
+            if (!content.empty() && content.front() == '#')
             {
-                const ecs::BlobHandle content =
-                    world.createBlob(entity, property->value.size(), property->value.data());
-                if (!content.valid())
+                const std::string_view key = content.substr(1U);
+                const std::string* found =
+                    context.strings != nullptr ? context.strings->find(key) : nullptr;
+                if (found == nullptr)
+                {
+                    world.report(World::Report::Warning,
+                                 "ui document: node '%s': string key '%s' is missing",
+                                 nodeLabel(document, node).c_str(), std::string(key).c_str());
+                    resolved.assign(key);
+                }
+                else
+                {
+                    resolved = *found;
+                }
+                content = resolved;
+            }
+            if (!content.empty())
+            {
+                const ecs::BlobHandle blob =
+                    world.createBlob(entity, content.size(), content.data());
+                if (!blob.valid())
                 {
                     return report(world, document, node, "the text bytes could not be attached");
                 }
-                text->content = content;
+                text->content = blob;
             }
         }
     }
@@ -1375,9 +1397,11 @@ Entity instantiateConfigured(World& world, dom::Document& document,
 
 Entity instantiate(World& world, dom::Document& document,
                    const dom::ComponentRegistry* component_registry,
-                   std::vector<std::shared_ptr<const text::Font>> fonts)
+                   std::vector<std::shared_ptr<const text::Font>> fonts,
+                   const StringTable* strings)
 {
     BindingContext bindings;
+    bindings.strings = strings;
     if (!fonts.empty())
     {
         bindings.owned_atlas = std::make_unique<detail::TextAtlasBuilder>(std::move(fonts));
@@ -1387,11 +1411,13 @@ Entity instantiate(World& world, dom::Document& document,
 }
 
 Entity instantiate(World& world, dom::Document& document,
-                   const dom::ComponentRegistry* component_registry, TextRuntime& runtime)
+                   const dom::ComponentRegistry* component_registry, TextRuntime& runtime,
+                   const StringTable* strings)
 {
     BindingContext bindings;
     bindings.atlas = TextRuntimeAccess::atlas(runtime);
     bindings.runtime = &runtime;
+    bindings.strings = strings;
     return instantiateConfigured(world, document, component_registry, bindings);
 }
 

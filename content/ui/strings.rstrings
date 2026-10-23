@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One locale's UI text. Markup references a key with a leading '#'. -->
+<strings locale="zh-Hans">
+  <entry key="ui.demo.title">动作演示</entry>
+  <entry key="ui.demo.action">开始游戏</entry>
+</strings>
