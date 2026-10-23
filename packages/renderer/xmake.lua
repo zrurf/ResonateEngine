@@ -35,3 +35,26 @@ target("Resonate.Renderer")
         add_deps("Resonate.Tools.TexCook", {links = false, inherit = false})
     end
     add_packages("basisu", {public = true})
+
+    -- The UI text overlay is drawn by tgfx through the shared Vulkan device.
+    -- tgfx is an external CMake build; Android has no tgfx target yet and keeps
+    -- the atlas path.
+    if is_plat("windows") then
+        local tgfx_mode = is_mode("release") and "release" or "debug"
+        add_includedirs(path.join(os.projectdir(), "build", "third_party", "tgfx", "include"))
+        add_linkdirs(path.join(os.projectdir(), "build", "tgfx", tgfx_mode))
+        add_links("tgfx")
+        add_syslinks("bcrypt", "ws2_32", "dwrite", "windowscodecs", "ole32")
+        add_defines("RESONATE_WITH_TGFX=1")
+        before_build(function (target)
+            local library = path.join(os.projectdir(), "build", "tgfx", tgfx_mode, "tgfx.lib")
+            if not os.isfile(library) then
+                local script = path.join(os.projectdir(), "scripts", "tgfx.lua")
+                local output = os.iorunv(os.programfile(), {"lua", script},
+                                         {envs = {RESONATE_TGFX_MODE = tgfx_mode}})
+                if output ~= nil then
+                    print(output)
+                end
+            end
+        end)
+    end

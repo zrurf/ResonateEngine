@@ -1,6 +1,7 @@
 #include <catch2/catch_all.hpp>
 
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <vector>

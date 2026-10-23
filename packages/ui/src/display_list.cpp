@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 #include <resonate/hierarchy/tree.h>
 
@@ -116,6 +117,26 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         }
         else
         {
+            if (world.alive(text->content))
+            {
+                const auto* bytes = static_cast<const char*>(world.blobData(text->content));
+                const std::size_t size = world.blobSize(text->content);
+                if (bytes != nullptr && size > 0U)
+                {
+                    TextRun run;
+                    run.x = rect->x;
+                    run.y = rect->y;
+                    run.width = rect->width;
+                    run.height = rect->height;
+                    run.font_size = text->font_size;
+                    run.font_weight = text->font_weight;
+                    run.align = static_cast<std::uint8_t>(text->align);
+                    run.wrap = text->wrap;
+                    run.color = text->text_color;
+                    run.text.assign(bytes, size);
+                    texts_.push_back(std::move(run));
+                }
+            }
             const detail::GlyphQuad* records = nullptr;
             std::size_t count = 0;
             if (has_glyphs)
@@ -187,6 +208,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
 void DisplayList::clear()
 {
     quads_.clear();
+    texts_.clear();
     order_.clear();
     focused_ = ecs::Entity{};
 }
@@ -209,6 +231,11 @@ std::size_t DisplayList::size() const noexcept
 Span<const Quad> DisplayList::quads() const noexcept
 {
     return Span<const Quad>(quads_.data(), quads_.size());
+}
+
+Span<const TextRun> DisplayList::texts() const noexcept
+{
+    return Span<const TextRun>(texts_.data(), texts_.size());
 }
 
 bool buildDisplayList(ecs::World& world, ecs::Entity root, DisplayList& out)

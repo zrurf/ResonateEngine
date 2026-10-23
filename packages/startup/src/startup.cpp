@@ -683,6 +683,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             ui_frame.input = static_cast<const ResonateInput*>(input);
             /* Primary font first; the runtime walks the chain per code point. */
             std::vector<std::shared_ptr<const text::Font>> ui_fonts;
+            std::vector<std::string> ui_font_paths;
             for (const char* name : {"content/ui/fonts/ResonateSansSC-Subset.ttf",
                                      "content/ui/fonts/ResonateSansLatin-Subset.ttf"})
             {
@@ -691,6 +692,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
                 {
                     continue;
                 }
+                ui_font_paths.push_back(font_path);
                 std::string font_error;
                 std::shared_ptr<const text::Font> font =
                     text::Font::loadFile(font_path, font_error);
@@ -702,6 +704,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
                 }
                 ui_fonts.push_back(std::move(font));
             }
+            render_system.setUiFontPaths(std::move(ui_font_paths));
             ui_text = std::make_unique<ui::TextRuntime>(std::move(ui_fonts));
             std::unique_ptr<ui::StringTable> ui_strings;
             const std::string strings_path = findContentFile("content/ui/strings.rstrings");

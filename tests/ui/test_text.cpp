@@ -110,6 +110,8 @@ TEST_CASE("ui text: a Label shapes into glyph quads and one canvas atlas", "[ui]
     resonate::ui::DisplayList list;
     REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
     REQUIRE(list.size() > 1U);
+    REQUIRE(list.texts().size() == 1U);
+    CHECK(list.texts()[0].text == "Hi \xE4\xBD\xA0");
 
     std::size_t text_quads = 0;
     for (const resonate::ui::Quad& quad : list.quads())

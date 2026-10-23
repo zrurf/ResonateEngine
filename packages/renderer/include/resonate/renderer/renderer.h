@@ -67,6 +67,10 @@ class RenderSystem
        call; the defaults apply when it is never called. */
     void setFeatures(const FeatureStack& stack);
 
+    /* Font files the tgfx text overlay loads, first that parses wins. Call
+       before the frame loop; a platform without a tgfx build ignores it. */
+    void setUiFontPaths(std::vector<std::string> paths);
+
     /* Registers the render components; idempotent, and a refusal (a name
        collision) answers false. */
     static bool registerComponents(ecs::World& world);

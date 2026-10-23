@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <resonate/core/math.h>
@@ -41,6 +42,23 @@ struct Quad
     Vec2 uv_max{1.0F, 1.0F};
 };
 
+/* One label's text and the box layout resolved for it. A renderer that shapes
+   text itself draws this run; the glyph quads stay alongside it for the
+   atlas-based renderer. */
+struct TextRun
+{
+    float x = 0.0F;
+    float y = 0.0F;
+    float width = 0.0F;
+    float height = 0.0F;
+    float font_size = 16.0F;
+    std::uint16_t font_weight = 400U;
+    std::uint8_t align = 0U; /* TextAlign: 0 start, 1 center, 2 end */
+    bool wrap = true;
+    Vec4 color{1.0F, 1.0F, 1.0F, 1.0F};
+    std::string text;
+};
+
 class DisplayList
 {
   public:
@@ -58,6 +76,7 @@ class DisplayList
     [[nodiscard]] bool empty() const noexcept;
     [[nodiscard]] std::size_t size() const noexcept;
     [[nodiscard]] Span<const Quad> quads() const noexcept;
+    [[nodiscard]] Span<const TextRun> texts() const noexcept;
 
   private:
     struct OrderEntry
@@ -70,6 +89,7 @@ class DisplayList
     friend bool buildDisplayList(ecs::World& world, ecs::Entity root, DisplayList& out);
 
     std::vector<Quad> quads_;
+    std::vector<TextRun> texts_;
     std::vector<OrderEntry> order_;
     ecs::Entity focused_{};
 };

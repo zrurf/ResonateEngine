@@ -1,6 +1,7 @@
 // UI overlay: target-pixel quads written into the UI image, which the
 // composite blends over the tonemapped frame. Solid quads sample the white
-// texel, images the built-in checker and text the font atlas.
+// texel, images the built-in checker, text the font atlas, and the tgfx text
+// layer one fullscreen premultiplied quad.
 // Entries: uiVertex, uiFragment.
 
 struct UiPush
@@ -9,6 +10,8 @@ struct UiPush
     float2 pad;
     uint texture_slot;
     uint font_slot;
+    uint overlay_slot;
+    uint pad1;
 };
 
 [[vk::push_constant]] UiPush push;
@@ -50,6 +53,13 @@ float4 uiFragment(VertexOutput input) : SV_Target
         return input.color;
     }
     float4 sampled = image_table[push.texture_slot].Sample(input.uv);
+    if (push.texture_slot == push.overlay_slot)
+    {
+        // tgfx writes premultiplied color; the UI target accumulates straight
+        // alpha, so undo the premultiply before this quad blends.
+        float3 straight = sampled.a > 0.0001 ? sampled.rgb / sampled.a : float3(0.0, 0.0, 0.0);
+        return float4(straight, sampled.a);
+    }
     if (push.texture_slot == push.font_slot)
     {
         // The font atlas is a signed distance field; rebuild the edge from it.

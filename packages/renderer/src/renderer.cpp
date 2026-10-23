@@ -36,6 +36,18 @@
 #include "resonate.render/components.gen.h"
 #include "resonate.ui/components.gen.h"
 
+#if defined(RESONATE_WITH_TGFX)
+#    include <tgfx/core/Canvas.h>
+#    include <tgfx/core/Color.h>
+#    include <tgfx/core/Font.h>
+#    include <tgfx/core/ImageInfo.h>
+#    include <tgfx/core/Paint.h>
+#    include <tgfx/core/Surface.h>
+#    include <tgfx/core/TextBlob.h>
+#    include <tgfx/core/Typeface.h>
+#    include <tgfx/gpu/vulkan/VulkanDevice.h>
+#endif
+
 namespace resonate::renderer
 {
 namespace
@@ -157,10 +169,15 @@ struct UiConstants
     float pad[2] = {};
     std::uint32_t texture_slot = 0U;
     std::uint32_t font_slot = 0U;
+    std::uint32_t overlay_slot = 0U;
+    std::uint32_t pad1 = 0U;
 };
 
 /* A contiguous vertex range sharing one sampled texture. */
 constexpr std::uint32_t kSolidUiTextureSlot = 0xFFFFFFFFU;
+/* Not a ui::Quad texture id: the renderer appends one fullscreen quad with
+   this id after the display list to composite the tgfx text layer. */
+constexpr std::uint32_t kUiTextOverlayTexture = 3U;
 
 struct UiBatch
 {
@@ -450,6 +467,23 @@ struct RenderSystem::Impl
     std::uint32_t font_atlas_revision = 0U;
     bool albedo_ready = false;
     bool font_atlas_ready = false;
+    /* True when this frame's text came from tgfx; the glyph quads are then
+       skipped and the renderer appends the text overlay quad. */
+    bool ui_text_ready = false;
+
+#if defined(RESONATE_WITH_TGFX)
+    /* The UI text overlay: tgfx shapes and rasterizes on the shared Vulkan
+       device, the pixels land in the sampled image the overlay quad reads. */
+    std::vector<std::string> ui_font_paths;
+    std::shared_ptr<tgfx::VulkanDevice> tgfx_device;
+    std::shared_ptr<tgfx::Surface> tgfx_surface;
+    std::shared_ptr<tgfx::Typeface> tgfx_typeface;
+    ResonateRenderImage ui_text_image{};
+    std::uint32_t ui_text_slot = 0U;
+    std::uint32_t ui_text_width = 0U;
+    std::uint32_t ui_text_height = 0U;
+    std::vector<std::uint8_t> ui_text_pixels;
+#endif
 
     /* The producer's copy of the canvas's TextAtlasPage, replaced only when
        its revision moves. */
@@ -488,6 +522,10 @@ struct RenderSystem::Impl
     std::uint32_t slotOf(ResonateRenderImage handle) const;
     std::uint32_t uiTextureSlot(std::uint32_t texture) const;
     bool updateFontAtlas(const FrameSnapshot& snapshot);
+#if defined(RESONATE_WITH_TGFX)
+    bool renderTgfxText(FrameSnapshot& snapshot);
+    void releaseTgfx();
+#endif
     void bindQueries(ecs::World& world);
     void resolveCapabilities();
     void ensureThread();
@@ -875,6 +913,12 @@ std::uint32_t RenderSystem::Impl::slotOf(ResonateRenderImage handle) const
 
 std::uint32_t RenderSystem::Impl::uiTextureSlot(std::uint32_t texture) const
 {
+#if defined(RESONATE_WITH_TGFX)
+    if (texture == kUiTextOverlayTexture)
+    {
+        return ui_text_ready ? ui_text_slot : kSolidUiTextureSlot;
+    }
+#endif
     if (texture == ui::kTextureWhite)
     {
         return kSolidUiTextureSlot;
@@ -933,6 +977,168 @@ bool RenderSystem::Impl::updateFontAtlas(const FrameSnapshot& snapshot)
     font_atlas_ready = true;
     return true;
 }
+
+#if defined(RESONATE_WITH_TGFX)
+bool RenderSystem::Impl::renderTgfxText(FrameSnapshot& snapshot)
+{
+    ui_text_ready = false;
+    if (device == nullptr || snapshot.ui.texts().empty() || snapshot.target_width == 0U ||
+        snapshot.target_height == 0U)
+    {
+        return false;
+    }
+    if (tgfx_device == nullptr)
+    {
+        if (device->native_handles == nullptr)
+        {
+            return false;
+        }
+        ResonateRenderNativeHandles handles = {};
+        if (device->native_handles(device->self, &handles) != RESONATE_OK || handles.device == 0U)
+        {
+            complain("tgfx: the device does not share its native handles");
+            return false;
+        }
+        tgfx_device = tgfx::VulkanDevice::MakeFrom(
+            reinterpret_cast<void*>(handles.instance),
+            reinterpret_cast<void*>(handles.physical_device),
+            reinterpret_cast<void*>(handles.device), reinterpret_cast<void*>(handles.queue),
+            handles.queue_family);
+        if (tgfx_device == nullptr)
+        {
+            complain("tgfx: the shared Vulkan device was refused");
+            return false;
+        }
+        for (const std::string& path : ui_font_paths)
+        {
+            tgfx_typeface = tgfx::Typeface::MakeFromPath(path);
+            if (tgfx_typeface != nullptr)
+            {
+                break;
+            }
+        }
+        if (tgfx_typeface == nullptr)
+        {
+            complain("tgfx: no UI font");
+            return false;
+        }
+    }
+
+    const std::uint32_t width = snapshot.target_width;
+    const std::uint32_t height = snapshot.target_height;
+    if (tgfx_surface == nullptr || width != ui_text_width || height != ui_text_height)
+    {
+        tgfx_surface.reset();
+        auto* context = tgfx_device->lockContext();
+        if (context == nullptr)
+        {
+            return false;
+        }
+        tgfx_surface = tgfx::Surface::Make(context, static_cast<int>(width),
+                                           static_cast<int>(height));
+        tgfx_device->unlock();
+        if (tgfx_surface == nullptr)
+        {
+            complain("tgfx: the UI text surface was not created");
+            return false;
+        }
+        if (ui_text_image.value != 0U)
+        {
+            device->destroy_image(device->self, ui_text_image);
+            ui_text_image = ResonateRenderImage{};
+        }
+        ResonateRenderImageDesc desc = {};
+        desc.struct_size = sizeof(desc);
+        desc.format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+        desc.width = width;
+        desc.height = height;
+        desc.usage = RESONATE_RENDER_IMAGE_SAMPLED;
+        if (device->create_image(device->self, &desc, &ui_text_image) != RESONATE_OK)
+        {
+            return false;
+        }
+        ui_text_slot = slotOf(ui_text_image);
+        if (device->bind_image_slot != nullptr)
+        {
+            device->bind_image_slot(device->self, ui_text_slot, ui_text_image, 0U);
+        }
+        ui_text_width = width;
+        ui_text_height = height;
+        ui_text_pixels.resize(static_cast<std::size_t>(width) * height * 4U);
+    }
+
+    auto* context = tgfx_device->lockContext();
+    if (context == nullptr)
+    {
+        return false;
+    }
+    auto* canvas = tgfx_surface->getCanvas();
+    canvas->clear(tgfx::Color::Transparent());
+    for (const ui::TextRun& run : snapshot.ui.texts())
+    {
+        if (run.text.empty() || run.font_size <= 0.0F)
+        {
+            continue;
+        }
+        tgfx::Font font(tgfx_typeface, run.font_size);
+        font.setFauxBold(run.font_weight >= 600U);
+        std::shared_ptr<tgfx::TextBlob> blob = tgfx::TextBlob::MakeFrom(run.text, font);
+        if (blob == nullptr)
+        {
+            continue;
+        }
+        float x = run.x;
+        const tgfx::Rect bounds = blob->getBounds();
+        if (run.align == 1U)
+        {
+            x += (run.width - bounds.width()) * 0.5F;
+        }
+        else if (run.align == 2U)
+        {
+            x += run.width - bounds.width();
+        }
+        const tgfx::FontMetrics metrics = font.getMetrics();
+        tgfx::Paint paint;
+        paint.setColor(tgfx::Color{run.color.x, run.color.y, run.color.z, run.color.w});
+        canvas->drawTextBlob(blob, x, run.y - metrics.ascent, paint);
+    }
+    const tgfx::ImageInfo info = tgfx::ImageInfo::Make(static_cast<int>(width),
+                                                       static_cast<int>(height),
+                                                       tgfx::ColorType::RGBA_8888,
+                                                       tgfx::AlphaType::Premultiplied);
+    const bool read = tgfx_surface->readPixels(info, ui_text_pixels.data());
+    tgfx_device->unlock();
+    if (!read)
+    {
+        complain("tgfx: the UI text readback failed");
+        return false;
+    }
+    if (device->upload_image(device->self, ui_text_image, ui_text_pixels.data(),
+                             ui_text_pixels.size(), static_cast<std::uint64_t>(width) * 4U) !=
+        RESONATE_OK)
+    {
+        return false;
+    }
+    ui_text_ready = true;
+    return true;
+}
+
+void RenderSystem::Impl::releaseTgfx()
+{
+    tgfx_surface.reset();
+    tgfx_typeface.reset();
+    tgfx_device.reset();
+    if (ui_text_image.value != 0U && device != nullptr)
+    {
+        device->destroy_image(device->self, ui_text_image);
+    }
+    ui_text_image = ResonateRenderImage{};
+    ui_text_width = 0U;
+    ui_text_height = 0U;
+    ui_text_slot = 0U;
+    ui_text_ready = false;
+}
+#endif
 
 bool RenderSystem::Impl::ensurePipelines()
 {
@@ -1716,9 +1922,10 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
     ui_constants.viewport_width = static_cast<float>(active->target_width);
     ui_constants.viewport_height = static_cast<float>(active->target_height);
     ui_constants.font_slot = uiTextureSlot(ui::kTextureFont);
-    if (!active->ui.empty())
+    ui_constants.overlay_slot = uiTextureSlot(kUiTextOverlayTexture);
+    const auto quads = active->ui.quads();
+    if (!quads.empty() || ui_text_ready)
     {
-        const auto quads = active->ui.quads();
         const std::size_t count = std::min<std::size_t>(quads.size(), kMaxUiQuads);
         if (quads.size() > count)
         {
@@ -1730,6 +1937,13 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
         for (std::size_t index = 0; index < count; ++index)
         {
             const ui::Quad& quad = quads[index];
+#if defined(RESONATE_WITH_TGFX)
+            /* tgfx draws the text; the atlas glyph quads would double it. */
+            if (ui_text_ready && quad.texture == ui::kTextureFont)
+            {
+                continue;
+            }
+#endif
             const float right = quad.x + quad.width;
             const float bottom = quad.y + quad.height;
             const UiVertex top_left{quad.x,  quad.y,   quad.color.x, quad.color.y,
@@ -1755,6 +1969,29 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
             ui_vertex_scratch.push_back(bottom_right);
             ui_vertex_scratch.push_back(bottom_left);
         }
+#if defined(RESONATE_WITH_TGFX)
+        if (ui_text_ready)
+        {
+            const float right = static_cast<float>(active->target_width);
+            const float bottom = static_cast<float>(active->target_height);
+            const UiVertex top_left{0.0F, 0.0F, 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F};
+            const UiVertex top_right{right, 0.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 0.0F};
+            const UiVertex bottom_right{right, bottom, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F};
+            const UiVertex bottom_left{0.0F, bottom, 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 1.0F};
+            const std::uint32_t first = static_cast<std::uint32_t>(ui_vertex_scratch.size());
+            if (ui_batches.empty() || ui_batches.back().texture != kUiTextOverlayTexture)
+            {
+                ui_batches.push_back(UiBatch{first, 0U, kUiTextOverlayTexture});
+            }
+            ui_batches.back().vertex_count += 6U;
+            ui_vertex_scratch.push_back(top_left);
+            ui_vertex_scratch.push_back(top_right);
+            ui_vertex_scratch.push_back(bottom_right);
+            ui_vertex_scratch.push_back(top_left);
+            ui_vertex_scratch.push_back(bottom_right);
+            ui_vertex_scratch.push_back(bottom_left);
+        }
+#endif
 
         const auto* bytes = reinterpret_cast<const std::uint8_t*>(ui_vertex_scratch.data());
         const std::size_t total_bytes = ui_vertex_scratch.size() * sizeof(UiVertex);
@@ -1770,7 +2007,7 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
         barrier.after_stages = RESONATE_RENDER_STAGE_VERTEX;
         barrier.after_access = RESONATE_RENDER_ACCESS_SHADER_READ;
         frame_device.barrier(frame_device.self, &barrier);
-        ui_drawn_vertices = static_cast<std::uint32_t>(count * 6U);
+        ui_drawn_vertices = static_cast<std::uint32_t>(ui_vertex_scratch.size());
     }
 }
 
@@ -2060,6 +2297,15 @@ void RenderSystem::setFeatures(const FeatureStack& stack)
     impl_->features = stack;
 }
 
+void RenderSystem::setUiFontPaths(std::vector<std::string> paths)
+{
+#if defined(RESONATE_WITH_TGFX)
+    impl_->ui_font_paths = std::move(paths);
+#else
+    (void)paths;
+#endif
+}
+
 bool RenderSystem::registerComponents(ecs::World& world)
 {
     bool ok = world.registerComponent<render::Camera>() != ecs::kInvalidComponent;
@@ -2088,6 +2334,10 @@ void RenderSystem::release()
     {
         impl.render_thread.join();
     }
+#if defined(RESONATE_WITH_TGFX)
+    /* tgfx holds the shared device; release it before the module detaches. */
+    impl.releaseTgfx();
+#endif
     /* The executor's destruction calls into the device; the render thread is
        gone and the capability is still alive. */
     impl.executor.reset();
@@ -2280,6 +2530,11 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
     {
         return;
     }
+#if defined(RESONATE_WITH_TGFX)
+    /* The text layer is uploaded outside the frame; the UI pass only samples
+       it. A failed overlay leaves the atlas glyph quads in place. */
+    renderTgfxText(snapshot);
+#endif
     std::string error;
     if (!executor->execute(error, &Impl::prepareEntry, this) && !error.empty())
     {
