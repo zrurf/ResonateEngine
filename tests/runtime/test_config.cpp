@@ -2,7 +2,9 @@
 
 #include <cstdio>
 #include <fstream>
+#include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <resonate/application/config_store.h>
@@ -108,6 +110,94 @@ TEST_CASE("config store: a missing file is not an error", "[config]")
     resonate::ConfigStore store;
     store.load("no_such_resonate_config_file.toml");
     CHECK(store.readBool("resonate.render", "vsync", true) == true);
+}
+
+TEST_CASE("config store: later layers override earlier ones and CVars win", "[config]")
+{
+    resonate::ConfigStore store;
+    TempConfig base;
+    TempConfig project;
+    TempConfig user;
+    base.write("[resonate.render]\n"
+               "vsync = false\n"
+               "name = \"base\"\n"
+               "[resonate.window]\n"
+               "width = 800\n");
+    project.write("[resonate.render]\nvsync = true\n");
+    user.write("[resonate.window]\nwidth = 1920\n");
+
+    store.load(base.path());
+    store.addFile(project.path());
+    /* A layer that is not there is normal and leaves the stack alone. */
+    store.addFile("no_such_user_layer.toml");
+    store.addFile(user.path());
+
+    CHECK(store.readBool("resonate.render", "vsync", false) == true);
+    CHECK(store.value("resonate.render", "name") == std::optional<std::string>("base"));
+    CHECK(store.readUInt("resonate.window", "width", 0U) == 1920U);
+
+    store.setOverride("resonate.window", "width", "2560");
+    store.setOverride("resonate.render", "vsync", "false");
+    CHECK(store.readUInt("resonate.window", "width", 0U) == 2560U);
+    CHECK(store.readBool("resonate.render", "vsync", true) == false);
+
+    store.clearOverrides();
+    CHECK(store.readUInt("resonate.window", "width", 0U) == 1920U);
+    CHECK(store.readBool("resonate.render", "vsync", false) == true);
+}
+
+TEST_CASE("config store: a broken layer keeps the stack it had", "[config]")
+{
+    resonate::ConfigStore store;
+    TempConfig good;
+    TempConfig broken;
+    good.write("[resonate.render]\nvsync = true\n");
+    broken.write("[resonate.render\nvsync =\n");
+
+    store.load(good.path());
+    store.addFile(broken.path());
+    CHECK(store.readBool("resonate.render", "vsync", false) == true);
+}
+
+namespace
+{
+
+struct Collected
+{
+    std::vector<std::pair<std::string, std::string>> entries;
+};
+
+void collectScalar(void* user, const char* section, const char* key, const char* value)
+{
+    auto* collected = static_cast<Collected*>(user);
+    collected->entries.emplace_back(std::string(section) + "." + key, value);
+}
+
+} // namespace
+
+TEST_CASE("config store: the merged view reports each key once, with the winner", "[config]")
+{
+    resonate::ConfigStore store;
+    TempConfig base;
+    TempConfig over;
+    base.write("[resonate.render]\n"
+               "vsync = false\n"
+               "name = \"base\"\n");
+    over.write("[resonate.render]\nvsync = true\n");
+    store.load(base.path());
+    store.addFile(over.path());
+    store.setOverride("resonate.render", "name", "override");
+
+    Collected collected;
+    store.visitScalars(&collected, &collectScalar);
+    std::map<std::string, std::string> merged;
+    for (const auto& entry : collected.entries)
+    {
+        CHECK(merged.emplace(entry.first, entry.second).second);
+    }
+    REQUIRE(merged.size() == 2U);
+    CHECK(merged["resonate.render.vsync"] == "true");
+    CHECK(merged["resonate.render.name"] == "override");
 }
 
 TEST_CASE("settings schema: values validate and defaults fill the gaps", "[settings]")

@@ -23,6 +23,7 @@
 #    include <resonate/csharp/managed_systems.hpp>
 #endif
 #include <resonate/pal/io.h>
+#include <resonate/pal/platform.h>
 #include <resonate/application/systems.h>
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/system.h>
@@ -430,7 +431,11 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     {
         config.config_file = "resonate.toml";
     }
-    config.settings.load(config.config_file);
+    /* Sparse layers, low to high: platform, project, user. A missing layer is
+       normal; the CVar layer sits above these in the store itself. */
+    config.settings.load(std::string("resonate.") + RESONATE_PLATFORM_NAME + ".toml");
+    config.settings.addFile(config.config_file);
+    config.settings.addFile("resonate.user.toml");
 
     /* The project's settings contract sits beside the run's config. When it is
        present, every key is checked before anything consumes it: an unknown key

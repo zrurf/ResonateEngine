@@ -1,10 +1,14 @@
 #include <resonate/application/config_store.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "toml_text.h"
 
@@ -19,10 +23,17 @@ struct ConfigStore::Table
 namespace
 {
 
+struct VisitState
+{
+    void* user = nullptr;
+    ConfigStore::ScalarVisitor visitor = nullptr;
+    std::unordered_set<std::string>* seen = nullptr;
+};
+
 /* Nested tables flatten into dotted sections, which is the shape the store
-   reads by; arrays and date-times are not settings and are left out. */
-void visitTable(const toml::table& table, const std::string& prefix, void* user,
-                ConfigStore::ScalarVisitor visitor)
+   reads by; arrays and date-times are not settings and are left out. A path
+   already visited by a higher layer is shadowed and is not reported again. */
+void visitTable(const toml::table& table, const std::string& prefix, VisitState& state)
 {
     for (const auto& [key, node] : table)
     {
@@ -30,16 +41,53 @@ void visitTable(const toml::table& table, const std::string& prefix, void* user,
         const std::string path = prefix.empty() ? name : prefix + "." + name;
         if (const toml::table* child = node.as_table())
         {
-            visitTable(*child, path, user, visitor);
+            visitTable(*child, path, state);
+            continue;
+        }
+        if (!state.seen->insert(path).second)
+        {
             continue;
         }
 
         std::string text;
         if (detail::scalarText(node, text))
         {
-            visitor(user, prefix.c_str(), name.c_str(), text.c_str());
+            state.visitor(state.user, prefix.c_str(), name.c_str(), text.c_str());
         }
     }
+}
+
+std::string dottedKey(const char* section, const char* key)
+{
+    std::string path = section != nullptr ? section : "";
+    if (key != nullptr)
+    {
+        if (!path.empty())
+        {
+            path.push_back('.');
+        }
+        path.append(key);
+    }
+    return path;
+}
+
+std::unique_ptr<toml::table> parseFile(const std::string& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open())
+    {
+        return nullptr;
+    }
+
+    /* This toml++ version's parse_result is the table itself: false means the
+       file did not parse, with no description to relay. */
+    toml::parse_result result = toml::parse(in, path);
+    if (!result)
+    {
+        std::cerr << "resonate: config " << path << ": does not parse\n";
+        return nullptr;
+    }
+    return std::make_unique<toml::table>(std::move(result.table()));
 }
 
 } // namespace
@@ -54,50 +102,98 @@ ConfigStore& ConfigStore::operator=(ConfigStore&& other) noexcept = default;
 
 void ConfigStore::load(const std::string& path)
 {
-    table_ = nullptr;
+    layers_.clear();
+    overrides_.clear();
+    addFile(path);
+}
 
-    std::ifstream in(path, std::ios::binary);
-    if (!in.is_open())
+void ConfigStore::addFile(const std::string& path)
+{
+    std::unique_ptr<toml::table> table = parseFile(path);
+    if (table == nullptr)
     {
         return;
     }
+    auto layer = std::make_unique<Table>();
+    layer->value = std::move(*table);
+    layers_.push_back(std::move(layer));
+}
 
-    /* This toml++ version's parse_result is the table itself: false means the
-       file did not parse, with no description to relay. */
-    const toml::parse_result result = toml::parse(in, path);
-    if (!result)
+void ConfigStore::setOverride(const char* section, const char* key, std::string value)
+{
+    if (key == nullptr)
     {
-        std::cerr << "resonate: config " << path << ": does not parse\n";
         return;
     }
-    table_ = std::make_unique<Table>(Table{std::move(result.table())});
+    overrides_[dottedKey(section, key)] = std::move(value);
+}
+
+void ConfigStore::clearOverrides()
+{
+    overrides_.clear();
 }
 
 std::optional<std::string> ConfigStore::value(const char* section, const char* key) const
 {
-    if (table_ == nullptr || section == nullptr || key == nullptr)
+    if (section == nullptr || key == nullptr)
     {
         return std::nullopt;
     }
-
-    const toml::node* node = table_->value.at_path(std::string(section) + '.' + key).node();
-    if (node == nullptr)
+    const std::string path = dottedKey(section, key);
+    const auto override = overrides_.find(path);
+    if (override != overrides_.end())
     {
-        return std::nullopt;
+        return override->second;
     }
 
-    std::string text;
-    return detail::scalarText(*node, text) ? std::optional<std::string>(std::move(text))
-                                           : std::nullopt;
+    for (auto layer = layers_.rbegin(); layer != layers_.rend(); ++layer)
+    {
+        const toml::node* node = (*layer)->value.at_path(path).node();
+        if (node == nullptr)
+        {
+            continue;
+        }
+        std::string text;
+        return detail::scalarText(*node, text) ? std::optional<std::string>(std::move(text))
+                                               : std::nullopt;
+    }
+    return std::nullopt;
 }
 
 void ConfigStore::visitScalars(void* user, ScalarVisitor visitor) const
 {
-    if (table_ == nullptr || visitor == nullptr)
+    if (visitor == nullptr)
     {
         return;
     }
-    visitTable(table_->value, std::string(), user, visitor);
+
+    /* Overrides first, then layers high to low; a key already seen is a value a
+       higher layer replaced, and validating both would report the shadowed
+       one. */
+    std::unordered_set<std::string> seen;
+    std::vector<std::string> names;
+    names.reserve(overrides_.size());
+    for (const auto& entry : overrides_)
+    {
+        names.push_back(entry.first);
+    }
+    std::sort(names.begin(), names.end());
+    for (const std::string& path : names)
+    {
+        const auto separator = path.rfind('.');
+        const std::string section =
+            separator == std::string::npos ? std::string() : path.substr(0U, separator);
+        const std::string key =
+            separator == std::string::npos ? path : path.substr(separator + 1U);
+        visitor(user, section.c_str(), key.c_str(), overrides_.at(path).c_str());
+        seen.insert(path);
+    }
+
+    VisitState state{user, visitor, &seen};
+    for (auto layer = layers_.rbegin(); layer != layers_.rend(); ++layer)
+    {
+        visitTable((*layer)->value, std::string(), state);
+    }
 }
 
 bool ConfigStore::read(const char* section, const char* key, std::string& out) const

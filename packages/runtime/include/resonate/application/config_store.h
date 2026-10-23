@@ -6,13 +6,15 @@
    `[resonate.render] vsync` in the file. The store answers the host API's
    read_config for every module, so each one reads its own namespace and the
    host reads nothing it does not own. The store reads; it does not validate
-   against declarations, watch for changes or reload.
+   against declarations or watch for changes.
  */
 
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include <resonate/module/host.hpp>
 
@@ -31,11 +33,22 @@ class ConfigStore final : public ConfigSource
     ConfigStore(ConfigStore&& other) noexcept;
     ConfigStore& operator=(ConfigStore&& other) noexcept;
 
-    /* Reads the file into the store. A file that cannot be opened leaves the
-       store empty — configuration is optional — but one that cannot be parsed
-       is reported on stderr and also left empty: a typo silently ignored would
-       be verification that did not happen. */
+    /* Replaces the whole stack and the override layer with one file. A file
+       that cannot be opened leaves the store empty — configuration is optional
+       — but one that cannot be parsed is reported on stderr and also left
+       empty: a typo silently ignored would be verification that did not
+       happen. */
     void load(const std::string& path);
+
+    /* Adds a sparse layer above the layers already loaded; a later layer
+       overrides an earlier one per key. A file that cannot be parsed keeps the
+       stack it had. */
+    void addFile(const std::string& path);
+
+    /* The CVar layer, above every file. It is read through the same value()
+       path as the files, so a module cannot tell an override from a file. */
+    void setOverride(const char* section, const char* key, std::string value);
+    void clearOverrides();
 
     /* The store's own read: the scalar's text form, or nullopt when the key is
        unset or names a table or an array. */
@@ -59,7 +72,8 @@ class ConfigStore final : public ConfigSource
 
   private:
     struct Table;
-    std::unique_ptr<Table> table_;
+    std::vector<std::unique_ptr<Table>> layers_;
+    std::unordered_map<std::string, std::string> overrides_;
 };
 
 } // namespace resonate
