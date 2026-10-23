@@ -172,6 +172,8 @@ VkImageLayout layoutToVulkan(ResonateRenderImageLayout layout)
             return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         case RESONATE_RENDER_LAYOUT_PRESENT:
             return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        case RESONATE_RENDER_LAYOUT_GENERAL:
+            return VK_IMAGE_LAYOUT_GENERAL;
         case RESONATE_RENDER_LAYOUT_UNDEFINED:
         default:
             return VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1646,6 +1648,30 @@ uint32_t Context::imageSlot(ResonateRenderImage handle) const
         handle.value != 0 ? images_.live(handleIndex(handle.value), handleGeneration(handle.value))
                           : nullptr;
     return slot != nullptr && slot->in_table ? slot->table_slot : 0U;
+}
+
+ResonateStatus Context::nativeImage(ResonateRenderImage handle,
+                                    ResonateRenderNativeImage* out) const
+{
+    if (out == nullptr)
+    {
+        return RESONATE_E_INVALID;
+    }
+    const ImageSlot* slot =
+        handle.value != 0 ? images_.live(handleIndex(handle.value), handleGeneration(handle.value))
+                          : nullptr;
+    if (slot == nullptr)
+    {
+        return RESONATE_E_INVALID;
+    }
+    out->image = reinterpret_cast<std::uint64_t>(slot->image);
+    out->format = static_cast<std::uint32_t>(slot->format);
+    /* The RHI leaves sampled images in this layout after creation and upload;
+       the caller owns the transition from here. */
+    out->layout = static_cast<std::uint32_t>(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    out->width = slot->width;
+    out->height = slot->height;
+    return RESONATE_OK;
 }
 
 void Context::writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size)

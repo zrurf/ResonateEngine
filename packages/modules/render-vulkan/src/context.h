@@ -145,6 +145,7 @@ class Context
     uint32_t bufferSlot(ResonateRenderBuffer buffer) const;
     uint32_t imageSlot(ResonateRenderImage image) const;
     ResonateStatus bindImageSlot(uint32_t slot, ResonateRenderImage image, bool nearest);
+    ResonateStatus nativeImage(ResonateRenderImage image, ResonateRenderNativeImage* out) const;
 
     /* --- RHI surface --- */
 

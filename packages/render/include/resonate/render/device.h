@@ -115,6 +115,9 @@ typedef enum ResonateRenderImageLayout : uint8_t
     RESONATE_RENDER_LAYOUT_TRANSFER_SRC,
     RESONATE_RENDER_LAYOUT_TRANSFER_DST,
     RESONATE_RENDER_LAYOUT_PRESENT,
+    /* Contents are addressable in any layout; used by a library that owns its
+       own barriers (tgfx leaves its render targets in this layout). */
+    RESONATE_RENDER_LAYOUT_GENERAL,
 } ResonateRenderImageLayout;
 
 /* Pipeline stages and memory access, the barrier's vocabulary. A stage mask
@@ -258,6 +261,18 @@ typedef struct ResonateRenderNativeHandles
     uint32_t reserved;
 } ResonateRenderNativeHandles;
 
+/* One image's backend objects, for a library that draws into it. `format` is
+   the backend's own format (a VkFormat); `layout` is the RHI layout it was
+   left in. */
+typedef struct ResonateRenderNativeImage
+{
+    uint64_t image;
+    uint32_t format;
+    uint32_t layout;
+    uint32_t width;
+    uint32_t height;
+} ResonateRenderNativeImage;
+
 typedef struct ResonateRenderDevice
 {
     ResonateCapabilityHeader header;
@@ -390,6 +405,11 @@ typedef struct ResonateRenderDevice
     /* Tail: the backend's native objects for a library sharing the device. An
        older writer stops before this and answers RESONATE_E_UNSUPPORTED. */
     ResonateStatus (*native_handles)(void* self, ResonateRenderNativeHandles* out_handles);
+
+    /* Tail: one image's backend objects, so a host-side library can wrap it.
+       Same fallback as native_handles. */
+    ResonateStatus (*native_image)(void* self, ResonateRenderImage image,
+                                   ResonateRenderNativeImage* out_image);
 } ResonateRenderDevice;
 
 /* The resource table is partially bound and sampled-image indices may differ

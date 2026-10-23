@@ -322,6 +322,15 @@ ResonateStatus nativeHandles(void* self, ResonateRenderNativeHandles* out_handle
     return RESONATE_OK;
 }
 
+ResonateStatus nativeImage(void* self, ResonateRenderImage image,
+                           ResonateRenderNativeImage* out_image)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr
+               ? state->context->nativeImage(image, out_image)
+               : RESONATE_E_STATE;
+}
+
 ResonateRenderDevice g_device = {
     RESONATE_CAPABILITY_HEADER_INIT(ResonateRenderDevice, RESONATE_THREAD_ANY),
     &attachSurface,
@@ -360,6 +369,7 @@ ResonateRenderDevice g_device = {
     &imageSlot,
     &bindImageSlot,
     &nativeHandles,
+    &nativeImage,
 };
 
 } // namespace
