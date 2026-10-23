@@ -244,6 +244,20 @@ typedef struct ResonateRenderBarrierDesc
     ResonateRenderImageLayout after_layout;
 } ResonateRenderBarrierDesc;
 
+/* The Vulkan objects behind the device, for a host-side library that shares
+   them — the UI layer hands these to tgfx's external-device entry point. The
+   handles are VkInstance/VkPhysicalDevice/VkDevice/VkQueue widened to 64 bits;
+   zero means the backend has no such objects. */
+typedef struct ResonateRenderNativeHandles
+{
+    uint64_t instance;
+    uint64_t physical_device;
+    uint64_t device;
+    uint64_t queue;
+    uint32_t queue_family;
+    uint32_t reserved;
+} ResonateRenderNativeHandles;
+
 typedef struct ResonateRenderDevice
 {
     ResonateCapabilityHeader header;
@@ -372,6 +386,10 @@ typedef struct ResonateRenderDevice
        binding. */
     ResonateStatus (*bind_image_slot)(void* self, uint32_t slot, ResonateRenderImage image,
                                       uint32_t nearest);
+
+    /* Tail: the backend's native objects for a library sharing the device. An
+       older writer stops before this and answers RESONATE_E_UNSUPPORTED. */
+    ResonateStatus (*native_handles)(void* self, ResonateRenderNativeHandles* out_handles);
 } ResonateRenderDevice;
 
 /* The resource table is partially bound and sampled-image indices may differ

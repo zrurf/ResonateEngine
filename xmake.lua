@@ -252,7 +252,8 @@ task("tgfx")
     set_category("plugin")
     on_run(function ()
         local script = path.join(os.projectdir(), "scripts", "tgfx.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
+        local output = os.iorunv(os.programfile(), {"lua", script},
+                                 {envs = {RESONATE_TGFX_MODE = is_mode("release") and "release" or "debug"}})
         if output ~= nil then
             print(tidy_check_output(output))
         end

@@ -134,6 +134,13 @@ class Context
     /* RESONATE_RENDER_FEATURE_* of the created device. */
     uint32_t featureBits() const;
 
+    /* The Vulkan objects a host-side library sharing this device needs. */
+    VkInstance instance() const { return instance_; }
+    VkPhysicalDevice physicalDevice() const { return physical_; }
+    VkDevice device() const { return device_; }
+    VkQueue queue() const { return queue_; }
+    uint32_t queueFamily() const { return queue_family_; }
+
     /* The table slot a shader names, or 0 for a resource outside the table. */
     uint32_t bufferSlot(ResonateRenderBuffer buffer) const;
     uint32_t imageSlot(ResonateRenderImage image) const;

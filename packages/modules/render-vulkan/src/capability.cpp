@@ -305,6 +305,23 @@ ResonateStatus bindImageSlot(void* self, uint32_t slot, ResonateRenderImage imag
                : RESONATE_E_STATE;
 }
 
+ResonateStatus nativeHandles(void* self, ResonateRenderNativeHandles* out_handles)
+{
+    auto* state = static_cast<State*>(self);
+    if (state == nullptr || state->context == nullptr || out_handles == nullptr)
+    {
+        return RESONATE_E_STATE;
+    }
+    out_handles->instance = reinterpret_cast<std::uint64_t>(state->context->instance());
+    out_handles->physical_device =
+        reinterpret_cast<std::uint64_t>(state->context->physicalDevice());
+    out_handles->device = reinterpret_cast<std::uint64_t>(state->context->device());
+    out_handles->queue = reinterpret_cast<std::uint64_t>(state->context->queue());
+    out_handles->queue_family = state->context->queueFamily();
+    out_handles->reserved = 0U;
+    return RESONATE_OK;
+}
+
 ResonateRenderDevice g_device = {
     RESONATE_CAPABILITY_HEADER_INIT(ResonateRenderDevice, RESONATE_THREAD_ANY),
     &attachSurface,
@@ -342,6 +359,7 @@ ResonateRenderDevice g_device = {
     &bufferSlot,
     &imageSlot,
     &bindImageSlot,
+    &nativeHandles,
 };
 
 } // namespace

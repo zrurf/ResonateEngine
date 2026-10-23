@@ -7,9 +7,11 @@
 -- file and is a separate step.
 
 local project = os.projectdir()
+local mode = os.getenv("RESONATE_TGFX_MODE") or "debug"
 local source = path.join(project, "build", "third_party", "tgfx")
-local build = path.join(project, "build", "tgfx")
+local build = path.join(project, "build", "tgfx", mode)
 local library = path.join(build, "tgfx.lib")
+local cmake_type = mode == "release" and "Release" or "Debug"
 
 if not os.isdir(path.join(source, "include", "tgfx")) then
     os.mkdir(path.dirname(source))
@@ -52,14 +54,14 @@ if os.isfile(vswhere) then
         table.insert(lines, string.format('call "%s" >nul || exit /b 1', vcvars))
     end
 end
-table.insert(lines, string.format('cmake -S "%s" -B "%s" -G Ninja -DCMAKE_BUILD_TYPE=Release '
+table.insert(lines, string.format('cmake -S "%s" -B "%s" -G Ninja -DCMAKE_BUILD_TYPE=%s '
                                  .. "-DTGFX_USE_VULKAN=ON -DTGFX_USE_OPENGL=OFF "
                                  .. "-DTGFX_USE_FREETYPE=ON -DTGFX_BUILD_TESTS=OFF "
                                  .. "-DTGFX_BUILD_SVG=OFF -DTGFX_BUILD_PDF=OFF "
                                  .. "-DTGFX_BUILD_LAYERS=ON -DTGFX_BUILD_HELLO2D=OFF "
                                  .. "-DTGFX_USE_JPEG_DECODE=OFF -DTGFX_USE_JPEG_ENCODE=OFF "
                                  .. "-DTGFX_USE_WEBP_DECODE=OFF -DTGFX_USE_WEBP_ENCODE=OFF "
-                                 .. "|| exit /b 1", source, build))
+                                 .. "|| exit /b 1", source, build, cmake_type))
 table.insert(lines, string.format('cmake --build "%s" --target tgfx || exit /b 1', build))
 
 os.mkdir(build)
