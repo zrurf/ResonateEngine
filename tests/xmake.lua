@@ -131,24 +131,10 @@ target("Resonate.Tests")
     add_packages("yyjson")
     add_packages("catch2")
 
-    -- tgfx is an external CMake build (scripts/tgfx.lua); the test that shares
-    -- the device with it links the same configuration the test binary uses.
-    local tgfx_mode = is_mode("release") and "release" or "debug"
-    add_includedirs(path.join(os.projectdir(), "build", "third_party", "tgfx", "include"))
-    add_linkdirs(path.join(os.projectdir(), "build", "tgfx", tgfx_mode))
-    add_links("tgfx")
-    add_syslinks("bcrypt", "ws2_32", "dwrite", "windowscodecs", "ole32")
-    before_build(function (target)
-        local library = path.join(os.projectdir(), "build", "tgfx", tgfx_mode, "tgfx.lib")
-        if not os.isfile(library) then
-            local script = path.join(os.projectdir(), "scripts", "tgfx.lua")
-            local output = os.iorunv(os.programfile(), {"lua", script},
-                                     {envs = {RESONATE_TGFX_MODE = tgfx_mode}})
-            if output ~= nil then
-                print(output)
-            end
-        end
-    end)
+    -- The tgfx layer is one shared library; the test drives its C ABI.
+    if is_plat("windows") then
+        add_deps("Resonate.UiTgfx")
+    end
 
 -- The ECS acceptance bench runs the three performance bars at full
 -- optimization and fails on a miss. It compiles the engine sources itself

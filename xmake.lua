@@ -364,6 +364,9 @@ includes("packages/physics")
 includes("packages/audio")
 includes("packages/text")
 includes("packages/ui")
+if is_plat("windows") then
+    includes("packages/ui-tgfx")
+end
 includes("packages/hierarchy")
 includes("packages/renderer")
 includes("packages/runtime")

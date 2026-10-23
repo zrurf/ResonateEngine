@@ -37,16 +37,7 @@
 #include "resonate.ui/components.gen.h"
 
 #if defined(RESONATE_WITH_TGFX)
-#    include <tgfx/core/Canvas.h>
-#    include <tgfx/core/Color.h>
-#    include <tgfx/core/Font.h>
-#    include <tgfx/core/Paint.h>
-#    include <tgfx/core/Surface.h>
-#    include <tgfx/core/TextBlob.h>
-#    include <tgfx/core/Typeface.h>
-#    include <tgfx/gpu/Backend.h>
-#    include <tgfx/gpu/Context.h>
-#    include <tgfx/gpu/vulkan/VulkanDevice.h>
+#    include <resonate/ui_tgfx.h>
 #endif
 
 namespace resonate::renderer
@@ -473,16 +464,18 @@ struct RenderSystem::Impl
     bool ui_tgfx_ready = false;
 
 #if defined(RESONATE_WITH_TGFX)
-    /* The UI text overlay: tgfx shapes and rasterizes on the shared Vulkan
-       device, the pixels land in the sampled image the overlay quad reads. */
+    /* tgfx renders the whole UI layer through Resonate.UiTgfx; its pixels are
+       uploaded to the sampled image the overlay quad reads. */
     std::vector<std::string> ui_font_paths;
-    std::shared_ptr<tgfx::VulkanDevice> tgfx_device;
-    std::shared_ptr<tgfx::Surface> tgfx_surface;
-    std::shared_ptr<tgfx::Typeface> tgfx_typeface;
+    ResonateTgfxUi tgfx_ui = nullptr;
     ResonateRenderImage ui_text_image{};
     std::uint32_t ui_text_slot = 0U;
     std::uint32_t ui_text_width = 0U;
     std::uint32_t ui_text_height = 0U;
+    std::vector<std::uint8_t> ui_pixels;
+    std::vector<ResonateTgfxRect> ui_draw_rects;
+    std::vector<std::string> ui_draw_text_storage;
+    std::vector<ResonateTgfxText> ui_draw_texts;
 #endif
 
     /* The producer's copy of the canvas's TextAtlasPage, replaced only when
@@ -982,14 +975,15 @@ bool RenderSystem::Impl::updateFontAtlas(const FrameSnapshot& snapshot)
 bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
 {
     ui_tgfx_ready = false;
-    if (device == nullptr || snapshot.ui.texts().empty() || snapshot.target_width == 0U ||
-        snapshot.target_height == 0U)
+    const std::uint32_t width = snapshot.target_width;
+    const std::uint32_t height = snapshot.target_height;
+    if (device == nullptr || width == 0U || height == 0U)
     {
         return false;
     }
-    if (tgfx_device == nullptr)
+    if (tgfx_ui == nullptr)
     {
-        if (device->native_handles == nullptr)
+        if (device->native_handles == nullptr || ui_font_paths.empty())
         {
             return false;
         }
@@ -999,36 +993,87 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
             complain("tgfx: the device does not share its native handles");
             return false;
         }
-        tgfx_device = tgfx::VulkanDevice::MakeFrom(
-            reinterpret_cast<void*>(handles.instance),
-            reinterpret_cast<void*>(handles.physical_device),
-            reinterpret_cast<void*>(handles.device), reinterpret_cast<void*>(handles.queue),
-            handles.queue_family);
-        if (tgfx_device == nullptr)
+        if (resonate_tgfx_ui_create(reinterpret_cast<void*>(handles.instance),
+                                    reinterpret_cast<void*>(handles.physical_device),
+                                    reinterpret_cast<void*>(handles.device),
+                                    reinterpret_cast<void*>(handles.queue), handles.queue_family,
+                                    ui_font_paths.front().c_str(), &tgfx_ui) != 0)
         {
-            complain("tgfx: the shared Vulkan device was refused");
-            return false;
-        }
-        for (const std::string& path : ui_font_paths)
-        {
-            tgfx_typeface = tgfx::Typeface::MakeFromPath(path);
-            if (tgfx_typeface != nullptr)
-            {
-                break;
-            }
-        }
-        if (tgfx_typeface == nullptr)
-        {
-            complain("tgfx: no UI font");
+            complain("tgfx: the UI layer was not created");
+            tgfx_ui = nullptr;
             return false;
         }
     }
 
-    const std::uint32_t width = snapshot.target_width;
-    const std::uint32_t height = snapshot.target_height;
-    if (tgfx_surface == nullptr || width != ui_text_width || height != ui_text_height)
+    ui_draw_rects.clear();
+    for (const ui::Quad& quad : snapshot.ui.quads())
     {
-        tgfx_surface.reset();
+        if (quad.width <= 0.0F || quad.height <= 0.0F || quad.texture == ui::kTextureFont)
+        {
+            continue;
+        }
+        if (quad.texture == ui::kTextureChecker)
+        {
+            const float half_width = quad.width * 0.5F;
+            const float half_height = quad.height * 0.5F;
+            for (int row = 0; row < 2; ++row)
+            {
+                for (int column = 0; column < 2; ++column)
+                {
+                    const float shade = (row + column) % 2 == 0 ? 0.82F : 0.45F;
+                    ui_draw_rects.push_back(ResonateTgfxRect{
+                        quad.x + static_cast<float>(column) * half_width,
+                        quad.y + static_cast<float>(row) * half_height, half_width, half_height,
+                        quad.color.x * shade, quad.color.y * shade, quad.color.z * shade,
+                        quad.color.w});
+                }
+            }
+            continue;
+        }
+        ui_draw_rects.push_back(ResonateTgfxRect{quad.x, quad.y, quad.width, quad.height,
+                                                 quad.color.x, quad.color.y, quad.color.z,
+                                                 quad.color.w});
+    }
+
+    ui_draw_text_storage.clear();
+    ui_draw_text_storage.reserve(snapshot.ui.texts().size());
+    for (const ui::TextRun& run : snapshot.ui.texts())
+    {
+        ui_draw_text_storage.push_back(run.text);
+    }
+    ui_draw_texts.clear();
+    for (std::size_t index = 0; index < ui_draw_text_storage.size(); ++index)
+    {
+        const ui::TextRun& run = snapshot.ui.texts()[index];
+        const std::string& content = ui_draw_text_storage[index];
+        ResonateTgfxText text{};
+        text.x = run.x;
+        text.y = run.y;
+        text.width = run.width;
+        text.height = run.height;
+        text.size = run.font_size;
+        text.r = run.color.x;
+        text.g = run.color.y;
+        text.b = run.color.z;
+        text.a = run.color.w;
+        text.weight = run.font_weight;
+        text.align = run.align;
+        text.utf8 = content.data();
+        text.length = static_cast<std::uint32_t>(content.size());
+        ui_draw_texts.push_back(text);
+    }
+
+    if (resonate_tgfx_ui_draw(tgfx_ui, width, height, ui_draw_rects.data(),
+                              static_cast<std::uint32_t>(ui_draw_rects.size()),
+                              ui_draw_texts.data(),
+                              static_cast<std::uint32_t>(ui_draw_texts.size())) != 0)
+    {
+        complain("tgfx: the UI draw failed");
+        return false;
+    }
+
+    if (ui_text_image.value == 0U || width != ui_text_width || height != ui_text_height)
+    {
         if (ui_text_image.value != 0U)
         {
             device->destroy_image(device->self, ui_text_image);
@@ -1039,7 +1084,7 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         desc.format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
         desc.width = width;
         desc.height = height;
-        desc.usage = RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED;
+        desc.usage = RESONATE_RENDER_IMAGE_SAMPLED;
         if (device->create_image(device->self, &desc, &ui_text_image) != RESONATE_OK)
         {
             return false;
@@ -1049,121 +1094,28 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         {
             device->bind_image_slot(device->self, ui_text_slot, ui_text_image, 0U);
         }
-        /* The wrap is handed a known layout and initialized contents. */
-        std::vector<std::uint8_t> zeros(static_cast<std::size_t>(width) * height * 4U, 0U);
-        if (device->upload_image(device->self, ui_text_image, zeros.data(), zeros.size(),
-                                 static_cast<std::uint64_t>(width) * 4U) != RESONATE_OK ||
-            device->native_image == nullptr)
-        {
-            return false;
-        }
-        ResonateRenderNativeImage native = {};
-        if (device->native_image(device->self, ui_text_image, &native) != RESONATE_OK)
-        {
-            return false;
-        }
-        auto* context = tgfx_device->lockContext();
-        if (context == nullptr)
-        {
-            return false;
-        }
-        const tgfx::VulkanImageInfo info{native.image, native.format, native.layout};
-        const tgfx::BackendTexture texture(info, static_cast<int>(width),
-                                           static_cast<int>(height));
-        tgfx_surface =
-            tgfx::Surface::MakeFrom(context, texture, tgfx::ImageOrigin::TopLeft);
-        tgfx_device->unlock();
-        if (tgfx_surface == nullptr)
-        {
-            complain("tgfx: the shared UI surface was not created");
-            return false;
-        }
         ui_text_width = width;
         ui_text_height = height;
+        ui_pixels.resize(static_cast<std::size_t>(width) * height * 4U);
     }
 
-    auto* context = tgfx_device->lockContext();
-    if (context == nullptr)
+    if (resonate_tgfx_ui_read_pixels(tgfx_ui, ui_pixels.data(), ui_pixels.size()) != 0)
     {
         return false;
     }
-    auto* canvas = tgfx_surface->getCanvas();
-    canvas->clear(tgfx::Color::Transparent());
-    for (const ui::Quad& quad : snapshot.ui.quads())
+    if (device->upload_image(device->self, ui_text_image, ui_pixels.data(), ui_pixels.size(),
+                             static_cast<std::uint64_t>(width) * 4U) != RESONATE_OK)
     {
-        if (quad.width <= 0.0F || quad.height <= 0.0F || quad.texture == ui::kTextureFont)
-        {
-            continue;
-        }
-        if (quad.texture == ui::kTextureChecker)
-        {
-            /* The built-in checker stands in for an image asset; four cells
-               keep the widget visible until tgfx loads real images. */
-            const float half_width = quad.width * 0.5F;
-            const float half_height = quad.height * 0.5F;
-            for (int row = 0; row < 2; ++row)
-            {
-                for (int column = 0; column < 2; ++column)
-                {
-                    const float shade = (row + column) % 2 == 0 ? 0.82F : 0.45F;
-                    tgfx::Paint paint;
-                    paint.setColor(tgfx::Color{quad.color.x * shade, quad.color.y * shade,
-                                               quad.color.z * shade, quad.color.w});
-                    canvas->drawRect(tgfx::Rect::MakeXYWH(
-                                         quad.x + static_cast<float>(column) * half_width,
-                                         quad.y + static_cast<float>(row) * half_height,
-                                         half_width, half_height),
-                                     paint);
-                }
-            }
-            continue;
-        }
-        tgfx::Paint paint;
-        paint.setColor(tgfx::Color{quad.color.x, quad.color.y, quad.color.z, quad.color.w});
-        canvas->drawRect(tgfx::Rect::MakeXYWH(quad.x, quad.y, quad.width, quad.height), paint);
+        return false;
     }
-    for (const ui::TextRun& run : snapshot.ui.texts())
-    {
-        if (run.text.empty() || run.font_size <= 0.0F)
-        {
-            continue;
-        }
-        tgfx::Font font(tgfx_typeface, run.font_size);
-        font.setFauxBold(run.font_weight >= 600U);
-        std::shared_ptr<tgfx::TextBlob> blob = tgfx::TextBlob::MakeFrom(run.text, font);
-        if (blob == nullptr)
-        {
-            continue;
-        }
-        float x = run.x;
-        const tgfx::Rect bounds = blob->getBounds();
-        if (run.align == 1U)
-        {
-            x += (run.width - bounds.width()) * 0.5F;
-        }
-        else if (run.align == 2U)
-        {
-            x += run.width - bounds.width();
-        }
-        const tgfx::FontMetrics metrics = font.getMetrics();
-        tgfx::Paint paint;
-        paint.setColor(tgfx::Color{run.color.x, run.color.y, run.color.z, run.color.w});
-        canvas->drawTextBlob(blob, x, run.y - metrics.ascent, paint);
-    }
-    /* tgfx owns its commands; submit them without waiting. The UI frame is
-       submitted to the same queue afterwards, so the overlay is ordered after
-       the drawing without a CPU stall. */
-    context->flushAndSubmit(false);
-    tgfx_device->unlock();
     ui_tgfx_ready = true;
     return true;
 }
 
 void RenderSystem::Impl::releaseTgfx()
 {
-    tgfx_surface.reset();
-    tgfx_typeface.reset();
-    tgfx_device.reset();
+    resonate_tgfx_ui_destroy(tgfx_ui);
+    tgfx_ui = nullptr;
     if (ui_text_image.value != 0U && device != nullptr)
     {
         device->destroy_image(device->self, ui_text_image);
@@ -2172,8 +2124,8 @@ void RenderSystem::Impl::drawUi(GraphExecuteContext& commands)
     ResonateRenderDevice& device = *commands.device;
 
 #if defined(RESONATE_WITH_TGFX)
-    /* tgfx finished its own submission and left the shared image in GENERAL;
-       the overlay quad samples it in this pass. */
+    /* The tgfx pixels were uploaded outside the frame; the overlay quad
+       samples the image in this pass. */
     if (ui_tgfx_ready)
     {
         ResonateRenderBarrierDesc barrier = {};
@@ -2183,7 +2135,7 @@ void RenderSystem::Impl::drawUi(GraphExecuteContext& commands)
         barrier.before_access = RESONATE_RENDER_ACCESS_COLOR_WRITE;
         barrier.after_stages = RESONATE_RENDER_STAGE_FRAGMENT;
         barrier.after_access = RESONATE_RENDER_ACCESS_SHADER_READ;
-        barrier.before_layout = RESONATE_RENDER_LAYOUT_GENERAL;
+        barrier.before_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
         barrier.after_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
         device.barrier(device.self, &barrier);
     }
