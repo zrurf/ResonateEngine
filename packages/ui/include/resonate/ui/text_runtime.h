@@ -51,6 +51,11 @@ struct TextRuntimeAccess
     static detail::TextAtlasBuilder* atlas(TextRuntime& runtime);
     static void attach(TextRuntime& runtime, ecs::Entity canvas);
     static std::uint32_t revision(const TextRuntime& runtime);
+    /* Restores the committed text unless the preedit belongs to `keep`. */
+    static bool restoreComposition(ecs::World& world, ecs::Entity keep, TextRuntime& runtime,
+                                   std::string& error);
+    static bool updateComposition(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
+                                  std::string_view utf8, std::string& error);
 };
 
 /* Applies typed UTF-8 to the canvas' focused Input that carries Text. Backspace
@@ -58,6 +63,13 @@ struct TextRuntimeAccess
    focused text field is a no-op. */
 [[nodiscard]] bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
                                    std::string_view utf8, bool backspace, std::string& error);
+
+/* Shows an IME preedit in the focused field without committing it: the field
+   renders its committed text followed by `utf8`. An empty preedit restores the
+   committed text; changing focus first restores the field that held it. */
+[[nodiscard]] bool updateTextComposition(ecs::World& world, ecs::Entity canvas,
+                                         TextRuntime& runtime, std::string_view utf8,
+                                         std::string& error);
 
 } // namespace resonate::ui
 

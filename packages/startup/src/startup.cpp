@@ -107,6 +107,18 @@ struct UiFrame
                     frame->input->key_down(frame->input->self, RESONATE_KEY_RSHIFT) != 0;
                 ui::focusNext(world, frame->canvas, backwards);
             }
+            if (frame->text != nullptr && frame->input->text_editing != nullptr)
+            {
+                char editing[256] = {};
+                const std::uint32_t editing_length = frame->input->text_editing(
+                    frame->input->self, editing, sizeof(editing), nullptr);
+                std::string error;
+                if (!ui::updateTextComposition(world, frame->canvas, *frame->text,
+                                               std::string_view(editing, editing_length), error))
+                {
+                    std::fprintf(stderr, "resonate: ui text composition: %s\n", error.c_str());
+                }
+            }
             if (frame->text != nullptr)
             {
                 char typed[256] = {};

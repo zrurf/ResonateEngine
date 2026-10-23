@@ -23,6 +23,8 @@ struct InputState
     float delta[2] = {};
     bool mouse[RESONATE_MOUSE_BUTTON_COUNT] = {};
     std::string text;
+    std::string editing;
+    int32_t editing_cursor = -1;
 };
 
 struct WindowState

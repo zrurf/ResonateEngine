@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include <resonate/ecs/query.h>
@@ -20,6 +21,21 @@ float authoredWidth(const RectTransform* rect)
     return rect != nullptr && rect->width > 0.0F ? rect->width : 0.0F;
 }
 
+std::string readContent(ecs::World& world, ecs::Entity entity)
+{
+    std::string content;
+    const Text* text = world.get<Text>(entity);
+    if (text != nullptr && world.alive(text->content))
+    {
+        const auto* bytes = static_cast<const char*>(world.blobData(text->content));
+        if (bytes != nullptr)
+        {
+            content.assign(bytes, world.blobSize(text->content));
+        }
+    }
+    return content;
+}
+
 } // namespace
 
 struct TextRuntime::Impl
@@ -31,6 +47,11 @@ struct TextRuntime::Impl
     ecs::World* bound_world = nullptr;
     ecs::Query glyphs;
     bool query_ready = false;
+    /* The field showing a preedit, the committed text to restore and the
+       preedit currently drawn, so an unchanged poll does no work. */
+    ecs::Entity composition_entity{};
+    std::string composition_base;
+    std::string composition_preedit;
 
     explicit Impl(std::vector<std::shared_ptr<const text::Font>> input)
         : fonts(std::move(input)), atlas(fonts)
@@ -56,11 +77,73 @@ void TextRuntimeAccess::attach(TextRuntime& runtime, ecs::Entity canvas)
     runtime.impl_->revision = 1U;
     runtime.impl_->query_ready = false;
     runtime.impl_->bound_world = nullptr;
+    runtime.impl_->composition_entity = ecs::Entity{};
+    runtime.impl_->composition_base.clear();
+    runtime.impl_->composition_preedit.clear();
 }
 
 std::uint32_t TextRuntimeAccess::revision(const TextRuntime& runtime)
 {
     return runtime.impl_->revision;
+}
+
+bool TextRuntimeAccess::restoreComposition(ecs::World& world, ecs::Entity keep,
+                                           TextRuntime& runtime, std::string& error)
+{
+    TextRuntime::Impl& impl = *runtime.impl_;
+    if (!impl.composition_entity.valid() || impl.composition_entity == keep)
+    {
+        return true;
+    }
+    const ecs::Entity entity = impl.composition_entity;
+    const std::string base = std::move(impl.composition_base);
+    impl.composition_entity = ecs::Entity{};
+    impl.composition_base.clear();
+    impl.composition_preedit.clear();
+    if (!world.alive(entity) || world.get<Text>(entity) == nullptr)
+    {
+        return true;
+    }
+    return runtime.setText(world, impl.canvas, entity, base, error);
+}
+
+bool TextRuntimeAccess::updateComposition(ecs::World& world, ecs::Entity canvas,
+                                          TextRuntime& runtime, std::string_view utf8,
+                                          std::string& error)
+{
+    TextRuntime::Impl& impl = *runtime.impl_;
+    if (canvas != impl.canvas)
+    {
+        error = "the runtime belongs to another canvas";
+        return false;
+    }
+    const PointerState* pointer = world.get<PointerState>(canvas);
+    const ecs::Entity focused = pointer != nullptr ? pointer->focused : ecs::Entity{};
+    if (utf8.empty())
+    {
+        return restoreComposition(world, ecs::Entity{}, runtime, error);
+    }
+    if (!restoreComposition(world, focused, runtime, error))
+    {
+        return false;
+    }
+    if (!focused.valid() || world.get<Text>(focused) == nullptr)
+    {
+        return true;
+    }
+    if (impl.composition_entity == focused && impl.composition_preedit == utf8)
+    {
+        return true;
+    }
+    if (impl.composition_entity != focused)
+    {
+        impl.composition_base = readContent(world, focused);
+        impl.composition_entity = focused;
+    }
+    impl.composition_preedit.assign(utf8);
+    std::string preview = impl.composition_base;
+    preview.append(utf8);
+    return runtime.setText(world, canvas, focused, preview, error);
 }
 
 bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity entity,
@@ -258,26 +341,21 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
 bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
                      std::string_view utf8, bool backspace, std::string& error)
 {
+    if (!TextRuntimeAccess::restoreComposition(world, ecs::Entity{}, runtime, error))
+    {
+        return false;
+    }
     const PointerState* pointer = world.get<PointerState>(canvas);
     if (pointer == nullptr || !pointer->focused.valid())
     {
         return true;
     }
-    const Text* text = world.get<Text>(pointer->focused);
-    if (text == nullptr)
+    if (world.get<Text>(pointer->focused) == nullptr)
     {
         return true;
     }
 
-    std::string content;
-    if (world.alive(text->content))
-    {
-        const auto* bytes = static_cast<const char*>(world.blobData(text->content));
-        if (bytes != nullptr)
-        {
-            content.assign(bytes, world.blobSize(text->content));
-        }
-    }
+    std::string content = readContent(world, pointer->focused);
     if (backspace && !content.empty())
     {
         std::size_t index = content.size() - 1U;
@@ -289,6 +367,12 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
     }
     content.append(utf8);
     return runtime.setText(world, canvas, pointer->focused, content, error);
+}
+
+bool updateTextComposition(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
+                           std::string_view utf8, std::string& error)
+{
+    return TextRuntimeAccess::updateComposition(world, canvas, runtime, utf8, error);
 }
 
 } // namespace resonate::ui

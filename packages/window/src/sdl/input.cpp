@@ -55,6 +55,23 @@ uint32_t textInput(void* self, char* out_text, uint32_t capacity)
     return static_cast<uint32_t>(count);
 }
 
+uint32_t textEditing(void* self, char* out_text, uint32_t capacity, int32_t* out_cursor)
+{
+    auto* state = static_cast<WindowState*>(self);
+    if (state == nullptr || out_text == nullptr || capacity == 0U)
+    {
+        return 0U;
+    }
+    if (out_cursor != nullptr)
+    {
+        *out_cursor = state->input.editing.empty() ? -1 : state->input.editing_cursor;
+    }
+    const std::size_t count =
+        state->input.editing.size() < capacity ? state->input.editing.size() : capacity;
+    std::memcpy(out_text, state->input.editing.data(), count);
+    return static_cast<uint32_t>(count);
+}
+
 void pointerPosition(void* self, ResonateVec2* out_position)
 {
     const auto* state = static_cast<const WindowState*>(self);
@@ -183,6 +200,7 @@ ResonateInput g_input = {
     &gamepadButtonDown,
     &gamepadAxis,
     &textInput,
+    &textEditing,
 };
 
 } // namespace

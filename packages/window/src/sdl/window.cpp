@@ -205,6 +205,15 @@ void pumpEvents(void* self)
                 {
                     state->input.text.append(event.text.text);
                 }
+                /* A commit ends the preedit, whether or not the IME follows it
+                   with an empty editing event. */
+                state->input.editing.clear();
+                state->input.editing_cursor = -1;
+                break;
+            case SDL_EVENT_TEXT_EDITING:
+                state->input.editing = event.edit.text != nullptr ? event.edit.text : "";
+                state->input.editing_cursor =
+                    state->input.editing.empty() ? -1 : event.edit.start;
                 break;
             case SDL_EVENT_GAMEPAD_ADDED:
                 openGamepad(*state, event.gdevice.which);

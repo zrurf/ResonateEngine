@@ -167,3 +167,44 @@ TEST_CASE("typed text reaches the input capability as UTF-8", "[window]")
 
     window.destroy(window.self);
 }
+
+TEST_CASE("an IME preedit reaches the input capability and commits", "[window]")
+{
+    const DummyVideo dummy;
+
+    ResonateWindow& window = resonate::window::windowCapability();
+    REQUIRE(window.self != nullptr);
+    REQUIRE(window.create(window.self, "Resonate test", 320, 200) == RESONATE_OK);
+    const ResonateInput& input = resonate::window::inputCapability();
+    REQUIRE(input.text_editing != nullptr);
+
+    SDL_Event editing = {};
+    editing.type = SDL_EVENT_TEXT_EDITING;
+    editing.edit.text = const_cast<char*>("ni");
+    editing.edit.start = 2;
+    editing.edit.length = 2;
+    REQUIRE(SDL_PushEvent(&editing) == true);
+    window.pump_events(window.self);
+
+    char text[16] = {};
+    int32_t cursor = -1;
+    REQUIRE(input.text_editing(input.self, text, sizeof(text), &cursor) == 2U);
+    CHECK(std::string(text, 2U) == "ni");
+    CHECK(cursor == 2);
+    /* A preedit is a snapshot, not a queue: reading it again sees it again. */
+    REQUIRE(input.text_editing(input.self, text, sizeof(text), &cursor) == 2U);
+
+    SDL_Event commit = {};
+    commit.type = SDL_EVENT_TEXT_INPUT;
+    commit.text.text = const_cast<char*>("\xE4\xBD\xA0");
+    REQUIRE(SDL_PushEvent(&commit) == true);
+    window.pump_events(window.self);
+
+    REQUIRE(input.text_editing(input.self, text, sizeof(text), &cursor) == 0U);
+    CHECK(cursor == -1);
+    char typed[16] = {};
+    REQUIRE(input.text_input(input.self, typed, sizeof(typed)) == 3U);
+    CHECK(std::string(typed, 3U) == "\xE4\xBD\xA0");
+
+    window.destroy(window.self);
+}

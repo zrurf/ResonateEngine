@@ -372,6 +372,13 @@ typedef struct ResonateInput
        bytes and drops the copied prefix; answers the bytes written, with no
        terminator. An older provider stops before this and means no text. */
     uint32_t (*text_input)(void* self, char* out_text, uint32_t capacity);
+
+    /* Tail: the IME preedit for the current composition, not consumed. Copies
+       up to `capacity` bytes and answers the bytes written; `out_cursor`
+       receives the caret's byte offset in the preedit, or -1 when unknown. A
+       provider without this answers no preedit. */
+    uint32_t (*text_editing)(void* self, char* out_text, uint32_t capacity,
+                             int32_t* out_cursor);
 } ResonateInput;
 
 #ifdef __cplusplus

@@ -427,3 +427,65 @@ TEST_CASE("ui text: typing edits the focused field", "[ui][text]")
     REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "Z", false, error));
     CHECK(content() == "A");
 }
+
+TEST_CASE("ui text: an IME preedit previews and then commits", "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="field" text="A" font_size="20" width="120" height="32" color="0 0 0 0">
+      <Input/>
+    </Label>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+    const auto children = resonate::hierarchy::children(fixture.world, root);
+    REQUIRE(children.size() == 1U);
+    const Entity field = children[0];
+    const ComputedRect* rect = fixture.world.get<ComputedRect>(field);
+    REQUIRE(rect != nullptr);
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, rect->x + 1.0F, rect->y + 1.0F,
+                                      true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, rect->x + 1.0F, rect->y + 1.0F,
+                                      false));
+    REQUIRE(fixture.world.get<PointerState>(root)->focused == field);
+
+    const auto content = [&]
+    {
+        const Text* component = fixture.world.get<Text>(field);
+        REQUIRE(component != nullptr);
+        REQUIRE(fixture.world.alive(component->content));
+        return std::string(static_cast<const char*>(fixture.world.blobData(component->content)),
+                           fixture.world.blobSize(component->content));
+    };
+
+    std::string error;
+    REQUIRE(resonate::ui::updateTextComposition(fixture.world, root, runtime, "ni", error));
+    CHECK(error.empty());
+    CHECK(content() == "Ani");
+
+    /* An unchanged preedit poll does not reshape or touch the atlas. */
+    const TextAtlasPage* page = fixture.world.get<TextAtlasPage>(root);
+    REQUIRE(page != nullptr);
+    const std::uint32_t revision = page->revision;
+    REQUIRE(resonate::ui::updateTextComposition(fixture.world, root, runtime, "ni", error));
+    CHECK(fixture.world.get<TextAtlasPage>(root)->revision == revision);
+
+    /* The commit replaces the preview rather than appending to it. */
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\xE4\xBD\xA0", false,
+                                          error));
+    CHECK(content() == "A\xE4\xBD\xA0");
+
+    REQUIRE(resonate::ui::updateTextComposition(fixture.world, root, runtime, "hao", error));
+    CHECK(content() == "A\xE4\xBD\xA0hao");
+    REQUIRE(resonate::ui::updateTextComposition(fixture.world, root, runtime, "", error));
+    CHECK(content() == "A\xE4\xBD\xA0");
+}
