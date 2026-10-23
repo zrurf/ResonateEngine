@@ -248,6 +248,20 @@ task("slang")
         description = "Compile the modules' Slang shaders to SPIR-V and reflection JSON.",
     }
 
+task("tgfx")
+    set_category("plugin")
+    on_run(function ()
+        local script = path.join(os.projectdir(), "scripts", "tgfx.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script})
+        if output ~= nil then
+            print(tidy_check_output(output))
+        end
+    end)
+    set_menu {
+        usage = "xmake tgfx",
+        description = "Fetch and build tgfx with its Vulkan backend into build/tgfx.",
+    }
+
 -- The deliberate act that accepts a change to a versioned type: rewrites each
 -- module's schemas.lock.json from what the schemas say now. A build only checks
 -- the lock, so a version bump or a removed type fails until it is recorded here.
