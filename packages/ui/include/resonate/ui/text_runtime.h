@@ -53,6 +53,12 @@ struct TextRuntimeAccess
     static std::uint32_t revision(const TextRuntime& runtime);
 };
 
+/* Applies typed UTF-8 to the canvas' focused Input that carries Text. Backspace
+   removes one UTF-8 code point first, then `utf8` is appended. A canvas with no
+   focused text field is a no-op. */
+[[nodiscard]] bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
+                                   std::string_view utf8, bool backspace, std::string& error);
+
 } // namespace resonate::ui
 
 #endif /* RESONATE_UI_TEXT_RUNTIME_H */

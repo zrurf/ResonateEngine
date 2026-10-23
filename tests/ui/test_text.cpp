@@ -15,6 +15,7 @@
 #include <resonate/ui/display_list.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/document_schema.h>
+#include <resonate/ui/input.h>
 #include <resonate/ui/layout.h>
 #include <resonate/ui/text_runtime.h>
 
@@ -25,7 +26,9 @@ namespace
 
 using resonate::ecs::Entity;
 using resonate::ecs::World;
+using resonate::ui::ComputedRect;
 using resonate::ui::Glyphs;
+using resonate::ui::PointerState;
 using resonate::ui::Text;
 using resonate::ui::TextAtlasPage;
 
@@ -332,4 +335,78 @@ TEST_CASE("ui text: a TextRuntime replaces a label's text after instantiation", 
     page = fixture.world.get<TextAtlasPage>(root);
     REQUIRE(page != nullptr);
     CHECK(page->revision == revision + 1U);
+}
+
+TEST_CASE("ui text: typing edits the focused field", "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="field" text="A" font_size="20" width="120" height="32" color="0 0 0 0">
+      <Input/>
+    </Label>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+    const auto children = resonate::hierarchy::children(fixture.world, root);
+    REQUIRE(children.size() == 1U);
+    const Entity field = children[0];
+    const ComputedRect* rect = fixture.world.get<ComputedRect>(field);
+    REQUIRE(rect != nullptr);
+    const float x = rect->x + rect->width * 0.5F;
+    const float y = rect->y + rect->height * 0.5F;
+
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, x, y, false));
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, x, y, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, x, y, false));
+    const PointerState* pointer = fixture.world.get<PointerState>(root);
+    REQUIRE(pointer != nullptr);
+    CHECK(pointer->focused == field);
+
+    const auto content = [&]
+    {
+        const Text* component = fixture.world.get<Text>(field);
+        REQUIRE(component != nullptr);
+        REQUIRE(fixture.world.alive(component->content));
+        return std::string(static_cast<const char*>(fixture.world.blobData(component->content)),
+                           fixture.world.blobSize(component->content));
+    };
+    const TextAtlasPage* page = fixture.world.get<TextAtlasPage>(root);
+    REQUIRE(page != nullptr);
+    std::uint32_t revision = page->revision;
+
+    std::string error;
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "B", false, error));
+    CHECK(error.empty());
+    CHECK(content() == "AB");
+    page = fixture.world.get<TextAtlasPage>(root);
+    REQUIRE(page != nullptr);
+    CHECK(page->revision == revision + 1U);
+    revision = page->revision;
+
+    /* Backspace erases a whole code point, not one byte. */
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\xE4\xBD\xA0", false,
+                                          error));
+    CHECK(content() == "AB\xE4\xBD\xA0");
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, error));
+    CHECK(content() == "AB");
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, error));
+    CHECK(content() == "A");
+
+    /* A press outside the field drops focus and typing becomes a no-op. */
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, -100.0F, -100.0F, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, -100.0F, -100.0F, false));
+    pointer = fixture.world.get<PointerState>(root);
+    REQUIRE(pointer != nullptr);
+    CHECK_FALSE(pointer->focused.valid());
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "Z", false, error));
+    CHECK(content() == "A");
 }

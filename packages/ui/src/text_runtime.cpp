@@ -255,4 +255,40 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
     return true;
 }
 
+bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
+                     std::string_view utf8, bool backspace, std::string& error)
+{
+    const PointerState* pointer = world.get<PointerState>(canvas);
+    if (pointer == nullptr || !pointer->focused.valid())
+    {
+        return true;
+    }
+    const Text* text = world.get<Text>(pointer->focused);
+    if (text == nullptr)
+    {
+        return true;
+    }
+
+    std::string content;
+    if (world.alive(text->content))
+    {
+        const auto* bytes = static_cast<const char*>(world.blobData(text->content));
+        if (bytes != nullptr)
+        {
+            content.assign(bytes, world.blobSize(text->content));
+        }
+    }
+    if (backspace && !content.empty())
+    {
+        std::size_t index = content.size() - 1U;
+        while (index > 0U && (static_cast<unsigned char>(content[index]) & 0xC0U) == 0x80U)
+        {
+            --index;
+        }
+        content.erase(index);
+    }
+    content.append(utf8);
+    return runtime.setText(world, canvas, pointer->focused, content, error);
+}
+
 } // namespace resonate::ui

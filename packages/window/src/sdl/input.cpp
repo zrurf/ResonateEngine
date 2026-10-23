@@ -41,6 +41,20 @@ int32_t mouseDown(void* self, ResonateMouseButton button)
     return state->input.mouse[button] ? 1 : 0;
 }
 
+uint32_t textInput(void* self, char* out_text, uint32_t capacity)
+{
+    auto* state = static_cast<WindowState*>(self);
+    if (state == nullptr || out_text == nullptr || capacity == 0U)
+    {
+        return 0U;
+    }
+    const std::size_t count =
+        state->input.text.size() < capacity ? state->input.text.size() : capacity;
+    std::memcpy(out_text, state->input.text.data(), count);
+    state->input.text.erase(0U, count);
+    return static_cast<uint32_t>(count);
+}
+
 void pointerPosition(void* self, ResonateVec2* out_position)
 {
     const auto* state = static_cast<const WindowState*>(self);
@@ -168,6 +182,7 @@ ResonateInput g_input = {
     &gamepadCount,
     &gamepadButtonDown,
     &gamepadAxis,
+    &textInput,
 };
 
 } // namespace

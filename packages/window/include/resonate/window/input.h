@@ -367,6 +367,11 @@ typedef struct ResonateInput
     int32_t (*gamepad_button_down)(void* self, int32_t pad, ResonateGamepadButton button);
     /* -1..1 for sticks, 0..1 for triggers. */
     float (*gamepad_axis)(void* self, int32_t pad, ResonateGamepadAxis axis);
+
+    /* Tail: UTF-8 text typed since the previous call. Copies up to `capacity`
+       bytes and drops the copied prefix; answers the bytes written, with no
+       terminator. An older provider stops before this and means no text. */
+    uint32_t (*text_input)(void* self, char* out_text, uint32_t capacity);
 } ResonateInput;
 
 #ifdef __cplusplus

@@ -198,11 +198,12 @@
       "version": 1,
       "shape": [
         "component PointerState version 1",
-        "  size 28 align 4",
+        "  size 36 align 4",
         "  field hover entity @0 size 8",
         "  field press entity @8 size 8",
         "  field activated entity @16 size 8",
-        "  field down bool @24 size 1"
+        "  field focused entity @24 size 8",
+        "  field down bool @32 size 1"
       ]
     },
     {

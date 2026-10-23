@@ -40,6 +40,10 @@
       <Label key="bar.ammo" name="Ammo" class="bar ammo" height="16"
              text="弹药 90" font_size="13" text_color="0.20 0.08 0.02 1"
              bind-width="DataContext.ammo"/>
+      <Label key="entry" name="Entry" text="" font_size="16" width="200" height="24">
+        <Background color="0.10 0.12 0.16 1"/>
+        <Input/>
+      </Label>
       <Button key="action" name="Action" class="action" width="140" height="36">
         <Label key="action-label" text="开始游戏" font_size="16" align="Center"
                x="10" y="7" width="120" height="24" color="0 0 0 0"/>

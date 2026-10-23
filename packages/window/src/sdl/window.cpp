@@ -49,6 +49,7 @@ ResonateStatus create(void* self, const char* title, uint32_t width, uint32_t he
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         return RESONATE_E_INTERNAL;
     }
+    SDL_StartTextInput(state->handle);
 
     /* Gamepads are optional: a machine without controller support still runs
        with keyboard and mouse. Pads already connected when the window opens are
@@ -199,6 +200,12 @@ void pumpEvents(void* self)
                 state->height = static_cast<uint32_t>(pixels_h);
                 break;
             }
+            case SDL_EVENT_TEXT_INPUT:
+                if (event.text.text != nullptr)
+                {
+                    state->input.text.append(event.text.text);
+                }
+                break;
             case SDL_EVENT_GAMEPAD_ADDED:
                 openGamepad(*state, event.gdevice.which);
                 break;

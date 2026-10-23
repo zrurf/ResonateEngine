@@ -2,6 +2,7 @@
 #define RESONATE_WINDOW_SRC_INTERNAL_H
 
 #include <cstdint>
+#include <string>
 
 #include <SDL3/SDL.h>
 
@@ -21,6 +22,7 @@ struct InputState
     float pointer[2] = {};
     float delta[2] = {};
     bool mouse[RESONATE_MOUSE_BUTTON_COUNT] = {};
+    std::string text;
 };
 
 struct WindowState

@@ -173,6 +173,7 @@
     <field name="hover" type="entity"/>
     <field name="press" type="entity"/>
     <field name="activated" type="entity"/>
+    <field name="focused" type="entity"/>
     <field name="down" type="bool"/>
   </component>
 

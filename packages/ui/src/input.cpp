@@ -91,6 +91,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
 
     if (down && !pointer->down)
     {
+        pointer->focused = hover;
         pointer->down = true;
         pointer->press = hover;
         world.markChanged<PointerState>(canvas);
