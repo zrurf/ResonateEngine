@@ -141,6 +141,107 @@ pub extern "C" fn resonate_text_font_glyph_index(font: *const ResonateTextFont, 
     result.ok().flatten().unwrap_or(0)
 }
 
+// Squared Euclidean distance transform of a binary mask (Felzenszwalb).
+// The seed value is 1; every output pixel gets the squared distance to the
+// nearest seed.
+fn edt_1d(f: &[f32], d: &mut [f32])
+{
+    let n = f.len();
+    if n == 0
+    {
+        return;
+    }
+    let mut v = vec![0usize; n];
+    let mut z = vec![0.0f32; n + 1];
+    let mut k = 0usize;
+    v[0] = 0;
+    z[0] = f32::NEG_INFINITY;
+    z[1] = f32::INFINITY;
+    for q in 1..n
+    {
+        let mut s = ((f[q] + (q * q) as f32) - (f[v[k]] + (v[k] * v[k]) as f32))
+            / (2.0 * q as f32 - 2.0 * v[k] as f32);
+        while s <= z[k]
+        {
+            k -= 1;
+            s = ((f[q] + (q * q) as f32) - (f[v[k]] + (v[k] * v[k]) as f32))
+                / (2.0 * q as f32 - 2.0 * v[k] as f32);
+        }
+        k += 1;
+        v[k] = q;
+        z[k] = s;
+        z[k + 1] = f32::INFINITY;
+    }
+    k = 0;
+    for q in 0..n
+    {
+        while z[k + 1] < q as f32
+        {
+            k += 1;
+        }
+        let delta = q as f32 - v[k] as f32;
+        d[q] = delta * delta + f[v[k]];
+    }
+}
+
+fn distance_to_seed(mask: &[u8], width: usize, height: usize) -> Vec<f32>
+{
+    let mut f = vec![0.0f32; width * height];
+    for (index, value) in mask.iter().enumerate()
+    {
+        f[index] = if *value != 0 { 0.0 } else { 1.0e20 };
+    }
+    let mut scratch = vec![0.0f32; width.max(height)];
+    let mut column = vec![0.0f32; height];
+    for x in 0..width
+    {
+        for y in 0..height
+        {
+            column[y] = f[y * width + x];
+        }
+        edt_1d(&column, &mut scratch[..height]);
+        for y in 0..height
+        {
+            f[y * width + x] = scratch[y];
+        }
+    }
+    let mut result = vec![0.0f32; width * height];
+    for y in 0..height
+    {
+        let row = &f[y * width..(y + 1) * width];
+        edt_1d(row, &mut result[y * width..(y + 1) * width]);
+    }
+    for value in &mut result
+    {
+        *value = value.sqrt();
+    }
+    result
+}
+
+fn coverage_to_sdf(coverage: &[u8], width: usize, height: usize) -> Vec<u8>
+{
+    const SPREAD: f32 = 4.0;
+    let inside: Vec<u8> = coverage.iter().map(|value| u8::from(*value >= 128)).collect();
+    let outside: Vec<u8> = inside.iter().map(|value| 1 - *value).collect();
+    let to_inside = distance_to_seed(&inside, width, height);
+    let to_outside = distance_to_seed(&outside, width, height);
+    let mut sdf = vec![0u8; coverage.len()];
+    for index in 0..coverage.len()
+    {
+        let signed = if inside[index] != 0
+        {
+            to_outside[index]
+        }
+        else
+        {
+            -to_inside[index]
+        };
+        let encoded = (0.5 + signed / (2.0 * SPREAD)).clamp(0.0, 1.0);
+        sdf[index] = (encoded * 255.0 + 0.5) as u8;
+    }
+    sdf
+}
+
 #[no_mangle]
 pub extern "C" fn resonate_text_glyph_raster(font: *const ResonateTextFont, glyph_id: u32, size: f32,
                                              out: *mut ResonateTextBitmap) -> i32
@@ -177,7 +278,8 @@ pub extern "C" fn resonate_text_glyph_raster(font: *const ResonateTextFont, glyp
         let flip = Transform::new(1.0, 0.0, 0.0, -1.0, 0.0, 0.0);
         let placed: Vec<Command> = pen.commands.iter().map(|c| c.transform(&flip)).collect();
         let bounds = zeno::bounds(&placed, Fill::NonZero, None);
-        let pad = 1.0f32;
+        // Room for the signed-distance spread on every side.
+        let pad = 5.0f32;
         let left = bounds.min.x.floor();
         let top = bounds.min.y.floor();
         let width = (bounds.max.x.ceil() - left + 2.0 * pad).max(0.0) as u32;
@@ -195,7 +297,8 @@ pub extern "C" fn resonate_text_glyph_raster(font: *const ResonateTextFont, glyp
         let translated: Vec<Command> = placed.iter().map(|c| c.transform(&translation)).collect();
         let mut mask = Mask::new(&translated);
         mask.size(width, height).origin(Origin::TopLeft);
-        let (pixels, _) = mask.render();
+        let (coverage, _) = mask.render();
+        let pixels = coverage_to_sdf(&coverage, width as usize, height as usize);
 
         let bitmap = pixels.into_boxed_slice();
         let pointer = Box::into_raw(bitmap) as *mut u8;

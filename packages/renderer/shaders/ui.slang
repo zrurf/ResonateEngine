@@ -8,6 +8,7 @@ struct UiPush
     float2 viewport;
     float2 pad;
     uint texture_slot;
+    uint font_slot;
 };
 
 [[vk::push_constant]] UiPush push;
@@ -48,5 +49,13 @@ float4 uiFragment(VertexOutput input) : SV_Target
     {
         return input.color;
     }
-    return input.color * image_table[push.texture_slot].Sample(input.uv);
+    float4 sampled = image_table[push.texture_slot].Sample(input.uv);
+    if (push.texture_slot == push.font_slot)
+    {
+        // The font atlas is a signed distance field; rebuild the edge from it.
+        float w = max(fwidth(sampled.a), 0.001);
+        float coverage = smoothstep(0.5 - w, 0.5 + w, sampled.a);
+        return float4(input.color.rgb, input.color.a * coverage);
+    }
+    return input.color * sampled;
 }

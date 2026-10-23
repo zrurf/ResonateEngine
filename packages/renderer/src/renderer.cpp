@@ -156,6 +156,7 @@ struct UiConstants
     float viewport_height = 1.0F;
     float pad[2] = {};
     std::uint32_t texture_slot = 0U;
+    std::uint32_t font_slot = 0U;
 };
 
 /* A contiguous vertex range sharing one sampled texture. */
@@ -1669,6 +1670,7 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
     ui_batches.clear();
     ui_constants.viewport_width = static_cast<float>(active->target_width);
     ui_constants.viewport_height = static_cast<float>(active->target_height);
+    ui_constants.font_slot = uiTextureSlot(ui::kTextureFont);
     if (!active->ui.empty())
     {
         const auto quads = active->ui.quads();

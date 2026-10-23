@@ -57,12 +57,16 @@ TEST_CASE("text: a glyph rasterizes into a placement bitmap", "[text]")
     CHECK(glyph.bearing_y > 0);
     CHECK(glyph.advance > 0.0F);
     REQUIRE(glyph.coverage.size() == static_cast<std::size_t>(glyph.width) * glyph.height);
-    std::uint32_t lit = 0;
+    std::uint32_t low = 0;
+    std::uint32_t high = 0;
     for (const std::uint8_t value : glyph.coverage)
     {
-        lit += value > 0U ? 1U : 0U;
+        low += value < 64U ? 1U : 0U;
+        high += value > 160U ? 1U : 0U;
     }
-    CHECK(lit > 10U);
+    /* A signed distance field spans both sides of the edge. */
+    CHECK(low > 10U);
+    CHECK(high > 10U);
 
     /* A space has an advance but no outline. */
     resonate::text::GlyphBitmap space;

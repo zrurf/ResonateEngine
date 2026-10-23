@@ -218,7 +218,7 @@ TEST_CASE("ui text: wrapping and alignment lay glyphs out in lines", "[ui][text]
     REQUIRE(ys.size() == 3U);
     std::sort(ys.begin(), ys.end());
     CHECK(ys[2] > ys[0] + 10.0F);
-    CHECK(minimum_x > 0.0F);
+    CHECK(minimum_x > -6.0F);
 }
 
 TEST_CASE("ui text: CJK wraps between glyphs", "[ui][text]")
