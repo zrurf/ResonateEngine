@@ -5,6 +5,8 @@
 #include <cstring>
 #include <vector>
 
+#include <xxhash.h>
+
 #ifdef RESONATE_PLATFORM_ANDROID
 #    include <android/native_window.h>
 #endif
@@ -343,6 +345,29 @@ std::string Context::pipelineCachePath() const
     return std::string(directory != nullptr ? directory : ".") + "/resonate.pipeline-cache";
 }
 
+namespace
+{
+
+/* The cache file wraps the driver blob in a digest container: a process kill
+   mid-save must not hand truncated bytes to vkCreatePipelineCache. */
+constexpr uint32_t kCacheMagic = 0x43505652U; /* 'RVPC' little-endian */
+constexpr uint32_t kCacheVersion = 1U;
+constexpr std::size_t kCacheHeaderSize = 4U + 4U + 8U + 16U;
+
+#pragma pack(push, 1)
+struct CacheHeader
+{
+    uint32_t magic;
+    uint32_t version;
+    uint64_t payload_size;
+    XXH128_hash_t digest;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(CacheHeader) == kCacheHeaderSize, "the cache header is tightly packed");
+
+} // namespace
+
 void Context::loadPipelineCache()
 {
     std::vector<char> data;
@@ -351,7 +376,7 @@ void Context::loadPipelineCache()
         RESONATE_PAL_OK)
     {
         uint64_t size = 0;
-        if (resonate_pal_io_size(&file, &size) == RESONATE_PAL_OK && size > 0U &&
+        if (resonate_pal_io_size(&file, &size) == RESONATE_PAL_OK && size > kCacheHeaderSize &&
             size <= 64U * 1024U * 1024U)
         {
             data.resize(static_cast<std::size_t>(size));
@@ -368,18 +393,38 @@ void Context::loadPipelineCache()
         resonate_pal_io_close_file(&file);
     }
 
+    std::vector<char> payload;
+    if (!data.empty())
+    {
+        CacheHeader header{};
+        std::memcpy(&header, data.data(), sizeof(header));
+        const std::size_t payload_size = data.size() - sizeof(header);
+        if (header.magic == kCacheMagic && header.version == kCacheVersion &&
+            header.payload_size == payload_size &&
+            XXH128_isEqual(XXH3_128bits(data.data() + sizeof(header), payload_size),
+                           header.digest))
+        {
+            payload.assign(data.begin() + static_cast<std::ptrdiff_t>(sizeof(header)),
+                           data.end());
+        }
+        else
+        {
+            std::fprintf(stderr, "render-vulkan: pipeline cache discarded (integrity)\n");
+        }
+    }
+
     VkPipelineCacheCreateInfo cache{};
     cache.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-    cache.initialDataSize = data.size();
-    cache.pInitialData = data.empty() ? nullptr : data.data();
+    cache.initialDataSize = payload.size();
+    cache.pInitialData = payload.empty() ? nullptr : payload.data();
     if (vkCreatePipelineCache(device_, &cache, nullptr, &pipeline_cache_) != VK_SUCCESS)
     {
         pipeline_cache_ = VK_NULL_HANDLE;
         return;
     }
-    if (!data.empty())
+    if (!payload.empty())
     {
-        std::fprintf(stderr, "render-vulkan: pipeline cache %zu bytes loaded\n", data.size());
+        std::fprintf(stderr, "render-vulkan: pipeline cache %zu bytes loaded\n", payload.size());
     }
 }
 
@@ -401,6 +446,12 @@ void Context::savePipelineCache()
         return;
     }
 
+    CacheHeader header{};
+    header.magic = kCacheMagic;
+    header.version = kCacheVersion;
+    header.payload_size = data.size();
+    header.digest = XXH3_128bits(data.data(), data.size());
+
     ResonateFileHandle file{};
     if (resonate_pal_io_open_file(&file, pipelineCachePath().c_str(),
                                   RESONATE_FILE_WRITE | RESONATE_FILE_CREATE |
@@ -409,7 +460,8 @@ void Context::savePipelineCache()
         return;
     }
     uint64_t written = 0;
-    resonate_pal_io_write(&file, data.data(), size, &written);
+    resonate_pal_io_write(&file, &header, sizeof(header), &written);
+    resonate_pal_io_write(&file, data.data(), data.size(), &written);
     resonate_pal_io_close_file(&file);
 }
 
