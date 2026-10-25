@@ -229,6 +229,19 @@ struct FrameSnapshot
 
 constexpr ResonateVec4 kClearColor{0.05F, 0.06F, 0.09F, 1.0F};
 
+/* FNV-1a over a byte range: cheap enough to run every frame and exact enough to
+   tell "the UI did not change" from "it did". */
+std::uint64_t layerHash(std::uint64_t hash, const void* data, std::size_t size)
+{
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    for (std::size_t index = 0U; index < size; ++index)
+    {
+        hash ^= bytes[index];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
 /* The shader directory sits above the executable, wherever the build tree put
    it; a shipped game keeps it beside the executable. A platform that carries
    them elsewhere — an APK's assets extracted by the host — names the directory
@@ -477,6 +490,9 @@ struct RenderSystem::Impl
     std::uint32_t ui_text_slot = 0U;
     std::uint32_t ui_text_width = 0U;
     std::uint32_t ui_text_height = 0U;
+    /* The content hash of the layer as last rasterized, and whether it is. */
+    std::uint64_t ui_layer_signature = 0U;
+    bool ui_layer_drawn = false;
     std::vector<std::uint8_t> ui_pixels;
     std::vector<ResonateTgfxRect> ui_draw_rects;
     std::vector<ResonateTgfxGlyph> ui_draw_glyphs;
@@ -1172,6 +1188,7 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         ui_text_height = height;
         ui_pixels.resize(static_cast<std::size_t>(width) * height * 4U);
         ui_target_attached = false;
+        ui_layer_drawn = false;
     }
     /* The compat tier (the Mali-G51 class) keeps the attach path: the readback
        bridge wedged the render thread there (the driver's readPixels and our
@@ -1191,6 +1208,34 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
                 complain("tgfx: the UI target was not attached; drawing into a readback surface");
             }
         }
+    }
+
+    /* The layer is only re-rasterized when its content or extent changed; a
+       static HUD costs one hash per frame instead of a full redraw. */
+    std::uint64_t signature = 1469598103934665603ULL;
+    signature = layerHash(signature, &width, sizeof(width));
+    signature = layerHash(signature, &height, sizeof(height));
+    signature = layerHash(signature, ui_draw_rects.data(),
+                          ui_draw_rects.size() * sizeof(ResonateTgfxRect));
+    signature = layerHash(signature, ui_draw_images.data(),
+                          ui_draw_images.size() * sizeof(ResonateTgfxImageDraw));
+    for (const ResonateTgfxText& text : ui_draw_texts)
+    {
+        signature = layerHash(signature, &text.size, sizeof(text.size));
+        signature = layerHash(signature, &text.r, sizeof(text.r));
+        signature = layerHash(signature, &text.g, sizeof(text.g));
+        signature = layerHash(signature, &text.b, sizeof(text.b));
+        signature = layerHash(signature, &text.a, sizeof(text.a));
+        if (text.glyphs != nullptr)
+        {
+            signature = layerHash(signature, text.glyphs,
+                                  text.glyph_count * sizeof(ResonateTgfxGlyph));
+        }
+    }
+    if (ui_layer_drawn && signature == ui_layer_signature)
+    {
+        ui_tgfx_ready = true;
+        return true;
     }
 
     /* The draw always runs: it clears the target even on an empty layer, so
@@ -1274,6 +1319,8 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
             }
         }
     }
+    ui_layer_signature = signature;
+    ui_layer_drawn = true;
     ui_tgfx_ready = true;
     return true;
 }
@@ -2337,12 +2384,25 @@ void RenderSystem::Impl::runPost(GraphExecuteContext& commands, ResourceId targe
     pass.struct_size = sizeof(pass);
     pass.color = target == canvas_resource ? ResonateRenderImage{} : commands.image(target);
     pass.clear_color = kClearColor;
-    if (device.begin_pass(device.self, &pass) != RESONATE_OK)
+    static const bool trace_failures = std::getenv("RESONATE_FRAME_TRACE") != nullptr;
+    const ResonateStatus begun = device.begin_pass(device.self, &pass);
+    if (begun != RESONATE_OK)
     {
+        if (trace_failures)
+        {
+            std::fprintf(stderr, "renderer: post pass begin failed (%d), pipeline %llu\n",
+                         static_cast<int>(begun), static_cast<unsigned long long>(pipeline.value));
+        }
         return;
     }
-    if (device.bind_pipeline(device.self, pipeline) != RESONATE_OK)
+    const ResonateStatus bound = device.bind_pipeline(device.self, pipeline);
+    if (bound != RESONATE_OK)
     {
+        if (trace_failures)
+        {
+            std::fprintf(stderr, "renderer: post pass bind failed (%d), pipeline %llu\n",
+                         static_cast<int>(bound), static_cast<unsigned long long>(pipeline.value));
+        }
         device.end_pass(device.self);
         return;
     }
@@ -2353,7 +2413,12 @@ void RenderSystem::Impl::runPost(GraphExecuteContext& commands, ResourceId targe
     post_constants.params = params;
     device.set_constants(device.self, &post_constants, sizeof(post_constants));
     device.bind_vertex_buffer(device.self, post_vertex_buffer, 0U);
-    device.draw(device.self, 3U, 1U);
+    const ResonateStatus drawn = device.draw(device.self, 3U, 1U);
+    if (drawn != RESONATE_OK && trace_failures)
+    {
+        std::fprintf(stderr, "renderer: post pass draw failed (%d), pipeline %llu\n",
+                     static_cast<int>(drawn), static_cast<unsigned long long>(pipeline.value));
+    }
     device.end_pass(device.self);
 }
 
