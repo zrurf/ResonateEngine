@@ -85,7 +85,20 @@ class DisplayList
         std::int32_t z = 0;
     };
 
-    bool paint(ecs::World& world, ecs::Entity entity, std::uint32_t depth);
+    /* The viewport a ScrollView imposes on its subtree. Nested clips intersect,
+       so a scrolled list inside a clipped panel stays inside both. */
+    struct Clip
+    {
+        float left = 0.0F;
+        float top = 0.0F;
+        float right = 0.0F;
+        float bottom = 0.0F;
+        bool active = false;
+    };
+
+    static Clip intersect(const Clip& outer, float x, float y, float width, float height);
+    static bool visible(const Clip& clip, float x, float y, float width, float height);
+    bool paint(ecs::World& world, ecs::Entity entity, std::uint32_t depth, const Clip& clip);
     friend bool buildDisplayList(ecs::World& world, ecs::Entity root, DisplayList& out);
 
     std::vector<Quad> quads_;

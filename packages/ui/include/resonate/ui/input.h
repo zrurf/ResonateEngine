@@ -25,6 +25,12 @@ namespace resonate::ui
    PointerState or no focusable widget answers false. */
 [[nodiscard]] bool focusNext(ecs::World& world, ecs::Entity canvas, bool backwards);
 
+/* Routes wheel detents (positive scrolls down) through the tree at the pointer
+   position. Handlers see a Wheel event first; a ScrollView on the path then
+   scrolls as its default action. Returns true when the wheel was consumed. */
+[[nodiscard]] bool scrollInput(ecs::World& world, ecs::Entity canvas, float x, float y,
+                               float detents);
+
 } // namespace resonate::ui
 
 #endif /* RESONATE_UI_INPUT_H */

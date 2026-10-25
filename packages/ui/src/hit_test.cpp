@@ -41,6 +41,15 @@ ecs::Entity hit(ecs::World& world, ecs::Entity entity, float x, float y, std::ui
         return ecs::Entity{};
     }
 
+    /* A ScrollView clips its subtree: a point outside its viewport reaches
+       neither the widget itself nor anything scrolled under it. */
+    const ComputedRect* entity_rect = world.get<ComputedRect>(entity);
+    if (entity_rect != nullptr && world.get<ScrollView>(entity) != nullptr &&
+        !contains(*entity_rect, x, y))
+    {
+        return ecs::Entity{};
+    }
+
     const auto children = hierarchy::children(world, entity);
     const std::size_t start = order.size();
     for (const ecs::Entity child : children)

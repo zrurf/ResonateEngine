@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include <resonate/hierarchy/tree.h>
+#include <resonate/ui/event.h>
 
 #include "resonate.ui/components.gen.h"
 
@@ -129,6 +130,11 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
     const Box content = contentBox(parent_box, group);
     const auto children = hierarchy::children(world, parent);
 
+    /* A ScrollView moves its subtree up by the scroll offset; the content box
+       keeps its size so children keep their authored coordinates. */
+    const ScrollView* view = world.get<ScrollView>(parent);
+    const float scroll = view != nullptr ? view->scroll : 0.0F;
+
     if (group == nullptr)
     {
         for (const ecs::Entity child : children)
@@ -138,7 +144,8 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
             {
                 return reportMissing(world, child, "RectTransform");
             }
-            const Box box = anchoredBox(world, child, content, *rect);
+            Box box = anchoredBox(world, child, content, *rect);
+            box.y -= scroll;
             if (!writeRect(world, child, box, scale) ||
                 !placeChildren(world, child, box, scale, depth + 1U))
             {
@@ -212,7 +219,8 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
         }
         if (rect->position == PositionMode::Absolute)
         {
-            const Box box = anchoredBox(world, child, content, *rect);
+            Box box = anchoredBox(world, child, content, *rect);
+            box.y -= scroll;
             if (!writeRect(world, child, box, scale) ||
                 !placeChildren(world, child, box, scale, depth + 1U))
             {
@@ -259,11 +267,25 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
             box = Box{content.x + cross_position, content.y + cursor, cross_size, main_size};
         }
         cursor += main_size + step;
+        box.y -= scroll;
 
         if (!writeRect(world, child, box, scale) ||
             !placeChildren(world, child, box, scale, depth + 1U))
         {
             return false;
+        }
+    }
+
+    if (view != nullptr && !row)
+    {
+        /* In target pixels, like ComputedRect: the wheel handler clamps the
+           scroll range against the viewport it sees there. */
+        ScrollView* measured = world.get<ScrollView>(parent);
+        const float content_height = used * scale;
+        if (measured->content_height != content_height)
+        {
+            measured->content_height = content_height;
+            world.markChanged<ScrollView>(parent);
         }
     }
     return true;
@@ -285,6 +307,8 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<TextAtlasPage>() != ecs::kInvalidComponent &&
            world.registerComponent<DataContext>() != ecs::kInvalidComponent &&
            world.registerComponent<Bindings>() != ecs::kInvalidComponent &&
+           world.registerComponent<ScrollView>() != ecs::kInvalidComponent &&
+           world.registerComponent<Listener>() != ecs::kInvalidComponent &&
            world.registerComponent<Input>() != ecs::kInvalidComponent &&
            world.registerComponent<PointerState>() != ecs::kInvalidComponent &&
            world.registerComponent<StateStyles>() != ecs::kInvalidComponent &&

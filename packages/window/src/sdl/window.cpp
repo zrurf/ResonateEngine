@@ -200,6 +200,9 @@ void pumpEvents(void* self)
                 state->height = static_cast<uint32_t>(pixels_h);
                 break;
             }
+            case SDL_EVENT_MOUSE_WHEEL:
+                state->input.wheel += event.wheel.y;
+                break;
             case SDL_EVENT_TEXT_INPUT:
                 if (event.text.text != nullptr)
                 {

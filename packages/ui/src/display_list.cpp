@@ -23,11 +23,44 @@ bool report(ecs::World& world, ecs::Entity entity, const char* what)
 
 } // namespace
 
-bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t depth)
+DisplayList::Clip DisplayList::intersect(const Clip& outer, float x, float y, float width,
+                                         float height)
+{
+    Clip clip;
+    clip.active = true;
+    clip.left = outer.active ? std::max(outer.left, x) : x;
+    clip.top = outer.active ? std::max(outer.top, y) : y;
+    clip.right = outer.active ? std::min(outer.right, x + width) : x + width;
+    clip.bottom = outer.active ? std::min(outer.bottom, y + height) : y + height;
+    return clip;
+}
+
+bool DisplayList::visible(const Clip& clip, float x, float y, float width, float height)
+{
+    if (!clip.active)
+    {
+        return true;
+    }
+    return x < clip.right && x + width > clip.left && y < clip.bottom && y + height > clip.top;
+}
+
+bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t depth,
+                        const Clip& outer)
 {
     if (depth > hierarchy::kMaxDepth)
     {
         return report(world, entity, "sits below the UI tree's depth limit");
+    }
+
+    Clip clip = outer;
+    if (world.get<ScrollView>(entity) != nullptr)
+    {
+        const ComputedRect* rect = world.get<ComputedRect>(entity);
+        if (rect == nullptr)
+        {
+            return report(world, entity, "has ScrollView but no ComputedRect");
+        }
+        clip = intersect(outer, rect->x, rect->y, rect->width, rect->height);
     }
 
     if (const Background* background = world.get<Background>(entity))
@@ -37,7 +70,10 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         {
             return report(world, entity, "has Background but no ComputedRect");
         }
-        quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, background->color});
+        if (visible(clip, rect->x, rect->y, rect->width, rect->height))
+        {
+            quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, background->color});
+        }
     }
     if (const Image* image = world.get<Image>(entity))
     {
@@ -64,8 +100,11 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         }
         if (left + right <= 0.0F && top + bottom <= 0.0F)
         {
-            quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, image->tint,
-                                  image->texture, image->uv_min, image->uv_max});
+            if (visible(clip, rect->x, rect->y, rect->width, rect->height))
+            {
+                quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, image->tint,
+                                      image->texture, image->uv_min, image->uv_max});
+            }
         }
         else
         {
@@ -92,6 +131,10 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                     const float quad_width = xs[column + 1U] - xs[column];
                     const float quad_height = ys[row + 1U] - ys[row];
                     if (quad_width <= 0.0F || quad_height <= 0.0F)
+                    {
+                        continue;
+                    }
+                    if (!visible(clip, xs[column], ys[row], quad_width, quad_height))
                     {
                         continue;
                     }
@@ -124,7 +167,9 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                 records = static_cast<const detail::GlyphQuad*>(world.blobData(glyphs->records));
                 count = world.blobSize(glyphs->records) / sizeof(detail::GlyphQuad);
             }
-            if (world.alive(text->content) && count > 0U)
+            const bool label_visible =
+                visible(clip, rect->x, rect->y, rect->width, rect->height);
+            if (label_visible && world.alive(text->content) && count > 0U)
             {
                 TextRun run;
                 run.font_size = text->font_size;
@@ -141,6 +186,11 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
             for (std::size_t index = 0; index < count; ++index)
             {
                 const detail::GlyphQuad& glyph = records[index];
+                if (!visible(clip, rect->x + glyph.x, rect->y + glyph.y, glyph.width,
+                             glyph.height))
+                {
+                    continue;
+                }
                 quads_.push_back(Quad{rect->x + glyph.x, rect->y + glyph.y, glyph.width,
                                       glyph.height, text->text_color, kTextureFont,
                                       Vec2{glyph.u0, glyph.v0}, Vec2{glyph.u1, glyph.v1}});
@@ -167,8 +217,11 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                 {
                     caret_x = rect->x + rect->width - 1.0F;
                 }
-                quads_.push_back(
-                    Quad{caret_x, caret_y, 1.0F, caret_height, text->text_color});
+                if (visible(clip, caret_x, caret_y, 1.0F, caret_height))
+                {
+                    quads_.push_back(
+                        Quad{caret_x, caret_y, 1.0F, caret_height, text->text_color});
+                }
             }
         }
     }
@@ -191,7 +244,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
     for (std::size_t index = start; index < end; ++index)
     {
         const ecs::Entity child = order_[index].entity;
-        if (!paint(world, child, depth + 1U))
+        if (!paint(world, child, depth + 1U, clip))
         {
             return false;
         }
@@ -240,7 +293,7 @@ bool buildDisplayList(ecs::World& world, ecs::Entity root, DisplayList& out)
     {
         out.focused_ = pointer->focused;
     }
-    return out.paint(world, root, 0U);
+    return out.paint(world, root, 0U, DisplayList::Clip{});
 }
 
 } // namespace resonate::ui

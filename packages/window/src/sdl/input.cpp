@@ -94,6 +94,20 @@ void pointerDelta(void* self, ResonateVec2* out_delta)
     out_delta->y = state->input.delta[1];
 }
 
+/* The wheel is a delta accumulated by the event pump; reading it consumes it,
+   so a frame sees the detents that arrived since the previous query. */
+void pointerWheel(void* self, ResonateVec2* out_delta)
+{
+    auto* state = static_cast<WindowState*>(self);
+    if (state == nullptr || out_delta == nullptr)
+    {
+        return;
+    }
+    out_delta->x = 0.0F;
+    out_delta->y = state->input.wheel;
+    state->input.wheel = 0.0F;
+}
+
 SDL_GamepadButton mapButton(ResonateGamepadButton button)
 {
     switch (button)
@@ -201,6 +215,7 @@ ResonateInput g_input = {
     &gamepadAxis,
     &textInput,
     &textEditing,
+    &pointerWheel,
 };
 
 } // namespace

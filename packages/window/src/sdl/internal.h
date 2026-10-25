@@ -21,6 +21,7 @@ struct InputState
     bool pressed[RESONATE_KEY_COUNT] = {};
     float pointer[2] = {};
     float delta[2] = {};
+    float wheel = 0.0F;
     bool mouse[RESONATE_MOUSE_BUTTON_COUNT] = {};
     std::string text;
     std::string editing;

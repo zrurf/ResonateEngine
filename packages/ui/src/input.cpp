@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include <resonate/ui/event.h>
 #include <resonate/ui/hit_test.h>
 
 #include <resonate/hierarchy/tree.h>
@@ -110,8 +111,17 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         }
     }
 
+    Event move{};
+    move.kind = EventKind::PointerMove;
+    move.x = x;
+    move.y = y;
+    dispatchEvent(world, canvas, move);
+
     if (down && !pointer->down)
     {
+        Event pressed = move;
+        pressed.kind = EventKind::PointerDown;
+        dispatchEvent(world, canvas, pressed);
         if (pointer->focused != hover && pointer->focused.valid() &&
             world.alive(pointer->focused))
         {
@@ -131,6 +141,9 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         pointer->down = false;
         world.markChanged<PointerState>(canvas);
         const ecs::Entity press = pointer->press;
+        Event released = move;
+        released.kind = EventKind::PointerUp;
+        dispatchEvent(world, canvas, released);
         if (press.valid() && world.alive(press))
         {
             if (press == hover)
@@ -143,6 +156,9 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                     pointer->activated = press;
                     world.markChanged<PointerState>(canvas);
                 }
+                Event clicked = move;
+                clicked.kind = EventKind::Click;
+                dispatchEvent(world, canvas, clicked);
             }
             setState(world, press, press == hover
                                       ? WidgetState::Hovered
@@ -213,6 +229,20 @@ bool focusNext(ecs::World& world, ecs::Entity canvas, bool backwards)
     setState(world, target,
              pointer->hover == target ? WidgetState::Hovered : WidgetState::Focused);
     return true;
+}
+
+bool scrollInput(ecs::World& world, ecs::Entity canvas, float x, float y, float detents)
+{
+    if (detents == 0.0F)
+    {
+        return false;
+    }
+    Event event{};
+    event.kind = EventKind::Wheel;
+    event.x = x;
+    event.y = y;
+    event.wheel = detents;
+    return dispatchEvent(world, canvas, event);
 }
 
 } // namespace resonate::ui

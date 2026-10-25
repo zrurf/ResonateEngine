@@ -379,6 +379,10 @@ typedef struct ResonateInput
        provider without this answers no preedit. */
     uint32_t (*text_editing)(void* self, char* out_text, uint32_t capacity,
                              int32_t* out_cursor);
+
+    /* Tail: wheel detents since the previous call (positive scrolls down),
+       consumed by the read. A provider without one answers 0. */
+    void (*pointer_wheel)(void* self, ResonateVec2* out_delta);
 } ResonateInput;
 
 #ifdef __cplusplus

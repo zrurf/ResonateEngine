@@ -103,6 +103,12 @@ struct UiFrame
             {
                 return;
             }
+            if (frame->input->pointer_wheel != nullptr)
+            {
+                ResonateVec2 wheel{};
+                frame->input->pointer_wheel(frame->input->self, &wheel);
+                ui::scrollInput(world, frame->canvas, position.x, position.y, wheel.y);
+            }
             if (frame->input->key_pressed(frame->input->self, RESONATE_KEY_TAB) != 0)
             {
                 const bool backwards =

@@ -169,6 +169,16 @@
     <field name="activated" type="bool" default="false"/>
   </component>
 
+  <!-- A clipped, vertically scrolling viewport. `scroll` is state the wheel
+       handler moves; `content_height` is what layout measured, so the scroll
+       range is known after the first pass. `step` binds scrolling to whole
+       rows: zero scrolls continuously. -->
+  <component name="ScrollView" version="1">
+    <field name="scroll" type="f32" default="0.0"/>
+    <field name="step" type="f32" default="0.0"/>
+    <field name="content_height" type="f32" default="0.0"/>
+  </component>
+
   <!-- The pointer's current target, derived by the input system. -->
   <component name="PointerState" version="1" derived="true">
     <field name="hover" type="entity"/>
@@ -202,6 +212,20 @@
     <uses component="Background" expose="color"/>
     <uses component="LayoutGroup"
           expose="direction justify align gap padding_left padding_top padding_right padding_bottom"/>
+    <field name="bind-x" type="binding"/>
+    <field name="bind-y" type="binding"/>
+    <field name="bind-width" type="binding"/>
+    <field name="bind-height" type="binding"/>
+  </node>
+
+  <!-- A column viewport that clips and scrolls its children. -->
+  <node name="Scroll" version="1">
+    <uses component="RectTransform"
+          expose="x y width height anchor_min anchor_max pivot z position"/>
+    <uses component="Background" expose="color"/>
+    <uses component="LayoutGroup"
+          expose="direction justify align gap padding_left padding_top padding_right padding_bottom"/>
+    <uses component="ScrollView" expose="step"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>
     <field name="bind-width" type="binding"/>

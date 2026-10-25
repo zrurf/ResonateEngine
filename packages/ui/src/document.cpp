@@ -1428,6 +1428,13 @@ Entity instantiate(World& world, dom::Document& document,
                    std::vector<std::shared_ptr<const text::Font>> fonts,
                    const StringTable* strings, const ImageRegistry* images)
 {
+    /* The UI's own schema is the fallback registry: a widget component only the
+       generated table knows (ScrollView, a view's own extensions) must attach
+       without the host passing a composed registry. */
+    if (component_registry == nullptr)
+    {
+        component_registry = &documentComponents();
+    }
     BindingContext bindings;
     bindings.strings = strings;
     bindings.images = images;
@@ -1443,6 +1450,10 @@ Entity instantiate(World& world, dom::Document& document,
                    const dom::ComponentRegistry* component_registry, TextRuntime& runtime,
                    const StringTable* strings, const ImageRegistry* images)
 {
+    if (component_registry == nullptr)
+    {
+        component_registry = &documentComponents();
+    }
     BindingContext bindings;
     bindings.atlas = TextRuntimeAccess::atlas(runtime);
     bindings.runtime = &runtime;
