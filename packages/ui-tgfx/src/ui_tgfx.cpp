@@ -10,8 +10,10 @@
 
 #include <tgfx/core/Canvas.h>
 #include <tgfx/core/Color.h>
+#include <tgfx/core/Data.h>
 #include <tgfx/core/Font.h>
 #include <tgfx/core/Image.h>
+#include <tgfx/core/ImageCodec.h>
 #include <tgfx/core/ImageInfo.h>
 #include <tgfx/core/Paint.h>
 #include <tgfx/core/Surface.h>
@@ -217,7 +219,26 @@ RESONATE_TGFX_API int32_t resonate_tgfx_image_register(ResonateTgfxUi handle, st
     {
         return -1;
     }
-    auto image = tgfx::Image::MakeFromFile(path);
+    /* Decode to CPU pixels instead of Image::MakeFromFile: on Android the file
+       decoder hands back an AHardwareBuffer, and binding one as a Vulkan
+       texture needs VK_ANDROID_external_memory_android_hardware_buffer, which
+       the engine's shared device does not enable. The upload then fails and the
+       image never draws. */
+    auto codec = tgfx::ImageCodec::MakeFrom(std::string(path));
+    if (codec == nullptr || codec->width() <= 0 || codec->height() <= 0)
+    {
+        return -2;
+    }
+    const tgfx::ImageInfo info = tgfx::ImageInfo::Make(codec->width(), codec->height(),
+                                                       tgfx::ColorType::RGBA_8888,
+                                                       tgfx::AlphaType::Premultiplied);
+    std::vector<std::uint8_t> pixels(info.byteSize());
+    if (!codec->readPixels(info, pixels.data()))
+    {
+        return -2;
+    }
+    auto image =
+        tgfx::Image::MakeFrom(info, tgfx::Data::MakeWithCopy(pixels.data(), pixels.size()));
     if (image == nullptr || image->width() <= 0 || image->height() <= 0)
     {
         return -2;
