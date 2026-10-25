@@ -1232,7 +1232,20 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
                                   text.glyph_count * sizeof(ResonateTgfxGlyph));
         }
     }
-    if (ui_layer_drawn && signature == ui_layer_signature)
+    if (std::getenv("RESONATE_FRAME_TRACE") != nullptr && signature != ui_layer_signature)
+    {
+        std::size_t glyphs = 0U;
+        for (const ResonateTgfxText& text : ui_draw_texts)
+        {
+            glyphs += text.glyph_count;
+        }
+        std::fprintf(stderr, "renderer: ui layer changed: %u rects, %u texts (%zu glyphs), %u images\n",
+                     static_cast<unsigned>(ui_draw_rects.size()),
+                     static_cast<unsigned>(ui_draw_texts.size()), glyphs,
+                     static_cast<unsigned>(ui_draw_images.size()));
+    }
+    static const bool always_redraw = std::getenv("RESONATE_UI_REDRAW_ALWAYS") != nullptr;
+    if (!always_redraw && ui_layer_drawn && signature == ui_layer_signature)
     {
         ui_tgfx_ready = true;
         return true;
