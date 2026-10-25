@@ -2,6 +2,10 @@ set_project("ResonateEngine")
 set_version("0.0.1")
 set_xmakever("3.1.1")
 
+-- Top level on purpose: a platform-guarded set_config does not reach a fresh
+-- configure, and NDK r28's default API (21) predates libvulkan (24).
+set_config("ndk_sdkver", 30)
+
 add_rules("mode.debug", "mode.release")
 add_rules("plugin.compile_commands.autoupdate", {outputdir = ".compile"})
 
@@ -49,7 +53,6 @@ end
 if is_plat("android") then
     add_defines("RESONATE_PLATFORM_ANDROID")
     set_config("ndk_cxxstl", "c++_shared")
-    set_config("ndk_sdkver", 30)
     -- The app is one shared library around static archives, so every object
     -- has to be position independent.
     add_cxflags("-fPIC")
