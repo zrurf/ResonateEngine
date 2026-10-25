@@ -105,9 +105,9 @@ TEST_CASE("offscreen: the renderer draws the UI through tgfx", "[render][tgfx]")
         }
     }
     INFO("white text pixels=" << white);
-    /* FXAA runs over the composited UI and dims thin strokes; the bold
-       sample keeps a few dozen fully bright centers. */
-    CHECK(white > 20U);
+    /* The blend pass composites the UI after FXAA, so the bold sample keeps
+       its full stroke coverage. */
+    CHECK(white > 300U);
 
     render_system.release();
     host->detachAll();

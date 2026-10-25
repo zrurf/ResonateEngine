@@ -1,8 +1,8 @@
-// The post chain's stages: bright extraction, separable blur, tonemap+bloom
-// composite, and FXAA. All draw a full-screen triangle from the vertex id and
-// read their inputs through the sampled-image table.
-// Entries: postVertex, brightFragment, blurFragment, compositeFragment,
-// fxaaFragment.
+// The post chain's stages: bright extraction, separable blur, tonemap, FXAA
+// over the scene only, and the UI blend. All draw a full-screen triangle from
+// the vertex id and read their inputs through the sampled-image table.
+// Entries: postVertex, brightFragment, blurFragment, tonemapFragment,
+// fxaaFragment, blendFragment.
 
 struct PostPush
 {
@@ -73,7 +73,7 @@ float3 tonemap(float3 color)
 }
 
 [shader("fragment")]
-float4 compositeFragment(VertexOutput input) : SV_Target
+float4 tonemapFragment(VertexOutput input) : SV_Target
 {
     float3 hdr = image_table[push.slots.x].Sample(input.uv).rgb;
     // z: 1 when the stack has bloom, so the second slot is sampled only when
@@ -81,12 +81,7 @@ float4 compositeFragment(VertexOutput input) : SV_Target
     float3 bloom = push.params.z > 0.5
                        ? image_table[push.slots.y].Sample(input.uv).rgb
                        : float3(0.0, 0.0, 0.0);
-    float3 mapped = tonemap(hdr + bloom * 0.35);
-    // The UI image holds premultiplied color (the overlay pass blends with
-    // source-alpha), blended after tonemapping so authored UI colors survive.
-    float4 ui = image_table[push.slots.z].Sample(input.uv);
-    mapped = mapped * (1.0 - ui.a) + ui.rgb;
-    return float4(mapped, 1.0);
+    return float4(tonemap(hdr + bloom * 0.35), 1.0);
 }
 
 [shader("fragment")]
@@ -122,4 +117,15 @@ float4 fxaaFragment(VertexOutput input) : SV_Target
     float3 blended = 0.5 * (image_table[push.slots.x].Sample(input.uv + blend_direction).rgb +
                             image_table[push.slots.x].Sample(input.uv - blend_direction).rgb);
     return float4(blended, 1.0);
+}
+
+[shader("fragment")]
+float4 blendFragment(VertexOutput input) : SV_Target
+{
+    // The scene is tonemapped and already antialiased; the UI image holds
+    // premultiplied color the overlay pass accumulated with source-alpha
+    // blending, so blending here repeats the multiply on purpose.
+    float3 scene = image_table[push.slots.x].Sample(input.uv).rgb;
+    float4 ui = image_table[push.slots.z].Sample(input.uv);
+    return float4(scene * (1.0 - ui.a) + ui.rgb, 1.0);
 }

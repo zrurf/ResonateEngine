@@ -400,6 +400,7 @@ struct RenderSystem::Impl
     ResourceId hdr_resource = 0;
     ResourceId ui_resource = 0;
     ResourceId ldr_resource = 0;
+    ResourceId ldr_aa_resource = 0;
     ResourceId bright_resource = 0;
     ResourceId blur_a_resource = 0;
     ResourceId blur_b_resource = 0;
@@ -424,6 +425,7 @@ struct RenderSystem::Impl
     ResonateRenderPipeline blur_pipeline{};
     ResonateRenderPipeline composite_pipeline{};
     ResonateRenderPipeline fxaa_pipeline{};
+    ResonateRenderPipeline blend_pipeline{};
     ResonateRenderPipeline ui_pipeline{};
     bool pipelines_ready = false;
     bool pipelines_failed = false;
@@ -551,15 +553,16 @@ struct RenderSystem::Impl
     static void blurVEntry(void* context, GraphExecuteContext& commands);
     static void compositeEntry(void* context, GraphExecuteContext& commands);
     static void fxaaEntry(void* context, GraphExecuteContext& commands);
+    static void blendEntry(void* context, GraphExecuteContext& commands);
 };
 
 bool RenderSystem::Impl::initialize()
 {
     /* The fixed spine: three CSM shadow passes, two cluster compute passes and
        the lit scene into HDR. The post chain after it comes from the feature
-       stack: bloom adds its extraction and blur passes, tonemap composites, and
-       the AA slot either runs FXAA into the canvas or leaves the composite's
-       output there. */
+       stack: bloom adds its extraction and blur passes, the tonemap writes the
+       LDR scene, and FXAA — when enabled — antialiases that scene before any
+       UI exists. The blend pass composites the UI over it into the canvas. */
     const bool bloom = features.has("bloom");
     const bool fxaa = features.antialiases();
 
@@ -580,13 +583,20 @@ bool RenderSystem::Impl::initialize()
     /* Resources a feature does not ask for stay invalid: no pass names them and
        the executor does not create them. */
     ldr_resource = resonate::render::kInvalidResource;
+    ldr_aa_resource = resonate::render::kInvalidResource;
     bright_resource = resonate::render::kInvalidResource;
     blur_a_resource = resonate::render::kInvalidResource;
     blur_b_resource = resonate::render::kInvalidResource;
+    /* The LDR scene exists in both modes: the tonemap always writes it, and the
+       blend pass reads it back when it composites the UI. */
+    ldr_resource = graph.declareImage(
+        "ldr", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
+        RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     if (fxaa)
     {
-        ldr_resource = graph.declareImage(
-            "ldr", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
+        /* A second LDR target because FXAA cannot read and write one image. */
+        ldr_aa_resource = graph.declareImage(
+            "ldr_aa", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
             RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     }
     if (bloom)
@@ -770,26 +780,9 @@ bool RenderSystem::Impl::initialize()
         graph.addPass(blur_v);
     }
 
-    /* The overlay pass comes after the scene's post chain and before the
-       composite: it clears its own target and every quad blends into it in
-       paint order. */
-    Use ui_write{};
-    ui_write.resource = ui_resource;
-    ui_write.stages = resonate::render::kStageColorOutput;
-    ui_write.access = resonate::render::kAccessColorWrite;
-    ui_write.layout = kLayoutColorAttachment;
-    resonate::render::PassDesc ui{};
-    ui.name = "ui";
-    ui.writes = &ui_write;
-    ui.write_count = 1U;
-    ui.context = this;
-    ui.execute = &Impl::uiEntry;
-    graph.addPass(ui);
-
-    /* Without an AA pass the composite owns the canvas; with one it writes the
-       LDR target FXAA reads. */
-    const ResourceId composite_target = fxaa ? ldr_resource : canvas_resource;
-    Use composite_reads[3]{};
+    /* The tonemap pass writes the LDR scene; bloom's output feeds it when the
+       feature exists. No UI here: antialiasing must not touch the UI layer. */
+    Use composite_reads[2]{};
     composite_reads[0].resource = hdr_resource;
     composite_reads[0].stages = resonate::render::kStageFragment;
     composite_reads[0].access = resonate::render::kAccessShaderRead;
@@ -803,18 +796,13 @@ bool RenderSystem::Impl::initialize()
         composite_reads[composite_read_count].layout = kLayoutShaderReadOnly;
         ++composite_read_count;
     }
-    composite_reads[composite_read_count].resource = ui_resource;
-    composite_reads[composite_read_count].stages = resonate::render::kStageFragment;
-    composite_reads[composite_read_count].access = resonate::render::kAccessShaderRead;
-    composite_reads[composite_read_count].layout = kLayoutShaderReadOnly;
-    ++composite_read_count;
     Use composite_write{};
-    composite_write.resource = composite_target;
+    composite_write.resource = ldr_resource;
     composite_write.stages = resonate::render::kStageColorOutput;
     composite_write.access = resonate::render::kAccessColorWrite;
     composite_write.layout = kLayoutColorAttachment;
     resonate::render::PassDesc composite{};
-    composite.name = "composite";
+    composite.name = "tonemap";
     composite.reads = composite_reads;
     composite.read_count = composite_read_count;
     composite.writes = &composite_write;
@@ -830,21 +818,60 @@ bool RenderSystem::Impl::initialize()
         ldr_read.stages = resonate::render::kStageFragment;
         ldr_read.access = resonate::render::kAccessShaderRead;
         ldr_read.layout = kLayoutShaderReadOnly;
-        Use canvas_write{};
-        canvas_write.resource = canvas_resource;
-        canvas_write.stages = resonate::render::kStageColorOutput;
-        canvas_write.access = resonate::render::kAccessColorWrite;
-        canvas_write.layout = kLayoutColorAttachment;
-        resonate::render::PassDesc fxaa{};
-        fxaa.name = "fxaa";
-        fxaa.reads = &ldr_read;
-        fxaa.read_count = 1U;
-        fxaa.writes = &canvas_write;
-        fxaa.write_count = 1U;
-        fxaa.context = this;
-        fxaa.execute = &Impl::fxaaEntry;
-        graph.addPass(fxaa);
+        Use ldr_aa_write{};
+        ldr_aa_write.resource = ldr_aa_resource;
+        ldr_aa_write.stages = resonate::render::kStageColorOutput;
+        ldr_aa_write.access = resonate::render::kAccessColorWrite;
+        ldr_aa_write.layout = kLayoutColorAttachment;
+        resonate::render::PassDesc fxaa_pass{};
+        fxaa_pass.name = "fxaa";
+        fxaa_pass.reads = &ldr_read;
+        fxaa_pass.read_count = 1U;
+        fxaa_pass.writes = &ldr_aa_write;
+        fxaa_pass.write_count = 1U;
+        fxaa_pass.context = this;
+        fxaa_pass.execute = &Impl::fxaaEntry;
+        graph.addPass(fxaa_pass);
     }
+
+    /* The overlay pass comes after the scene's post chain: it clears its own
+       target and every quad blends into it in paint order. */
+    Use ui_write{};
+    ui_write.resource = ui_resource;
+    ui_write.stages = resonate::render::kStageColorOutput;
+    ui_write.access = resonate::render::kAccessColorWrite;
+    ui_write.layout = kLayoutColorAttachment;
+    resonate::render::PassDesc ui{};
+    ui.name = "ui";
+    ui.writes = &ui_write;
+    ui.write_count = 1U;
+    ui.context = this;
+    ui.execute = &Impl::uiEntry;
+    graph.addPass(ui);
+
+    Use blend_reads[2]{};
+    blend_reads[0].resource = fxaa ? ldr_aa_resource : ldr_resource;
+    blend_reads[0].stages = resonate::render::kStageFragment;
+    blend_reads[0].access = resonate::render::kAccessShaderRead;
+    blend_reads[0].layout = kLayoutShaderReadOnly;
+    blend_reads[1].resource = ui_resource;
+    blend_reads[1].stages = resonate::render::kStageFragment;
+    blend_reads[1].access = resonate::render::kAccessShaderRead;
+    blend_reads[1].layout = kLayoutShaderReadOnly;
+    Use blend_write{};
+    blend_write.resource = canvas_resource;
+    blend_write.stages = resonate::render::kStageColorOutput;
+    blend_write.access = resonate::render::kAccessColorWrite;
+    blend_write.layout = kLayoutColorAttachment;
+    resonate::render::PassDesc blend{};
+    blend.name = "blend";
+    blend.reads = blend_reads;
+    blend.read_count = 2U;
+    blend.writes = &blend_write;
+    blend.write_count = 1U;
+    blend.context = this;
+    blend.execute = &Impl::blendEntry;
+    graph.addPass(blend);
     graph.exportResource(canvas_resource);
 
     std::string error;
@@ -1222,9 +1249,11 @@ bool RenderSystem::Impl::ensurePipelines()
     const std::vector<char> blur_spirv =
         readFile(std::filesystem::path(directory) / "post.blurFragment.spv");
     const std::vector<char> composite_spirv =
-        readFile(std::filesystem::path(directory) / "post.compositeFragment.spv");
+        readFile(std::filesystem::path(directory) / "post.tonemapFragment.spv");
     const std::vector<char> fxaa_spirv =
         readFile(std::filesystem::path(directory) / "post.fxaaFragment.spv");
+    const std::vector<char> blend_spirv =
+        readFile(std::filesystem::path(directory) / "post.blendFragment.spv");
     const std::vector<char> ui_vertex_spirv =
         readFile(std::filesystem::path(directory) / "ui.uiVertex.spv");
     const std::vector<char> ui_fragment_spirv =
@@ -1232,8 +1261,8 @@ bool RenderSystem::Impl::ensurePipelines()
     if (vertex_spirv.empty() || fragment_spirv.empty() || shadow_vertex_spirv.empty() ||
         shadow_fragment_spirv.empty() || build_spirv.empty() || cull_spirv.empty() ||
         post_vertex_spirv.empty() || bright_spirv.empty() || blur_spirv.empty() ||
-        composite_spirv.empty() || fxaa_spirv.empty() || ui_vertex_spirv.empty() ||
-        ui_fragment_spirv.empty())
+        composite_spirv.empty() || fxaa_spirv.empty() || blend_spirv.empty() ||
+        ui_vertex_spirv.empty() || ui_fragment_spirv.empty())
     {
         complain("shader files missing; run `xmake slang`");
         pipelines_failed = true;
@@ -1251,6 +1280,7 @@ bool RenderSystem::Impl::ensurePipelines()
     ResonateRenderShader blur{};
     ResonateRenderShader composite{};
     ResonateRenderShader fxaa{};
+    ResonateRenderShader blend{};
     ResonateRenderShader ui_vertex{};
     ResonateRenderShader ui_fragment{};
     if (device->create_shader(device->self, RESONATE_RENDER_SHADER_VERTEX, vertex_spirv.data(),
@@ -1277,6 +1307,8 @@ bool RenderSystem::Impl::ensurePipelines()
                               composite_spirv.size(), &composite) != RESONATE_OK ||
         device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, fxaa_spirv.data(),
                               fxaa_spirv.size(), &fxaa) != RESONATE_OK ||
+        device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, blend_spirv.data(),
+                              blend_spirv.size(), &blend) != RESONATE_OK ||
         device->create_shader(device->self, RESONATE_RENDER_SHADER_VERTEX, ui_vertex_spirv.data(),
                               ui_vertex_spirv.size(), &ui_vertex) != RESONATE_OK ||
         device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT,
@@ -1357,17 +1389,17 @@ bool RenderSystem::Impl::ensurePipelines()
         return false;
     }
 
-    /* Without an AA pass the composite owns the canvas, so its pipeline names
-       the swapchain format instead of the LDR target's. */
-    const ResonateRenderFormat composite_format = features.antialiases()
-                                                      ? RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM
-                                                      : RESONATE_RENDER_FORMAT_UNKNOWN;
-    const ResonateRenderFormat post_targets[4] = {RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+    /* The tonemap and FXAA passes write LDR targets; only the final blend
+       owns the canvas, so its pipeline names the swapchain format. */
+    const ResonateRenderFormat post_targets[5] = {RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
                                                   RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
-                                                  composite_format, RESONATE_RENDER_FORMAT_UNKNOWN};
-    ResonateRenderShader* post_fragments[4] = {&bright, &blur, &composite, &fxaa};
-    ResonateRenderPipeline* post_pipelines[4] = {&bright_pipeline, &blur_pipeline,
-                                                 &composite_pipeline, &fxaa_pipeline};
+                                                  RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
+                                                  RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
+                                                  RESONATE_RENDER_FORMAT_UNKNOWN};
+    ResonateRenderShader* post_fragments[5] = {&bright, &blur, &composite, &fxaa, &blend};
+    ResonateRenderPipeline* post_pipelines[5] = {&bright_pipeline, &blur_pipeline,
+                                                 &composite_pipeline, &fxaa_pipeline,
+                                                 &blend_pipeline};
 
     /* The fullscreen triangle carries its positions and UVs in a vertex buffer,
        so the vertex stage needs no base-vertex builtin (shaderDrawParameters is
@@ -1408,7 +1440,7 @@ bool RenderSystem::Impl::ensurePipelines()
     post_stream.attribute_count = 2U;
     post_stream.attributes = post_attributes;
 
-    for (std::uint32_t i = 0; i < 4U; ++i)
+    for (std::uint32_t i = 0; i < 5U; ++i)
     {
         ResonateRenderGraphicsPipelineDesc post_desc{};
         post_desc.struct_size = sizeof(post_desc);
@@ -2316,22 +2348,29 @@ void RenderSystem::Impl::compositeEntry(void* context, GraphExecuteContext& comm
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
     const bool bloom = self->features.has("bloom");
-    const ResourceId target =
-        self->features.antialiases() ? self->ldr_resource : self->canvas_resource;
-    self->runPost(commands, target, self->composite_pipeline,
+    self->runPost(commands, self->ldr_resource, self->composite_pipeline,
                   commands.imageSlot(self->hdr_resource),
-                  bloom ? commands.imageSlot(self->blur_b_resource) : 0U,
-                  commands.imageSlot(self->ui_resource),
+                  bloom ? commands.imageSlot(self->blur_b_resource) : 0U, 0U,
                   Vec4{0.0F, 0.0F, bloom ? 1.0F : 0.0F, 0.0F});
 }
 
 void RenderSystem::Impl::fxaaEntry(void* context, GraphExecuteContext& commands)
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
-    self->runPost(commands, self->canvas_resource, self->fxaa_pipeline,
+    self->runPost(commands, self->ldr_aa_resource, self->fxaa_pipeline,
                   commands.imageSlot(self->ldr_resource), 0U, 0U,
                   Vec4{1.0F / static_cast<float>(self->target_width),
                        1.0F / static_cast<float>(self->target_height), 0.0F, 0.0F});
+}
+
+void RenderSystem::Impl::blendEntry(void* context, GraphExecuteContext& commands)
+{
+    auto* self = static_cast<RenderSystem::Impl*>(context);
+    const ResourceId scene =
+        self->features.antialiases() ? self->ldr_aa_resource : self->ldr_resource;
+    self->runPost(commands, self->canvas_resource, self->blend_pipeline,
+                  commands.imageSlot(scene), 0U, commands.imageSlot(self->ui_resource),
+                  Vec4{0.0F, 0.0F, 0.0F, 0.0F});
 }
 
 RenderSystem::RenderSystem() : impl_(std::make_unique<Impl>())
