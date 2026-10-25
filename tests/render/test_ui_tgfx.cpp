@@ -163,9 +163,14 @@ TEST_CASE("offscreen: the renderer draws a registered Picture image", "[render][
     render_system.setRegistry(host->capabilities());
     render_system.setUiFontPaths({font_path});
     render_system.setUiImageTexture(16U, image_path);
+    /* The render thread may coalesce back-to-back publishes, and frame one
+       draws the atlas fallback (the UI target is created only past the first
+       present for the Mali quirk), so drain between frames: the readback must
+       see a tgfx frame. */
     for (int frame = 0; frame < 8; ++frame)
     {
         render_system.run(world);
+        render_system.waitIdle();
     }
     render_system.waitIdle();
 
@@ -174,6 +179,43 @@ TEST_CASE("offscreen: the renderer draws a registered Picture image", "[render][
     std::uint32_t height = 0;
     const ResonateStatus status = device->readback_canvas(
         device->self, pixels.data(), static_cast<std::uint64_t>(pixels.size()), &width, &height);
+    if (std::getenv("RESONATE_DUMP_TEST_CANVAS") != nullptr)
+    {
+        std::FILE* out = std::fopen(std::getenv("RESONATE_DUMP_TEST_CANVAS"), "wb");
+        if (out != nullptr)
+        {
+            const std::uint32_t stride = (width * 3U + 3U) & ~3U;
+            unsigned char header[54] = {'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0, 40, 0,
+                                        0,   0,   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  0, 0, 0};
+            const auto put32 = [&header](std::size_t at, std::uint32_t v) {
+                for (int b = 0; b < 4; ++b)
+                {
+                    header[at + static_cast<std::size_t>(b)] =
+                        static_cast<unsigned char>((v >> (8U * b)) & 0xFFU);
+                }
+            };
+            put32(2U, 54U + stride * height);
+            put32(18U, width);
+            put32(22U, height);
+            header[26] = 1U;
+            header[28] = 24U;
+            put32(34U, stride * height);
+            std::fwrite(header, 1U, sizeof(header), out);
+            std::vector<unsigned char> row(stride, 0U);
+            for (std::uint32_t y = height; y-- > 0U;)
+            {
+                for (std::uint32_t x = 0; x < width; ++x)
+                {
+                    const std::size_t s = (static_cast<std::size_t>(y) * width + x) * 4U;
+                    row[x * 3U] = pixels[s + 2U];
+                    row[x * 3U + 1U] = pixels[s + 1U];
+                    row[x * 3U + 2U] = pixels[s];
+                }
+                std::fwrite(row.data(), 1U, stride, out);
+            }
+            std::fclose(out);
+        }
+    }
     if (status != RESONATE_OK)
     {
         render_system.release();
