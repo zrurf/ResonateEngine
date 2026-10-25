@@ -13,7 +13,10 @@
 namespace resonate::ui::detail
 {
 
-/* One glyph quad in widget-local pixels and its atlas UV rect. */
+/* One glyph quad in widget-local pixels and its atlas UV rect. The shaping
+   origin (pen, baseline) and the glyph identity travel with the quad so a
+   renderer that draws vector outlines itself can reproduce the same layout
+   without reshaping. */
 struct GlyphQuad
 {
     float x = 0.0F;
@@ -24,6 +27,10 @@ struct GlyphQuad
     float v0 = 0.0F;
     float u1 = 0.0F;
     float v1 = 0.0F;
+    float pen_x = 0.0F;
+    float pen_y = 0.0F;
+    std::uint32_t glyph_id = 0U;
+    std::uint32_t font_index = 0U;
     /* The atlas key, so a repack can refresh the UV rect before the run is
        attached to the world. */
     std::uint64_t key = 0U;

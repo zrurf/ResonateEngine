@@ -312,6 +312,7 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight,
     {
         text::ShapedGlyph glyph;
         AtlasGlyph atlas;
+        std::uint32_t font = 0U;
         bool space = false;
     };
 
@@ -352,6 +353,11 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight,
                          static_cast<float>(entry.atlas.bearing_x);
                 quad.y = metrics.ascent + static_cast<float>(line_index) * line_height -
                          entry.glyph.y_offset - static_cast<float>(entry.atlas.bearing_y);
+                quad.pen_x = offset + pen + entry.glyph.x_offset;
+                quad.pen_y = metrics.ascent + static_cast<float>(line_index) * line_height -
+                             entry.glyph.y_offset;
+                quad.glyph_id = entry.glyph.glyph;
+                quad.font_index = entry.font;
                 out.push_back(quad);
             }
             pen += entry.glyph.x_advance;
@@ -397,7 +403,7 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight,
                 flush(line.size(), true);
             }
         }
-        line.push_back(LineGlyph{glyph, atlas, space});
+        line.push_back(LineGlyph{glyph, atlas, run.font, space});
         line_width += advance;
         if (space)
         {
