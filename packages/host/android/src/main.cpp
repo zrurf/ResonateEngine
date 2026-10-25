@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -210,6 +211,10 @@ std::string stageAssets(android_app* app, const char* asset_directory)
     }
 
     const std::string directory = std::string(activity->internalDataPath) + "/" + asset_directory;
+    /* The staged copy mirrors the APK's assets: a file an update drops must not
+       linger and keep registering content the package no longer carries. */
+    std::error_code removed;
+    std::filesystem::remove_all(directory, removed);
     mkdir(directory.c_str(), 0700);
 
     AAssetDir* assets = AAssetManager_openDir(activity->assetManager, asset_directory);
