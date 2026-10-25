@@ -482,7 +482,9 @@ struct RenderSystem::Impl
     std::vector<ResonateTgfxGlyph> ui_draw_glyphs;
     std::vector<ResonateTgfxText> ui_draw_texts;
     std::vector<ResonateTgfxImageDraw> ui_draw_images;
-    bool ui_text_cleared = false;
+    /* True when the tgfx layer draws into the renderer's own image (zero
+       copy); false falls back to the wrapper surface plus a readback. */
+    bool ui_target_attached = false;
 
     /* Picture textures: the main thread registers id → file; the render thread
        registers the file with the tgfx layer, which decodes on its first draw.
@@ -1138,41 +1140,9 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         ui_draw_texts.push_back(text);
     }
 
-    if (ui_draw_rects.empty() && ui_draw_texts.empty() && ui_draw_images.empty())
-    {
-        /* No tgfx round trip on an empty layer, but the overlay image must be
-           transparent before the pass samples it; one zero upload covers every
-           empty frame after it. */
-        if (ui_text_image.value != 0U && (width != ui_text_width || height != ui_text_height))
-        {
-            device->destroy_image(device->self, ui_text_image);
-            ui_text_image = ResonateRenderImage{};
-            ui_pixels.clear();
-        }
-        if (ui_text_image.value != 0U && !ui_text_cleared)
-        {
-            std::fill(ui_pixels.begin(), ui_pixels.end(), 0U);
-            ui_text_cleared =
-                device->upload_image(device->self, ui_text_image, ui_pixels.data(),
-                                     ui_pixels.size(),
-                                     static_cast<std::uint64_t>(ui_text_width) * 4U) == RESONATE_OK;
-        }
-        ui_tgfx_ready = ui_text_image.value != 0U && ui_text_cleared;
-        return true;
-    }
-    ui_text_cleared = false;
-
-    if (resonate_tgfx_ui_draw(tgfx_ui, width, height, ui_draw_rects.data(),
-                              static_cast<std::uint32_t>(ui_draw_rects.size()),
-                              ui_draw_texts.data(),
-                              static_cast<std::uint32_t>(ui_draw_texts.size()),
-                              ui_draw_images.data(),
-                              static_cast<std::uint32_t>(ui_draw_images.size())) != 0)
-    {
-        complain("tgfx: the UI draw failed");
-        return false;
-    }
-
+    /* The UI target the layer draws into: the renderer's own color-attachment
+       image, so the blend pass samples it without a readback. A failed attach
+       falls back to the wrapper-owned surface and the readback upload. */
     if (ui_text_image.value == 0U || width != ui_text_width || height != ui_text_height)
     {
         if (ui_text_image.value != 0U)
@@ -1185,7 +1155,7 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         desc.format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
         desc.width = width;
         desc.height = height;
-        desc.usage = RESONATE_RENDER_IMAGE_SAMPLED;
+        desc.usage = RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED;
         if (device->create_image(device->self, &desc, &ui_text_image) != RESONATE_OK)
         {
             return false;
@@ -1198,16 +1168,87 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         ui_text_width = width;
         ui_text_height = height;
         ui_pixels.resize(static_cast<std::size_t>(width) * height * 4U);
+        ui_target_attached = false;
+    }
+    if (!ui_target_attached && device->native_image != nullptr)
+    {
+        ResonateRenderNativeImage native = {};
+        if (device->native_image(device->self, ui_text_image, &native) == RESONATE_OK &&
+            native.image != 0U)
+        {
+            const ResonateTgfxNativeImage target{native.image, native.format, native.layout,
+                                                 native.width, native.height};
+            ui_target_attached = resonate_tgfx_ui_attach(tgfx_ui, &target) == 0;
+            if (!ui_target_attached)
+            {
+                complain("tgfx: the UI target was not attached; drawing into a readback surface");
+            }
+        }
     }
 
-    if (resonate_tgfx_ui_read_pixels(tgfx_ui, ui_pixels.data(), ui_pixels.size()) != 0)
+    /* The draw always runs: it clears the target even on an empty layer, so
+       the blend pass never resamples stale content. */
+    if (resonate_tgfx_ui_draw(tgfx_ui, width, height, ui_draw_rects.data(),
+                              static_cast<std::uint32_t>(ui_draw_rects.size()),
+                              ui_draw_texts.data(),
+                              static_cast<std::uint32_t>(ui_draw_texts.size()),
+                              ui_draw_images.data(),
+                              static_cast<std::uint32_t>(ui_draw_images.size())) != 0)
     {
+        complain("tgfx: the UI draw failed");
         return false;
     }
-    if (device->upload_image(device->self, ui_text_image, ui_pixels.data(), ui_pixels.size(),
-                             static_cast<std::uint64_t>(width) * 4U) != RESONATE_OK)
+
+    if (const char* dump = std::getenv("RESONATE_DUMP_UI_TARGET"))
     {
-        return false;
+        /* Verification: read the target back through tgfx (its own transition)
+           and write the first frames out as BMPs. */
+        static int dumped = 0;
+        if (dumped < 4)
+        {
+            char path[512];
+            std::snprintf(path, sizeof(path), "%s.%d.bmp", dump, dumped);
+            ++dumped;
+            if (resonate_tgfx_ui_read_pixels(tgfx_ui, ui_pixels.data(), ui_pixels.size()) == 0)
+            {
+                std::FILE* file = std::fopen(path, "wb");
+                if (file != nullptr)
+                {
+                    const std::uint32_t stride = (width * 3U + 3U) & ~3U;
+                    const std::uint32_t image_size = stride * height;
+                    unsigned char header[54] = {'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0,
+                                                54,  0,   0, 0, 40, 0,  0, 0};
+                    const auto put32 = [&header](std::size_t at, std::uint32_t value)
+                    {
+                        header[at] = static_cast<unsigned char>(value & 0xFFU);
+                        header[at + 1U] = static_cast<unsigned char>((value >> 8U) & 0xFFU);
+                        header[at + 2U] = static_cast<unsigned char>((value >> 16U) & 0xFFU);
+                        header[at + 3U] = static_cast<unsigned char>((value >> 24U) & 0xFFU);
+                    };
+                    put32(2U, 54U + image_size);
+                    put32(18U, width);
+                    put32(22U, height);
+                    header[26] = 1U; /* biPlanes */
+                    header[28] = 24U; /* biBitCount */
+                    put32(34U, image_size);
+                    std::fwrite(header, 1U, sizeof(header), file);
+                    std::vector<unsigned char> row(stride, 0U);
+                    for (std::uint32_t y = height; y-- > 0U;)
+                    {
+                        for (std::uint32_t x = 0; x < width; ++x)
+                        {
+                            const std::size_t source =
+                                (static_cast<std::size_t>(y) * width + x) * 4U;
+                            row[x * 3U] = ui_pixels[source + 2U];
+                            row[x * 3U + 1U] = ui_pixels[source + 1U];
+                            row[x * 3U + 2U] = ui_pixels[source];
+                        }
+                        std::fwrite(row.data(), 1U, stride, file);
+                    }
+                    std::fclose(file);
+                }
+            }
+        }
     }
     ui_tgfx_ready = true;
     return true;
@@ -2246,19 +2287,44 @@ void RenderSystem::Impl::drawUi(GraphExecuteContext& commands)
     ResonateRenderDevice& device = *commands.device;
 
 #if defined(RESONATE_WITH_TGFX)
-    /* The tgfx pixels were uploaded outside the frame; the overlay quad
-       samples the image in this pass. */
+    /* The tgfx pixels were submitted outside the frame; the overlay quad
+       samples the target image in this pass. The attached path transitions
+       from the layout the experiment names; the readback fallback guards the
+       transfer write of its upload. */
     if (ui_tgfx_ready)
     {
         ResonateRenderBarrierDesc barrier = {};
         barrier.struct_size = sizeof(barrier);
         barrier.image = ui_text_image;
-        barrier.before_stages = RESONATE_RENDER_STAGE_TRANSFER;
-        barrier.before_access = RESONATE_RENDER_ACCESS_TRANSFER_WRITE;
         barrier.after_stages = RESONATE_RENDER_STAGE_FRAGMENT;
         barrier.after_access = RESONATE_RENDER_ACCESS_SHADER_READ;
-        barrier.before_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
         barrier.after_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
+        if (ui_target_attached)
+        {
+            /* tgfx leaves its render targets in GENERAL (the layout enum's own
+               note); the env overrides for experiments. */
+            static const ResonateRenderImageLayout attached_layout = [] {
+                const char* choice = std::getenv("RESONATE_TGFX_LAYOUT");
+                if (choice != nullptr && std::strcmp(choice, "shader_read_only") == 0)
+                {
+                    return RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
+                }
+                if (choice != nullptr && std::strcmp(choice, "color") == 0)
+                {
+                    return RESONATE_RENDER_LAYOUT_COLOR_ATTACHMENT;
+                }
+                return RESONATE_RENDER_LAYOUT_GENERAL;
+            }();
+            barrier.before_stages = RESONATE_RENDER_STAGE_COLOR_OUTPUT;
+            barrier.before_access = RESONATE_RENDER_ACCESS_COLOR_WRITE;
+            barrier.before_layout = attached_layout;
+        }
+        else
+        {
+            barrier.before_stages = RESONATE_RENDER_STAGE_TRANSFER;
+            barrier.before_access = RESONATE_RENDER_ACCESS_TRANSFER_WRITE;
+            barrier.before_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
+        }
         device.barrier(device.self, &barrier);
     }
 #endif

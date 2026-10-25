@@ -61,6 +61,18 @@ typedef struct ResonateTgfxImageDraw
     float v1; /* the source sub-rect, in image fractions */
 } ResonateTgfxImageDraw;
 
+/* The renderer's color-attachment-capable image the UI layer draws into, so
+   the frame samples it without a readback. Mirrors the render device's
+   native_image tail. */
+typedef struct ResonateTgfxNativeImage
+{
+    std::uint64_t image;
+    std::uint32_t format;
+    std::uint32_t layout;
+    std::uint32_t width;
+    std::uint32_t height;
+} ResonateTgfxNativeImage;
+
 /* Wraps the host's Vulkan handles and opens every font path. The handles are
    borrowed; a path that fails to open fails the call. Answers 0 on success. */
 int32_t resonate_tgfx_ui_create(void* instance, void* physical_device, void* device, void* queue,
@@ -83,6 +95,16 @@ void resonate_tgfx_image_release(ResonateTgfxUi ui, std::uint32_t id);
 
 /* Copies the last draw to `data` as tightly packed premultiplied RGBA8. */
 int32_t resonate_tgfx_ui_read_pixels(ResonateTgfxUi ui, void* data, std::uint64_t size_bytes);
+
+/* Draws the UI layer into `target`, the renderer's own color-attachment image,
+   instead of a wrapper-owned surface; drawing afterwards without read_pixels
+   is the zero-copy path. The image's memory is bound by the render device.
+   Answers 0 on success. */
+int32_t resonate_tgfx_ui_attach(ResonateTgfxUi ui, const ResonateTgfxNativeImage* target);
+
+/* The layout the last draw left the attached target in; undefined (0) when no
+   target is attached. */
+std::uint32_t resonate_tgfx_ui_target_layout(ResonateTgfxUi ui);
 
 void resonate_tgfx_ui_destroy(ResonateTgfxUi ui);
 

@@ -15,8 +15,10 @@
 #include <tgfx/core/Surface.h>
 #include <tgfx/core/TextBlob.h>
 #include <tgfx/core/Typeface.h>
+#include <tgfx/gpu/Backend.h>
 #include <tgfx/gpu/Context.h>
 #include <tgfx/gpu/vulkan/VulkanDevice.h>
+#include <tgfx/gpu/vulkan/VulkanTypes.h>
 
 #if defined(_WIN32)
 #    define RESONATE_TGFX_API __declspec(dllexport)
@@ -35,6 +37,11 @@ struct Ui
     std::unordered_map<std::uint32_t, std::shared_ptr<tgfx::Image>> images;
     std::uint32_t width = 0U;
     std::uint32_t height = 0U;
+    /* The layout the attached target was left in; 0 = undefined. */
+    std::uint32_t target_layout = 0U;
+    /* True once the surface wraps the renderer's own image; the draw then
+       never recreates the surface on a size change (a resize re-attaches). */
+    bool attached = false;
 };
 
 /* One TextBlob per typeface: glyphs of a run may fall back across fonts, and
@@ -133,7 +140,8 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
     {
         return -3;
     }
-    if (ui->surface == nullptr || ui->width != width || ui->height != height)
+    if (!ui->attached &&
+        (ui->surface == nullptr || ui->width != width || ui->height != height))
     {
         ui->surface = tgfx::Surface::Make(context, static_cast<int>(width),
                                           static_cast<int>(height));
@@ -238,6 +246,47 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_read_pixels(ResonateTgfxUi handle, vo
     const bool read = ui->surface->readPixels(info, data);
     ui->device->unlock();
     return read ? 0 : -4;
+}
+
+RESONATE_TGFX_API int32_t resonate_tgfx_ui_attach(ResonateTgfxUi handle,
+                                                  const ResonateTgfxNativeImage* target)
+{
+    auto* ui = static_cast<Ui*>(handle);
+    if (ui == nullptr || target == nullptr || target->image == 0U || target->width == 0U ||
+        target->height == 0U)
+    {
+        return -1;
+    }
+    auto* context = ui->device->lockContext();
+    if (context == nullptr)
+    {
+        return -2;
+    }
+    tgfx::VulkanImageInfo info{};
+    info.image = target->image;
+    info.format = target->format;
+    info.layout = target->layout;
+    const tgfx::BackendTexture texture(info, static_cast<int>(target->width),
+                                       static_cast<int>(target->height));
+    auto surface =
+        tgfx::Surface::MakeFrom(context, texture, tgfx::ImageOrigin::TopLeft);
+    ui->device->unlock();
+    if (surface == nullptr)
+    {
+        return -3;
+    }
+    ui->surface = std::move(surface);
+    ui->width = target->width;
+    ui->height = target->height;
+    ui->target_layout = target->layout;
+    ui->attached = true;
+    return 0;
+}
+
+RESONATE_TGFX_API std::uint32_t resonate_tgfx_ui_target_layout(ResonateTgfxUi handle)
+{
+    auto* ui = static_cast<Ui*>(handle);
+    return ui != nullptr ? ui->target_layout : 0U;
 }
 
 RESONATE_TGFX_API void resonate_tgfx_ui_destroy(ResonateTgfxUi handle)
