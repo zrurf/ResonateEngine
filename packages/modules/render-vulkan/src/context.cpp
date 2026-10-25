@@ -1616,6 +1616,24 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
     pass.pAttachments = attachments;
     pass.subpassCount = 1;
     pass.pSubpasses = &subpass;
+    /* A pass that ends in the present layout feeds the presentation engine,
+       which is external to the pass: the dependency makes the colour writes
+       and the final transition available before that read. The Mali-G51 drops
+       the last pass's fragment work without it (a frame shows the clear
+       colour alone) while the same pass keeps drawing on Adreno and desktop
+       drivers, so the dependency is not optional. */
+    VkSubpassDependency present_dependency{};
+    if (!colorless && color == RESONATE_RENDER_FORMAT_UNKNOWN && !offscreen_)
+    {
+        present_dependency.srcSubpass = 0;
+        present_dependency.dstSubpass = VK_SUBPASS_EXTERNAL;
+        present_dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        present_dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        present_dependency.dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+        present_dependency.dstAccessMask = 0;
+        pass.dependencyCount = 1;
+        pass.pDependencies = &present_dependency;
+    }
     VkRenderPass handle = VK_NULL_HANDLE;
     const VkResult created = vkCreateRenderPass(device_, &pass, nullptr, &handle);
     if (created != VK_SUCCESS)
@@ -2198,6 +2216,30 @@ ResonateStatus Context::present()
         to_present.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         to_present.dstAccessMask = 0;
         vkCmdPipelineBarrier(frame.command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
+                             &to_present);
+    }
+
+    /* The frame's colour writes must be available to the presentation engine
+       before the image leaves this submission. On Mali-G51 the semaphore alone
+       is not enough: without this barrier some frames present the final pass's
+       clear colour and drop its draw. */
+    if (!offscreen_ && swapchain_ != VK_NULL_HANDLE &&
+        image_index_ < static_cast<uint32_t>(swapchain_images_.size()))
+    {
+        VkImageMemoryBarrier to_present{};
+        to_present.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        to_present.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        to_present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_present.image = swapchain_images_[image_index_];
+        to_present.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        to_present.subresourceRange.levelCount = 1;
+        to_present.subresourceRange.layerCount = 1;
+        to_present.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        to_present.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        vkCmdPipelineBarrier(frame.command, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                              VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
                              &to_present);
     }

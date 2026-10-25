@@ -203,7 +203,9 @@ if not os.isfile(keystore) then
                     "-alias", "androiddebugkey", "-keyalg", "RSA", "-keysize", "2048",
                     "-validity", "10000", "-dname", "CN=Android Debug,O=Android,C=US"})
 end
-run("java", {"-jar", apksigner, "sign",
+-- A small heap: apksigner needs little, and the default reservation fails on
+-- machines with a tight commit limit.
+run("java", {"-Xmx256m", "-Xss1m", "-jar", apksigner, "sign",
              "--ks", keystore, "--ks-key-alias", "androiddebugkey",
              "--ks-pass", "pass:android", "--key-pass", "pass:android",
              "--out", output, aligned})
