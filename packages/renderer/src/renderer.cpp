@@ -1173,6 +1173,10 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         ui_pixels.resize(static_cast<std::size_t>(width) * height * 4U);
         ui_target_attached = false;
     }
+    /* The compat tier (the Mali-G51 class) keeps the attach path: the readback
+       bridge wedged the render thread there (the driver's readPixels and our
+       own upload waits interleave badly), and the attach path renders once
+       the layout handshake is symmetric. */
     if (!ui_target_attached && device->native_image != nullptr)
     {
         ResonateRenderNativeImage native = {};
@@ -1200,6 +1204,17 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
     {
         complain("tgfx: the UI draw failed");
         return false;
+    }
+    if (!ui_target_attached)
+    {
+        /* The wrapper drew into its own surface; upload the pixels through the
+           RHI, whose transitions own the layout deterministically. */
+        if (resonate_tgfx_ui_read_pixels(tgfx_ui, ui_pixels.data(), ui_pixels.size()) != 0 ||
+            device->upload_image(device->self, ui_text_image, ui_pixels.data(), ui_pixels.size(),
+                                 static_cast<std::uint64_t>(width) * 4U) != RESONATE_OK)
+        {
+            return false;
+        }
     }
 
     if (const char* dump = std::getenv("RESONATE_DUMP_UI_TARGET"))
@@ -2078,10 +2093,12 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
     ui_constants.font_slot = uiTextureSlot(ui::kTextureFont);
     ui_constants.overlay_slot = uiTextureSlot(kUiTextOverlayTexture);
     const auto quads = active->ui.quads();
-    if (!quads.empty() || ui_tgfx_ready)
+    /* With tgfx ready the blend pass samples the tgfx target itself; the ui
+       pass clears only, and no vertices ride the buffer. */
+    if (!quads.empty() && !ui_tgfx_ready)
     {
         const std::size_t count = std::min<std::size_t>(quads.size(), kMaxUiQuads);
-        if (quads.size() > count && !ui_tgfx_ready)
+        if (quads.size() > count)
         {
             complain("the UI display list was truncated to the vertex buffer");
         }
@@ -2091,13 +2108,6 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
         for (std::size_t index = 0; index < count; ++index)
         {
             const ui::Quad& quad = quads[index];
-#if defined(RESONATE_WITH_TGFX)
-            /* tgfx produced the whole UI layer; only its overlay quad is drawn. */
-            if (ui_tgfx_ready)
-            {
-                continue;
-            }
-#endif
             const float right = quad.x + quad.width;
             const float bottom = quad.y + quad.height;
             const UiVertex top_left{quad.x,  quad.y,   quad.color.x, quad.color.y,
@@ -2123,29 +2133,6 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
             ui_vertex_scratch.push_back(bottom_right);
             ui_vertex_scratch.push_back(bottom_left);
         }
-#if defined(RESONATE_WITH_TGFX)
-        if (ui_tgfx_ready)
-        {
-            const float right = static_cast<float>(active->target_width);
-            const float bottom = static_cast<float>(active->target_height);
-            const UiVertex top_left{0.0F, 0.0F, 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F};
-            const UiVertex top_right{right, 0.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 0.0F};
-            const UiVertex bottom_right{right, bottom, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F};
-            const UiVertex bottom_left{0.0F, bottom, 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 1.0F};
-            const std::uint32_t first = static_cast<std::uint32_t>(ui_vertex_scratch.size());
-            if (ui_batches.empty() || ui_batches.back().texture != kUiTextOverlayTexture)
-            {
-                ui_batches.push_back(UiBatch{first, 0U, kUiTextOverlayTexture});
-            }
-            ui_batches.back().vertex_count += 6U;
-            ui_vertex_scratch.push_back(top_left);
-            ui_vertex_scratch.push_back(top_right);
-            ui_vertex_scratch.push_back(bottom_right);
-            ui_vertex_scratch.push_back(top_left);
-            ui_vertex_scratch.push_back(bottom_right);
-            ui_vertex_scratch.push_back(bottom_left);
-        }
-#endif
 
         const auto* bytes = reinterpret_cast<const std::uint8_t*>(ui_vertex_scratch.data());
         const std::size_t total_bytes = ui_vertex_scratch.size() * sizeof(UiVertex);
@@ -2290,45 +2277,20 @@ void RenderSystem::Impl::drawUi(GraphExecuteContext& commands)
     ResonateRenderDevice& device = *commands.device;
 
 #if defined(RESONATE_WITH_TGFX)
-    /* The tgfx pixels were submitted outside the frame; the overlay quad
-       samples the target image in this pass. The attached path transitions
-       from the layout the experiment names; the readback fallback guards the
-       transfer write of its upload. */
+    /* With tgfx ready this pass only clears its target for the graph's
+       resource bookkeeping; the blend pass samples the tgfx target directly
+       (see blendEntry, which also owns its barrier). */
     if (ui_tgfx_ready)
     {
-        ResonateRenderBarrierDesc barrier = {};
-        barrier.struct_size = sizeof(barrier);
-        barrier.image = ui_text_image;
-        barrier.after_stages = RESONATE_RENDER_STAGE_FRAGMENT;
-        barrier.after_access = RESONATE_RENDER_ACCESS_SHADER_READ;
-        barrier.after_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
-        if (ui_target_attached)
+        ResonateRenderPassDesc clear_only{};
+        clear_only.struct_size = sizeof(clear_only);
+        clear_only.color = commands.image(ui_resource);
+        clear_only.clear_color = ResonateVec4{0.0F, 0.0F, 0.0F, 0.0F};
+        if (device.begin_pass(device.self, &clear_only) == RESONATE_OK)
         {
-            /* tgfx leaves its render targets in GENERAL (the layout enum's own
-               note); the env overrides for experiments. */
-            static const ResonateRenderImageLayout attached_layout = [] {
-                const char* choice = std::getenv("RESONATE_TGFX_LAYOUT");
-                if (choice != nullptr && std::strcmp(choice, "shader_read_only") == 0)
-                {
-                    return RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
-                }
-                if (choice != nullptr && std::strcmp(choice, "color") == 0)
-                {
-                    return RESONATE_RENDER_LAYOUT_COLOR_ATTACHMENT;
-                }
-                return RESONATE_RENDER_LAYOUT_GENERAL;
-            }();
-            barrier.before_stages = RESONATE_RENDER_STAGE_COLOR_OUTPUT;
-            barrier.before_access = RESONATE_RENDER_ACCESS_COLOR_WRITE;
-            barrier.before_layout = attached_layout;
+            device.end_pass(device.self);
         }
-        else
-        {
-            barrier.before_stages = RESONATE_RENDER_STAGE_TRANSFER;
-            barrier.before_access = RESONATE_RENDER_ACCESS_TRANSFER_WRITE;
-            barrier.before_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
-        }
-        device.barrier(device.self, &barrier);
+        return;
     }
 #endif
 
@@ -2475,14 +2437,90 @@ void RenderSystem::Impl::fxaaEntry(void* context, GraphExecuteContext& commands)
                        1.0F / static_cast<float>(self->target_height), 0.0F, 0.0F});
 }
 
+namespace
+{
+
+/* VkImageLayout value -> RHI layout enum, for barriers that follow work done
+   outside this device (tgfx reports its target's layout as a Vk value). */
+ResonateRenderImageLayout rhiLayoutOfVk(std::uint32_t vk_layout)
+{
+    switch (vk_layout)
+    {
+        case 1U: return RESONATE_RENDER_LAYOUT_GENERAL;
+        case 2U: return RESONATE_RENDER_LAYOUT_COLOR_ATTACHMENT;
+        case 3U: return RESONATE_RENDER_LAYOUT_DEPTH_ATTACHMENT;
+        case 5U: return RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
+        case 6U: return RESONATE_RENDER_LAYOUT_TRANSFER_SRC;
+        case 7U: return RESONATE_RENDER_LAYOUT_TRANSFER_DST;
+        case 1000000002U: return RESONATE_RENDER_LAYOUT_PRESENT;
+        default: break;
+    }
+    return RESONATE_RENDER_LAYOUT_UNDEFINED;
+}
+
+} // namespace
+
 void RenderSystem::Impl::blendEntry(void* context, GraphExecuteContext& commands)
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
+    ResonateRenderDevice& device = *commands.device;
     const ResourceId scene =
         self->features.antialiases() ? self->ldr_aa_resource : self->ldr_resource;
+    /* With tgfx ready the blend pass samples the tgfx target directly — the
+       overlay pass is skipped entirely, which is also the Mali-compatible
+       path. The barrier guards the target's last write (tgfx's own submit or
+       the readback upload) before this pass reads it. */
+    std::uint32_t ui_slot = commands.imageSlot(self->ui_resource);
+    if (self->ui_tgfx_ready)
+    {
+        ResonateRenderBarrierDesc barrier = {};
+        barrier.struct_size = sizeof(barrier);
+        barrier.image = self->ui_text_image;
+        barrier.after_stages = RESONATE_RENDER_STAGE_FRAGMENT;
+        barrier.after_access = RESONATE_RENDER_ACCESS_SHADER_READ;
+        barrier.after_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
+        ResonateRenderImageLayout tgfx_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
+        if (self->ui_target_attached)
+        {
+            /* The sampled layout must match what tgfx reported, and the image
+               goes back to that layout after this pass: tgfx's next draw
+               starts from its own bookkeeping, so the barrier's layouts have
+               to match the state tgfx left the image in. */
+            const ResonateRenderImageLayout reported =
+                rhiLayoutOfVk(resonate_tgfx_ui_target_layout(self->tgfx_ui));
+            tgfx_layout = reported != RESONATE_RENDER_LAYOUT_UNDEFINED
+                              ? reported
+                              : RESONATE_RENDER_LAYOUT_GENERAL;
+            barrier.before_stages = RESONATE_RENDER_STAGE_COLOR_OUTPUT;
+            barrier.before_access = RESONATE_RENDER_ACCESS_COLOR_WRITE;
+            barrier.before_layout = tgfx_layout;
+        }
+        else
+        {
+            barrier.before_stages = RESONATE_RENDER_STAGE_TRANSFER;
+            barrier.before_access = RESONATE_RENDER_ACCESS_TRANSFER_WRITE;
+            barrier.before_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
+        }
+        device.barrier(device.self, &barrier);
+        ui_slot = self->ui_text_slot;
+        self->runPost(commands, self->canvas_resource, self->blend_pipeline,
+                      commands.imageSlot(scene), 0U, ui_slot, Vec4{0.0F, 0.0F, 0.0F, 0.0F});
+        if (self->ui_target_attached && tgfx_layout != RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY)
+        {
+            /* Return the target to tgfx's layout for its next draw. */
+            ResonateRenderBarrierDesc restore = barrier;
+            restore.before_stages = RESONATE_RENDER_STAGE_FRAGMENT;
+            restore.before_access = RESONATE_RENDER_ACCESS_SHADER_READ;
+            restore.before_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
+            restore.after_stages = RESONATE_RENDER_STAGE_COLOR_OUTPUT;
+            restore.after_access = RESONATE_RENDER_ACCESS_COLOR_WRITE;
+            restore.after_layout = tgfx_layout;
+            device.barrier(device.self, &restore);
+        }
+        return;
+    }
     self->runPost(commands, self->canvas_resource, self->blend_pipeline,
-                  commands.imageSlot(scene), 0U, commands.imageSlot(self->ui_resource),
-                  Vec4{0.0F, 0.0F, 0.0F, 0.0F});
+                  commands.imageSlot(scene), 0U, ui_slot, Vec4{0.0F, 0.0F, 0.0F, 0.0F});
 }
 
 RenderSystem::RenderSystem() : impl_(std::make_unique<Impl>())

@@ -1,6 +1,8 @@
 #include <resonate/ui_tgfx.h>
 
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -193,6 +195,16 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
         canvas->drawImageRect(image, source, destination, sampling);
     }
     context->flushAndSubmit(false);
+    if (ui->attached)
+    {
+        /* The renderer's sampling barrier starts from the layout tgfx left the
+           wrapped target in, not from an assumption about it. */
+        tgfx::VulkanImageInfo info{};
+        if (ui->surface->getBackendTexture().getVulkanImageInfo(&info))
+        {
+            ui->target_layout = info.layout;
+        }
+    }
     ui->device->unlock();
     return 0;
 }

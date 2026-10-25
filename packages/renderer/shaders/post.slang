@@ -122,9 +122,10 @@ float4 fxaaFragment(VertexOutput input) : SV_Target
 [shader("fragment")]
 float4 blendFragment(VertexOutput input) : SV_Target
 {
-    // The scene is tonemapped and already antialiased; the UI image holds
-    // premultiplied color the overlay pass accumulated with source-alpha
-    // blending, so blending here repeats the multiply on purpose.
+    // The scene is tonemapped and already antialiased. Both UI layers hold
+    // premultiplied color — tgfx draws into its target that way and the overlay
+    // pass accumulates quads with source-alpha blending — so compositing here
+    // is a plain source-over.
     float3 scene = image_table[push.slots.x].Sample(input.uv).rgb;
     float4 ui = image_table[push.slots.z].Sample(input.uv);
     return float4(scene * (1.0 - ui.a) + ui.rgb, 1.0);
