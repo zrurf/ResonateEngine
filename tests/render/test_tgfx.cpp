@@ -68,7 +68,7 @@ TEST_CASE("tgfx shares the render device and draws shaped CJK text", "[render][t
     ResonateTgfxRect background{0.0F, 0.0F, 256.0F, 128.0F, 0.0F, 0.0F, 0.0F, 1.0F};
     ResonateTgfxText run{24.0F, 1.0F, 1.0F, 1.0F, 1.0F, glyphs.data(),
                          static_cast<std::uint32_t>(glyphs.size())};
-    REQUIRE(resonate_tgfx_ui_draw(ui, 256U, 128U, &background, 1U, &run, 1U) == 0);
+    REQUIRE(resonate_tgfx_ui_draw(ui, 256U, 128U, &background, 1U, &run, 1U, nullptr, 0U) == 0);
 
     std::vector<std::uint8_t> pixels(256U * 128U * 4U);
     REQUIRE(resonate_tgfx_ui_read_pixels(ui, pixels.data(), pixels.size()) == 0);

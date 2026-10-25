@@ -30,6 +30,13 @@ const char* const kUiDocument = R"xml(<document version="1" schemas="resonate.ui
   </Screen>
 </document>)xml";
 
+const char* const kImageDocument = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Picture key="logo" name="Logo" texture="16" x="10" y="10" width="48" height="48"
+             position="Absolute"/>
+  </Screen>
+</document>)xml";
+
 } // namespace
 
 TEST_CASE("offscreen: the renderer draws the UI through tgfx", "[render][tgfx]")
@@ -108,6 +115,88 @@ TEST_CASE("offscreen: the renderer draws the UI through tgfx", "[render][tgfx]")
     /* The blend pass composites the UI after FXAA, so the bold sample keeps
        its full stroke coverage. */
     CHECK(white > 300U);
+
+    render_system.release();
+    host->detachAll();
+}
+
+TEST_CASE("offscreen: the renderer draws a registered Picture image", "[render][tgfx]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    REQUIRE(resonate::render::publishOffscreen(host->capabilities(), 320U, 240U) == RESONATE_OK);
+    REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+    REQUIRE(host->resolve() == RESONATE_OK);
+    REQUIRE(host->attachAll() == RESONATE_OK);
+
+    auto* device = static_cast<ResonateRenderDevice*>(resonate_capability_find(
+        host->capabilities(), resonate::detail::CapabilityTraits<ResonateRenderDevice>::id.value(),
+        1U, nullptr));
+    REQUIRE(device != nullptr);
+
+    const std::string font_path =
+        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Regular.ttf";
+    std::string font_error;
+    const auto font = resonate::text::Font::loadFile(font_path, font_error);
+    REQUIRE(font != nullptr);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kImageDocument, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    const resonate::ecs::Entity canvas =
+        resonate::ui::instantiate(world, *document, nullptr, {font});
+    REQUIRE(canvas.valid());
+    REQUIRE(resonate::ui::layout(world, canvas, 320.0F, 240.0F));
+
+    const std::string image_path =
+        std::string(RESONATE_SOURCE_DIR) + "/content/ui/images/logo.png";
+    resonate::renderer::RenderSystem render_system;
+    render_system.setRegistry(host->capabilities());
+    render_system.setUiFontPaths({font_path});
+    render_system.setUiImageTexture(16U, image_path);
+    for (int frame = 0; frame < 8; ++frame)
+    {
+        render_system.run(world);
+    }
+    render_system.waitIdle();
+
+    std::vector<std::uint8_t> pixels(320U * 240U * 4U);
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    const ResonateStatus status = device->readback_canvas(
+        device->self, pixels.data(), static_cast<std::uint64_t>(pixels.size()), &width, &height);
+    if (status != RESONATE_OK)
+    {
+        render_system.release();
+        host->detachAll();
+        SKIP("no Vulkan offscreen device on this machine");
+    }
+    REQUIRE(width == 320U);
+    REQUIRE(height == 240U);
+
+    /* The 64px sample: white 8px border, magenta left half, cyan right half.
+       Inside the 48px rect the mid rows read magenta then cyan. */
+    const auto pixelAt = [&pixels, width](std::uint32_t x, std::uint32_t y)
+    {
+        const std::size_t index = (static_cast<std::size_t>(y) * width + x) * 4U;
+        return (static_cast<std::uint32_t>(pixels[index]) << 16U) |
+               (static_cast<std::uint32_t>(pixels[index + 1U]) << 8U) |
+               static_cast<std::uint32_t>(pixels[index + 2U]);
+    };
+    INFO("left=" << pixelAt(22U, 34U) << " right=" << pixelAt(38U, 34U));
+    CHECK(pixelAt(22U, 34U) == 0xFF00FFU);
+    CHECK(pixelAt(38U, 34U) == 0x00FFFFU);
+    /* The border frame stays white against the dark scene. */
+    CHECK(pixelAt(13U, 34U) == 0xFFFFFFU);
 
     render_system.release();
     host->detachAll();

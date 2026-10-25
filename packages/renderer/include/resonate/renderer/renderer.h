@@ -71,6 +71,11 @@ class RenderSystem
        before the frame loop; a platform without a tgfx build ignores it. */
     void setUiFontPaths(std::vector<std::string> paths);
 
+    /* Registers the Picture texture `id` and the image file that backs it;
+       decoded through tgfx on the render thread and uploaded once. Call before
+       the frame loop; a platform without a tgfx build ignores it. */
+    void setUiImageTexture(std::uint32_t id, std::string path);
+
     /* Registers the render components; idempotent, and a refusal (a name
        collision) answers false. */
     static bool registerComponents(ecs::World& world);

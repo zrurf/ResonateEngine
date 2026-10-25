@@ -3,11 +3,13 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <tgfx/core/Canvas.h>
 #include <tgfx/core/Color.h>
 #include <tgfx/core/Font.h>
+#include <tgfx/core/Image.h>
 #include <tgfx/core/ImageInfo.h>
 #include <tgfx/core/Paint.h>
 #include <tgfx/core/Surface.h>
@@ -30,6 +32,7 @@ struct Ui
     std::shared_ptr<tgfx::VulkanDevice> device;
     std::shared_ptr<tgfx::Surface> surface;
     std::vector<std::shared_ptr<tgfx::Typeface>> typefaces;
+    std::unordered_map<std::uint32_t, std::shared_ptr<tgfx::Image>> images;
     std::uint32_t width = 0U;
     std::uint32_t height = 0U;
 };
@@ -116,7 +119,9 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
                                                 const ResonateTgfxRect* rects,
                                                 std::uint32_t rect_count,
                                                 const ResonateTgfxText* texts,
-                                                std::uint32_t text_count)
+                                                std::uint32_t text_count,
+                                                const ResonateTgfxImageDraw* images,
+                                                std::uint32_t image_count)
 {
     auto* ui = static_cast<Ui*>(handle);
     if (ui == nullptr || width == 0U || height == 0U)
@@ -157,9 +162,56 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
     {
         drawText(canvas, texts[index], ui->typefaces);
     }
+    for (std::uint32_t index = 0; index < image_count; ++index)
+    {
+        const ResonateTgfxImageDraw& draw = images[index];
+        const auto found = ui->images.find(draw.id);
+        if (found == ui->images.end() || found->second == nullptr || draw.width <= 0.0F ||
+            draw.height <= 0.0F)
+        {
+            continue;
+        }
+        const std::shared_ptr<tgfx::Image>& image = found->second;
+        const tgfx::Rect source = tgfx::Rect::MakeXYWH(
+            draw.u0 * static_cast<float>(image->width()), draw.v0 * static_cast<float>(image->height()),
+            (draw.u1 - draw.u0) * static_cast<float>(image->width()),
+            (draw.v1 - draw.v0) * static_cast<float>(image->height()));
+        const tgfx::Rect destination = tgfx::Rect::MakeXYWH(draw.x, draw.y, draw.width, draw.height);
+        /* The registered file has no mip chain; the default MipmapMode::Linear
+           would sample nothing. */
+        const tgfx::SamplingOptions sampling(tgfx::FilterMode::Linear, tgfx::MipmapMode::None);
+        canvas->drawImageRect(image, source, destination, sampling);
+    }
     context->flushAndSubmit(false);
     ui->device->unlock();
     return 0;
+}
+
+RESONATE_TGFX_API int32_t resonate_tgfx_image_register(ResonateTgfxUi handle, std::uint32_t id,
+                                                       const char* path)
+{
+    auto* ui = static_cast<Ui*>(handle);
+    if (ui == nullptr || path == nullptr)
+    {
+        return -1;
+    }
+    auto image = tgfx::Image::MakeFromFile(path);
+    if (image == nullptr || image->width() <= 0 || image->height() <= 0)
+    {
+        return -2;
+    }
+    ui->images[id] = std::move(image);
+    return 0;
+}
+
+RESONATE_TGFX_API void resonate_tgfx_image_release(ResonateTgfxUi handle, std::uint32_t id)
+{
+    auto* ui = static_cast<Ui*>(handle);
+    if (ui == nullptr)
+    {
+        return;
+    }
+    ui->images.erase(id);
 }
 
 RESONATE_TGFX_API int32_t resonate_tgfx_ui_read_pixels(ResonateTgfxUi handle, void* data,

@@ -15,6 +15,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -480,7 +481,19 @@ struct RenderSystem::Impl
     std::vector<ResonateTgfxRect> ui_draw_rects;
     std::vector<ResonateTgfxGlyph> ui_draw_glyphs;
     std::vector<ResonateTgfxText> ui_draw_texts;
+    std::vector<ResonateTgfxImageDraw> ui_draw_images;
     bool ui_text_cleared = false;
+
+    /* Picture textures: the main thread registers id → file; the render thread
+       registers the file with the tgfx layer, which decodes on its first draw.
+       Quads naming a registered id draw the image; others stay solid rects. */
+    struct UiImageRequest
+    {
+        std::uint32_t id = 0U;
+        std::string path;
+    };
+    std::vector<UiImageRequest> ui_image_requests;
+    std::unordered_map<std::uint32_t, std::string> ui_images;
 #endif
 
     /* The producer's copy of the canvas's TextAtlasPage, replaced only when
@@ -523,6 +536,7 @@ struct RenderSystem::Impl
 #if defined(RESONATE_WITH_TGFX)
     bool renderTgfxUi(FrameSnapshot& snapshot);
     void releaseTgfx();
+    void processUiImages();
 #endif
     void bindQueries(ecs::World& world);
     void resolveCapabilities();
@@ -1057,8 +1071,12 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
             return false;
         }
     }
+    /* Pending Picture registrations decode here: the tgfx layer must exist
+       first, and the contains-check makes an empty queue cheap. */
+    processUiImages();
 
     ui_draw_rects.clear();
+    ui_draw_images.clear();
     for (const ui::Quad& quad : snapshot.ui.quads())
     {
         if (quad.width <= 0.0F || quad.height <= 0.0F || quad.texture == ui::kTextureFont)
@@ -1081,6 +1099,13 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
                         quad.color.w});
                 }
             }
+            continue;
+        }
+        if (ui_images.contains(quad.texture))
+        {
+            ui_draw_images.push_back(ResonateTgfxImageDraw{
+                quad.texture, quad.x, quad.y, quad.width, quad.height, quad.uv_min.x,
+                quad.uv_min.y, quad.uv_max.x, quad.uv_max.y});
             continue;
         }
         ui_draw_rects.push_back(ResonateTgfxRect{quad.x, quad.y, quad.width, quad.height,
@@ -1113,7 +1138,7 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         ui_draw_texts.push_back(text);
     }
 
-    if (ui_draw_rects.empty() && ui_draw_texts.empty())
+    if (ui_draw_rects.empty() && ui_draw_texts.empty() && ui_draw_images.empty())
     {
         /* No tgfx round trip on an empty layer, but the overlay image must be
            transparent before the pass samples it; one zero upload covers every
@@ -1140,7 +1165,9 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
     if (resonate_tgfx_ui_draw(tgfx_ui, width, height, ui_draw_rects.data(),
                               static_cast<std::uint32_t>(ui_draw_rects.size()),
                               ui_draw_texts.data(),
-                              static_cast<std::uint32_t>(ui_draw_texts.size())) != 0)
+                              static_cast<std::uint32_t>(ui_draw_texts.size()),
+                              ui_draw_images.data(),
+                              static_cast<std::uint32_t>(ui_draw_images.size())) != 0)
     {
         complain("tgfx: the UI draw failed");
         return false;
@@ -1186,10 +1213,26 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
     return true;
 }
 
+void RenderSystem::Impl::processUiImages()
+{
+    for (const UiImageRequest& request : ui_image_requests)
+    {
+        if (resonate_tgfx_image_register(tgfx_ui, request.id, request.path.c_str()) != 0)
+        {
+            complain("tgfx: a UI image was not registered");
+            continue;
+        }
+        ui_images.emplace(request.id, request.path);
+    }
+    ui_image_requests.clear();
+}
+
 void RenderSystem::Impl::releaseTgfx()
 {
     resonate_tgfx_ui_destroy(tgfx_ui);
     tgfx_ui = nullptr;
+    ui_images.clear();
+    ui_image_requests.clear();
     if (ui_text_image.value != 0U && device != nullptr)
     {
         device->destroy_image(device->self, ui_text_image);
@@ -2395,6 +2438,16 @@ void RenderSystem::setUiFontPaths(std::vector<std::string> paths)
     impl_->ui_font_paths = std::move(paths);
 #else
     (void)paths;
+#endif
+}
+
+void RenderSystem::setUiImageTexture(std::uint32_t id, std::string path)
+{
+#if defined(RESONATE_WITH_TGFX)
+    impl_->ui_image_requests.push_back(Impl::UiImageRequest{id, std::move(path)});
+#else
+    (void)id;
+    (void)path;
 #endif
 }
 

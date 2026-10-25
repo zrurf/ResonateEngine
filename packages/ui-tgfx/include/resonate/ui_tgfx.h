@@ -48,6 +48,19 @@ typedef struct ResonateTgfxText
     std::uint32_t glyph_count;
 } ResonateTgfxText;
 
+typedef struct ResonateTgfxImageDraw
+{
+    std::uint32_t id; /* a registered image; unknown ids draw nothing */
+    float x;
+    float y;
+    float width;
+    float height;
+    float u0;
+    float v0;
+    float u1;
+    float v1; /* the source sub-rect, in image fractions */
+} ResonateTgfxImageDraw;
+
 /* Wraps the host's Vulkan handles and opens every font path. The handles are
    borrowed; a path that fails to open fails the call. Answers 0 on success. */
 int32_t resonate_tgfx_ui_create(void* instance, void* physical_device, void* device, void* queue,
@@ -57,7 +70,16 @@ int32_t resonate_tgfx_ui_create(void* instance, void* physical_device, void* dev
 /* Draws one UI layer into the wrapper's surface. Answers 0 on success. */
 int32_t resonate_tgfx_ui_draw(ResonateTgfxUi ui, std::uint32_t width, std::uint32_t height,
                               const ResonateTgfxRect* rects, std::uint32_t rect_count,
-                              const ResonateTgfxText* texts, std::uint32_t text_count);
+                              const ResonateTgfxText* texts, std::uint32_t text_count,
+                              const ResonateTgfxImageDraw* images, std::uint32_t image_count);
+
+/* Registers the image file under `id` for draw calls (PNG through tgfx's
+   codecs); re-registering replaces. Must not run concurrently with draw.
+   Answers 0 on success. */
+int32_t resonate_tgfx_image_register(ResonateTgfxUi ui, std::uint32_t id, const char* path);
+
+/* Releases a registered image; draw calls naming it afterwards are no-ops. */
+void resonate_tgfx_image_release(ResonateTgfxUi ui, std::uint32_t id);
 
 /* Copies the last draw to `data` as tightly packed premultiplied RGBA8. */
 int32_t resonate_tgfx_ui_read_pixels(ResonateTgfxUi ui, void* data, std::uint64_t size_bytes);
