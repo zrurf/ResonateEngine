@@ -1,5 +1,7 @@
 #include "context.h"
 
+#include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,7 +22,7 @@ namespace
 {
 
 constexpr const char* kAppName = "Resonate";
-constexpr uint64_t kAcquireTimeoutNs = 1000000000ull;
+
 
 /* One combined graphics+present family keeps the frame path free of queue
    ownership transfers; the RHI work gives queues their own selection rules. */
@@ -267,6 +269,10 @@ Context::~Context()
         {
             vmaDestroyBuffer(allocator_, debug_canvas_buffer_, debug_canvas_allocation_);
         }
+        if (trace_buffer_ != VK_NULL_HANDLE)
+        {
+            vmaDestroyBuffer(allocator_, trace_buffer_, trace_allocation_);
+        }
         if (table_dummy_view_ != VK_NULL_HANDLE)
         {
             vkDestroyImageView(device_, table_dummy_view_, nullptr);
@@ -337,6 +343,96 @@ void Context::note(bool& once, const char* what)
         once = true;
         std::fprintf(stderr, "render-vulkan: %s\n", what);
     }
+}
+
+void Context::trace(const char* format, ...) const
+{
+    static const bool enabled = std::getenv("RESONATE_FRAME_TRACE") != nullptr;
+    if (!enabled)
+    {
+        return;
+    }
+    std::fprintf(stderr, "render-vulkan: frame %llu ", static_cast<unsigned long long>(frame_));
+    va_list args;
+    va_start(args, format);
+    std::vfprintf(stderr, format, args);
+    va_end(args);
+    std::fputc('\n', stderr);
+}
+
+void Context::tracePresentedTexel(VkCommandBuffer command)
+{
+    static const bool enabled = std::getenv("RESONATE_FRAME_TRACE_TEXEL") != nullptr;
+    if (!enabled || offscreen_ || swapchain_ == VK_NULL_HANDLE || swapchain_images_.empty())
+    {
+        return;
+    }
+    if (trace_buffer_ == VK_NULL_HANDLE)
+    {
+        VkBufferCreateInfo buffer{};
+        buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer.size = 64U;
+        buffer.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO;
+        allocation.flags =
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        if (vmaCreateBuffer(allocator_, &buffer, &allocation, &trace_buffer_, &trace_allocation_,
+                            nullptr) != VK_SUCCESS)
+        {
+            return;
+        }
+    }
+    VkImageMemoryBarrier to_copy{};
+    to_copy.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_copy.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    to_copy.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_copy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_copy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_copy.image = swapchain_images_[image_index_];
+    to_copy.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    to_copy.subresourceRange.levelCount = 1;
+    to_copy.subresourceRange.layerCount = 1;
+    to_copy.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
+                         &to_copy);
+    VkBufferImageCopy region{};
+    region.bufferOffset = (frame_ % kFramesInFlight) * 16U;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = VkOffset3D{static_cast<int32_t>(extent_.width / 2U),
+                                    static_cast<int32_t>(extent_.height / 2U), 0};
+    region.imageExtent = VkExtent3D{1U, 1U, 1U};
+    vkCmdCopyImageToBuffer(command, swapchain_images_[image_index_],
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, trace_buffer_, 1U, &region);
+    VkImageMemoryBarrier to_present = to_copy;
+    to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    to_present.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    to_present.dstAccessMask = 0;
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
+                         &to_present);
+    trace_frames_[frame_ % kFramesInFlight] = frame_;
+}
+
+void Context::tracePreviousTexel()
+{
+    if (trace_buffer_ == VK_NULL_HANDLE)
+    {
+        return;
+    }
+    void* mapped = nullptr;
+    if (vmaMapMemory(allocator_, trace_allocation_, &mapped) != VK_SUCCESS)
+    {
+        return;
+    }
+    const std::size_t slot = frame_ % kFramesInFlight;
+    const auto* texel = static_cast<const std::uint8_t*>(mapped) + slot * 16U;
+    std::fprintf(stderr, "render-vulkan: frame %u texel %u,%u,%u\n", trace_frames_[slot],
+                 texel[0], texel[1], texel[2]);
+    vmaUnmapMemory(allocator_, trace_allocation_);
 }
 
 std::string Context::pipelineCachePath() const
@@ -1124,6 +1220,7 @@ ResonateStatus Context::attachSurface(const void* native_surface, uint32_t width
     {
         /* The platform replaced the window (Android does this on rotation); the
            surface and everything built from it belong to the old one. */
+        trace("surface replaced");
         if (device_ != VK_NULL_HANDLE)
         {
             vkDeviceWaitIdle(device_);
@@ -1509,6 +1606,7 @@ void Context::destroySwapchainObjects()
 
 void Context::recreateSwapchain()
 {
+    trace("recreate swapchain");
     vkDeviceWaitIdle(device_);
     destroySwapchainObjects();
     createSwapchain(canvas_width_, canvas_height_);
@@ -1842,6 +1940,10 @@ ResonateStatus Context::beginFrame()
     }
     else if (recreate_pending_ || width != canvas_width_ || height != canvas_height_)
     {
+        if (width != canvas_width_ || height != canvas_height_)
+        {
+            trace("resize %ux%u -> %ux%u", canvas_width_, canvas_height_, width, height);
+        }
         canvas_width_ = width;
         canvas_height_ = height;
         recreate_pending_ = false;
@@ -1849,8 +1951,19 @@ ResonateStatus Context::beginFrame()
     }
 
     Frame& frame = frames_[frame_ % kFramesInFlight];
+    const std::size_t slot = frame_ % kFramesInFlight;
+    const auto wait_begin = std::chrono::steady_clock::now();
     vkWaitForFences(device_, 1, &frame.in_flight, VK_TRUE, UINT64_MAX);
+    if (trace_submit_ns_[slot] != 0U)
+    {
+        const auto waited = std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::steady_clock::now() - wait_begin)
+                                .count();
+        trace("fence slot %zu waited %.2f ms", slot, static_cast<double>(waited) / 1000.0);
+        trace_submit_ns_[slot] = 0U;
+    }
     drainGraveyard(frame.graveyard);
+    tracePreviousTexel();
 
     if (offscreen_)
     {
@@ -1862,21 +1975,25 @@ ResonateStatus Context::beginFrame()
     {
         uint32_t image_index = 0;
         VkResult acquired =
-            vkAcquireNextImageKHR(device_, swapchain_, kAcquireTimeoutNs, frame.image_available,
+            vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, frame.image_available,
                                   VK_NULL_HANDLE, &image_index);
         if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
         {
+            trace("acquire out of date");
             recreateSwapchain();
-            acquired = vkAcquireNextImageKHR(device_, swapchain_, kAcquireTimeoutNs,
+            acquired = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
                                              frame.image_available, VK_NULL_HANDLE, &image_index);
         }
         if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
         {
+            trace("acquire failed %d", static_cast<int>(acquired));
             note(surface_failed_, "image acquisition failed");
             return RESONATE_E_STATE;
         }
         recreate_pending_ = acquired == VK_SUBOPTIMAL_KHR;
         image_index_ = image_index;
+        trace("acquire result=%d image=%u suboptimal=%d", static_cast<int>(acquired), image_index,
+              recreate_pending_ ? 1 : 0);
     }
 
     vkResetFences(device_, 1, &frame.in_flight);
@@ -2243,6 +2360,7 @@ ResonateStatus Context::present()
                              VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
                              &to_present);
     }
+    tracePresentedTexel(frame.command);
     vkEndCommandBuffer(frame.command);
 
     /* An offscreen frame waits on and signals nothing: there is no acquire and
@@ -2265,7 +2383,12 @@ ResonateStatus Context::present()
         submit.signalSemaphoreCount = 1;
         submit.pSignalSemaphores = &render_done;
     }
+    const std::uint64_t submitted_at = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
     const VkResult submitted = vkQueueSubmit(queue_, 1, &submit, frame.in_flight);
+    trace_submit_ns_[frame_ % kFramesInFlight] = submitted_at;
     frame_open_ = false;
     pass_open_ = false;
     bound_pipeline_ = VK_NULL_HANDLE;
@@ -2303,6 +2426,7 @@ ResonateStatus Context::present()
     info.pSwapchains = &swapchain_;
     info.pImageIndices = &image_index_;
     VkResult presented = vkQueuePresentKHR(queue_, &info);
+    trace("present result=%d image=%u", static_cast<int>(presented), image_index_);
     if (presented == VK_ERROR_OUT_OF_DATE_KHR)
     {
         recreate_pending_ = true;

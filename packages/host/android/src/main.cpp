@@ -16,6 +16,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/system_properties.h>
 #include <ucontext.h>
 #include <unistd.h>
 
@@ -254,11 +255,42 @@ std::string stageAssets(android_app* app, const char* asset_directory)
 
 } // namespace
 
+namespace
+{
+
+/* Android has no shell to pass environment variables through, so the engine's
+   diagnostic switches travel as system properties: `adb shell setprop
+   debug.resonate.<name> 1` turns one on before the app starts. */
+void applyDebugProperties()
+{
+    struct Property
+    {
+        const char* property;
+        const char* variable;
+    };
+    static constexpr Property kProperties[] = {
+        {"debug.resonate.frame_trace", "RESONATE_FRAME_TRACE"},
+        {"debug.resonate.frame_trace_texel", "RESONATE_FRAME_TRACE_TEXEL"},
+        {"debug.resonate.dump_ui_target", "RESONATE_DUMP_UI_TARGET"},
+    };
+    for (const Property& entry : kProperties)
+    {
+        char value[PROP_VALUE_MAX] = {};
+        if (__system_property_get(entry.property, value) > 0 && value[0] == '1')
+        {
+            setenv(entry.variable, "1", 1);
+        }
+    }
+}
+
+} // namespace
+
 void android_main(android_app* app)
 {
     installCrashHandler();
     redirectStdioToLogcat();
     resonate::window::attachAndroidApp(app);
+    applyDebugProperties();
 
     std::vector<std::string> arguments{"resonate"};
     const std::string libraries = nativeLibraryDirectory(app);

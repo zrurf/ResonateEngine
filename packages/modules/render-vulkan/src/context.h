@@ -283,6 +283,13 @@ class Context
     ResonateStatus submitAndRun(VkCommandBuffer command); /* one-shot sync submit */
     void drainGraveyard(std::vector<Retired>& graveyard);
     void note(bool& once, const char* what);
+    /* RESONATE_FRAME_TRACE: one line per swapchain event, so a device capture
+       shows what the present path did on the frames around a symptom. */
+    void trace(const char* format, ...) const;
+    /* RESONATE_FRAME_TRACE_TEXEL: the presented image's centre texel, read
+       three frames late through the slot's already-waited fence. */
+    void tracePresentedTexel(VkCommandBuffer command);
+    void tracePreviousTexel();
 
     /* The persistent pipeline cache: loaded at device creation, written at
        teardown. The driver keys its entries by pipeline state and shader code,
@@ -316,6 +323,12 @@ class Context
     VkBuffer debug_canvas_buffer_ = VK_NULL_HANDLE;
     VmaAllocation_T* debug_canvas_allocation_ = nullptr;
     uint32_t debug_canvas_frames_ = 0;
+    /* Frame trace: one texel per frame slot plus the frame that wrote it. */
+    VkBuffer trace_buffer_ = VK_NULL_HANDLE;
+    VmaAllocation_T* trace_allocation_ = nullptr;
+    uint32_t trace_frames_[3] = {0U, 0U, 0U};
+    /* When each slot's frame was submitted, for the fence wait's duration. */
+    std::uint64_t trace_submit_ns_[3] = {0U, 0U, 0U};
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     VkSurfaceFormatKHR surface_format_{};
     VkExtent2D extent_{};
