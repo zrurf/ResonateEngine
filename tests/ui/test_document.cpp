@@ -262,6 +262,59 @@ TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]
     CHECK(near(list.quads()[7].width, 48.0F));
 }
 
+TEST_CASE("ui document: an absolute Picture inside a panel emits a textured quad",
+          "[ui][document]")
+{
+    /* The demo HUD's icon: a Picture anchored absolutely inside a column
+       panel with padding. The panel's flow must leave it out of the layout
+       and still place it, or the icon never reaches the display list. */
+    const char* const text = R"xml(<document version="1">
+  <Screen key="hud">
+    <Panel key="panel" x="40" y="40" width="360" height="180"
+           direction="Column" padding_left="12" padding_top="12">
+      <Label key="title" width="336" height="28" text="Title"/>
+      <Picture key="icon" path="logo.png" x="276" y="96" width="48" height="48"
+               position="Absolute"/>
+    </Panel>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(text, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    resonate::ui::ImageRegistry images;
+    const std::uint32_t logo = images.registerImage("logo.png");
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, {}, nullptr,
+                                                  &images);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 320.0F, 240.0F));
+
+    const Entity panel = resonate::hierarchy::children(fixture.world, root)[0];
+    const auto children = resonate::hierarchy::children(fixture.world, panel);
+    REQUIRE(children.size() == 2U);
+    const ComputedRect* icon_rect = fixture.world.get<ComputedRect>(children[1]);
+    REQUIRE(icon_rect != nullptr);
+    /* An absolute child is anchored inside the panel's content box: the
+       panel's origin plus its padding, then the authored offset. */
+    CHECK(near(icon_rect->x, 40.0F + 12.0F + 276.0F));
+    CHECK(near(icon_rect->y, 40.0F + 12.0F + 96.0F));
+    CHECK(near(icon_rect->width, 48.0F));
+    CHECK(near(icon_rect->height, 48.0F));
+
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+    REQUIRE(list.size() == 3U);
+    const resonate::ui::Quad& quad = list.quads()[2];
+    CHECK(quad.texture == logo);
+    CHECK(near(quad.x, 40.0F + 12.0F + 276.0F));
+    CHECK(near(quad.y, 40.0F + 12.0F + 96.0F));
+    CHECK(near(quad.width, 48.0F));
+}
+
 TEST_CASE("ui document: a nine-sliced Picture emits the nine regions", "[ui][document]")
 {
     const char* const text = R"xml(<document version="1">

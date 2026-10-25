@@ -1219,6 +1219,12 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
 
     if (const char* dump = std::getenv("RESONATE_DUMP_UI_TARGET"))
     {
+        std::fprintf(stderr,
+                     "renderer: ui layer %u rects, %u texts, %u images, %u registered\n",
+                     static_cast<unsigned>(ui_draw_rects.size()),
+                     static_cast<unsigned>(ui_draw_texts.size()),
+                     static_cast<unsigned>(ui_draw_images.size()),
+                     static_cast<unsigned>(ui_images.size()));
         /* Verification: read the target back through tgfx (its own transition)
            and write the first frames out as BMPs. */
         static int dumped = 0;
