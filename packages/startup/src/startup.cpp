@@ -216,6 +216,23 @@ std::string findContentFile(const std::string& relative)
     return {};
 }
 
+/* Packaged platforms stage content into a flat directory and name it through
+   `environment`; the staged file wins over the executable-relative walk. */
+std::string resolveContentFile(const std::string& relative, const char* environment)
+{
+    if (const char* staged = std::getenv(environment))
+    {
+        const std::filesystem::path candidate =
+            std::filesystem::path(staged) / std::filesystem::path(relative).filename();
+        std::error_code error;
+        if (std::filesystem::is_regular_file(candidate, error))
+        {
+            return candidate.string();
+        }
+    }
+    return findContentFile(relative);
+}
+
 bool readTextFile(const std::string& path, std::string& out)
 {
     std::ifstream in(path, std::ios::binary);
@@ -687,7 +704,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             for (const char* name : {"content/ui/fonts/ResonateSansSC-Subset.ttf",
                                      "content/ui/fonts/ResonateSansLatin-Subset.ttf"})
             {
-                const std::string font_path = findContentFile(name);
+                const std::string font_path = resolveContentFile(name, "RESONATE_FONT_PATH");
                 if (font_path.empty())
                 {
                     continue;
@@ -707,7 +724,8 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             render_system.setUiFontPaths(std::move(ui_font_paths));
             ui_text = std::make_unique<ui::TextRuntime>(std::move(ui_fonts));
             std::unique_ptr<ui::StringTable> ui_strings;
-            const std::string strings_path = findContentFile("content/ui/strings.rstrings");
+            const std::string strings_path =
+                resolveContentFile("content/ui/strings.rstrings", "RESONATE_STRINGS_PATH");
             if (!strings_path.empty())
             {
                 std::string xml;

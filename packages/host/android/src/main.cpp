@@ -280,6 +280,12 @@ void android_main(android_app* app)
         setenv("RESONATE_SHADER_PATH", shaders.c_str(), 1);
     }
 
+    const std::string fonts = stageAssets(app, "fonts");
+    if (!fonts.empty())
+    {
+        setenv("RESONATE_FONT_PATH", fonts.c_str(), 1);
+    }
+
     const std::string ui = stageAssets(app, "ui");
     if (!ui.empty())
     {
@@ -287,6 +293,11 @@ void android_main(android_app* app)
         if (access(document.c_str(), R_OK) == 0)
         {
             setenv("RESONATE_UI_DOCUMENT", document.c_str(), 1);
+        }
+        const std::string strings = ui + "/strings.rstrings";
+        if (access(strings.c_str(), R_OK) == 0)
+        {
+            setenv("RESONATE_STRINGS_PATH", strings.c_str(), 1);
         }
     }
 

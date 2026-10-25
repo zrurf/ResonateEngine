@@ -114,13 +114,27 @@ for _, shader in ipairs(shaders) do
 end
 
 -- The UI document is source text for now; it needs no cook step. The host
--- extracts this directory and points the startup at the document.
+-- extracts this directory and points the startup at the document and its
+-- string table; the fonts stay in one flat directory because the asset
+-- manager lists directories without nesting.
 local ui_source = path.join(os.projectdir(), "content", "ui")
-local ui_documents = os.files(path.join(ui_source, "*.rui"))
-if #ui_documents > 0 then
+local ui_assets = os.files(path.join(ui_source, "*.rui"))
+local ui_strings = os.files(path.join(ui_source, "*.rstrings"))
+if #ui_assets > 0 or #ui_strings > 0 then
     os.mkdir(path.join(staging, "assets", "ui"))
-    for _, document in ipairs(ui_documents) do
+    for _, document in ipairs(ui_assets) do
         os.cp(document, path.join(staging, "assets", "ui"))
+    end
+    for _, strings in ipairs(ui_strings) do
+        os.cp(strings, path.join(staging, "assets", "ui"))
+    end
+end
+
+local ui_fonts = os.files(path.join(ui_source, "fonts", "*.ttf"))
+if #ui_fonts > 0 then
+    os.mkdir(path.join(staging, "assets", "fonts"))
+    for _, font in ipairs(ui_fonts) do
+        os.cp(font, path.join(staging, "assets", "fonts"))
     end
 end
 
