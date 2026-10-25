@@ -8,11 +8,12 @@
 #include <resonate/module/host.hpp>
 #include <resonate/render/device.h>
 #include <resonate/render/offscreen.hpp>
+#include <resonate/text/font.h>
 #include <resonate/ui_tgfx.h>
 
 #include "paths.h"
 
-TEST_CASE("tgfx shares the render device and draws CJK text", "[render][tgfx]")
+TEST_CASE("tgfx shares the render device and draws shaped CJK text", "[render][tgfx]")
 {
     const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
     INFO("the plugin targets are a build dependency of this test target");
@@ -37,19 +38,36 @@ TEST_CASE("tgfx shares the render device and draws CJK text", "[render][tgfx]")
     REQUIRE(handles.device != 0U);
 
     ResonateTgfxUi ui = nullptr;
-    const std::string font =
+    const std::string font_path =
         std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Regular.ttf";
+    std::string font_error;
+    const auto font = resonate::text::Font::loadFile(font_path, font_error);
+    REQUIRE(font != nullptr);
+    const std::vector<const char*> font_paths{font_path.c_str()};
     REQUIRE(resonate_tgfx_ui_create(reinterpret_cast<void*>(handles.instance),
                                     reinterpret_cast<void*>(handles.physical_device),
                                     reinterpret_cast<void*>(handles.device),
                                     reinterpret_cast<void*>(handles.queue), handles.queue_family,
-                                    font.c_str(), &ui) == 0);
+                                    font_paths.data(), 1U, &ui) == 0);
     REQUIRE(ui != nullptr);
 
+    /* The engine shapes; the wrapper only draws the glyph origins. */
+    std::vector<resonate::text::ShapedGlyph> shaped;
+    REQUIRE(resonate::text::shape(*font, "\xE5\x8A\xA8\xE4\xBD\x9C\xE6\xBC\x94\xE7\xA4\xBA", 24.0F,
+                                  400.0F, shaped, font_error));
+    REQUIRE(shaped.size() == 4U);
+    std::vector<ResonateTgfxGlyph> glyphs;
+    glyphs.reserve(shaped.size());
+    float pen = 24.0F;
+    for (const resonate::text::ShapedGlyph& glyph : shaped)
+    {
+        glyphs.push_back(ResonateTgfxGlyph{pen, 40.0F, glyph.glyph, 0U});
+        pen += glyph.x_advance;
+    }
+
     ResonateTgfxRect background{0.0F, 0.0F, 256.0F, 128.0F, 0.0F, 0.0F, 0.0F, 1.0F};
-    const char* const text = "\xE5\x8A\xA8\xE4\xBD\x9C\xE6\xBC\x94\xE7\xA4\xBA";
-    ResonateTgfxText run{12.0F, 24.0F, 200.0F, 32.0F, 24.0F, 1.0F, 1.0F, 1.0F, 1.0F, 400U, 0U,
-                         text, 12U};
+    ResonateTgfxText run{24.0F, 1.0F, 1.0F, 1.0F, 1.0F, glyphs.data(),
+                         static_cast<std::uint32_t>(glyphs.size())};
     REQUIRE(resonate_tgfx_ui_draw(ui, 256U, 128U, &background, 1U, &run, 1U) == 0);
 
     std::vector<std::uint8_t> pixels(256U * 128U * 4U);

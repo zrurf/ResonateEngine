@@ -3,7 +3,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 #include <resonate/core/math.h>
@@ -42,21 +41,22 @@ struct Quad
     Vec2 uv_max{1.0F, 1.0F};
 };
 
-/* One label's text and the box layout resolved for it. A renderer that shapes
-   text itself draws this run; the glyph quads stay alongside it for the
-   atlas-based renderer. */
+/* One laid-out glyph in target pixels. Shaping, wrapping, alignment and font
+   fallback happened once in the UI layer; a renderer draws these directly. */
+struct TextGlyph
+{
+    float pen_x = 0.0F;
+    float pen_y = 0.0F; /* baseline */
+    std::uint32_t glyph_id = 0U;
+    std::uint32_t font_index = 0U;
+};
+
+/* One label's shaped glyphs and their paint. */
 struct TextRun
 {
-    float x = 0.0F;
-    float y = 0.0F;
-    float width = 0.0F;
-    float height = 0.0F;
     float font_size = 16.0F;
-    std::uint16_t font_weight = 400U;
-    std::uint8_t align = 0U; /* TextAlign: 0 start, 1 center, 2 end */
-    bool wrap = true;
     Vec4 color{1.0F, 1.0F, 1.0F, 1.0F};
-    std::string text;
+    std::vector<TextGlyph> glyphs;
 };
 
 class DisplayList

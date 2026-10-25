@@ -117,32 +117,26 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         }
         else
         {
-            if (world.alive(text->content))
-            {
-                const auto* bytes = static_cast<const char*>(world.blobData(text->content));
-                const std::size_t size = world.blobSize(text->content);
-                if (bytes != nullptr && size > 0U)
-                {
-                    TextRun run;
-                    run.x = rect->x;
-                    run.y = rect->y;
-                    run.width = rect->width;
-                    run.height = rect->height;
-                    run.font_size = text->font_size;
-                    run.font_weight = text->font_weight;
-                    run.align = static_cast<std::uint8_t>(text->align);
-                    run.wrap = text->wrap;
-                    run.color = text->text_color;
-                    run.text.assign(bytes, size);
-                    texts_.push_back(std::move(run));
-                }
-            }
             const detail::GlyphQuad* records = nullptr;
             std::size_t count = 0;
             if (has_glyphs)
             {
                 records = static_cast<const detail::GlyphQuad*>(world.blobData(glyphs->records));
                 count = world.blobSize(glyphs->records) / sizeof(detail::GlyphQuad);
+            }
+            if (world.alive(text->content) && count > 0U)
+            {
+                TextRun run;
+                run.font_size = text->font_size;
+                run.color = text->text_color;
+                run.glyphs.reserve(count);
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    const detail::GlyphQuad& glyph = records[index];
+                    run.glyphs.push_back(TextGlyph{rect->x + glyph.pen_x, rect->y + glyph.pen_y,
+                                                   glyph.glyph_id, glyph.font_index});
+                }
+                texts_.push_back(std::move(run));
             }
             for (std::size_t index = 0; index < count; ++index)
             {

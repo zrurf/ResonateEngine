@@ -4,8 +4,9 @@
 /* tgfx behind a small C boundary. tgfx's debug archive is over a gigabyte;
    keeping it inside one DLL lets hosts link a tiny import library. The UI layer
    is rendered into a tgfx-owned surface and read back as premultiplied RGBA8;
-   the renderer uploads those pixels into its own UI image. No STL crosses the
-   boundary. */
+   the renderer uploads those pixels into its own UI image. Text arrives as
+   laid-out glyph ids and pen origins — shaping stays in the engine. No STL
+   crosses the boundary. */
 
 #include <cstdint>
 
@@ -28,28 +29,30 @@ typedef struct ResonateTgfxRect
     float a;
 } ResonateTgfxRect;
 
+typedef struct ResonateTgfxGlyph
+{
+    float x; /* pen origin, target pixels */
+    float y; /* baseline */
+    std::uint32_t glyph_id;
+    std::uint32_t font_index; /* into the create-time font path list */
+} ResonateTgfxGlyph;
+
 typedef struct ResonateTgfxText
 {
-    float x;
-    float y;
-    float width;
-    float height;
-    float size;
+    float size; /* pixels per em */
     float r;
     float g;
     float b;
     float a;
-    std::uint16_t weight;
-    std::uint8_t align; /* 0 start, 1 center, 2 end */
-    const char* utf8;
-    std::uint32_t length;
+    const ResonateTgfxGlyph* glyphs;
+    std::uint32_t glyph_count;
 } ResonateTgfxText;
 
-/* Wraps the host's Vulkan handles. The handles are borrowed. Answers 0 on
-   success. */
+/* Wraps the host's Vulkan handles and opens every font path. The handles are
+   borrowed; a path that fails to open fails the call. Answers 0 on success. */
 int32_t resonate_tgfx_ui_create(void* instance, void* physical_device, void* device, void* queue,
-                                std::uint32_t queue_family, const char* font_path,
-                                ResonateTgfxUi* out_ui);
+                                std::uint32_t queue_family, const char* const* font_paths,
+                                std::uint32_t font_count, ResonateTgfxUi* out_ui);
 
 /* Draws one UI layer into the wrapper's surface. Answers 0 on success. */
 int32_t resonate_tgfx_ui_draw(ResonateTgfxUi ui, std::uint32_t width, std::uint32_t height,

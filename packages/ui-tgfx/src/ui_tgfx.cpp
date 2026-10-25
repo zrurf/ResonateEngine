@@ -1,7 +1,9 @@
 #include <resonate/ui_tgfx.h>
 
+#include <cstddef>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <tgfx/core/Canvas.h>
 #include <tgfx/core/Color.h>
@@ -27,10 +29,49 @@ struct Ui
 {
     std::shared_ptr<tgfx::VulkanDevice> device;
     std::shared_ptr<tgfx::Surface> surface;
-    std::shared_ptr<tgfx::Typeface> typeface;
+    std::vector<std::shared_ptr<tgfx::Typeface>> typefaces;
     std::uint32_t width = 0U;
     std::uint32_t height = 0U;
 };
+
+/* One TextBlob per typeface: glyphs of a run may fall back across fonts, and
+   a blob carries exactly one. */
+void drawText(tgfx::Canvas* canvas, const ResonateTgfxText& run,
+              const std::vector<std::shared_ptr<tgfx::Typeface>>& typefaces)
+{
+    if (run.glyphs == nullptr || run.glyph_count == 0U || !(run.size > 0.0F))
+    {
+        return;
+    }
+    tgfx::Paint paint;
+    paint.setColor(tgfx::Color{run.r, run.g, run.b, run.a});
+    for (std::uint32_t font = 0; font < typefaces.size(); ++font)
+    {
+        std::vector<tgfx::GlyphID> ids;
+        std::vector<tgfx::Point> points;
+        for (std::uint32_t index = 0; index < run.glyph_count; ++index)
+        {
+            const ResonateTgfxGlyph& glyph = run.glyphs[index];
+            if (glyph.font_index != font)
+            {
+                continue;
+            }
+            ids.push_back(static_cast<tgfx::GlyphID>(glyph.glyph_id));
+            points.push_back(tgfx::Point::Make(glyph.x, glyph.y));
+        }
+        if (ids.empty())
+        {
+            continue;
+        }
+        const tgfx::Font tgfx_font(typefaces[font], run.size);
+        std::shared_ptr<tgfx::TextBlob> blob =
+            tgfx::TextBlob::MakeFrom(ids.data(), points.data(), ids.size(), tgfx_font);
+        if (blob != nullptr)
+        {
+            canvas->drawTextBlob(blob, 0.0F, 0.0F, paint);
+        }
+    }
+}
 
 } // namespace
 
@@ -40,25 +81,31 @@ extern "C"
 RESONATE_TGFX_API int32_t resonate_tgfx_ui_create(void* instance, void* physical_device,
                                                   void* device, void* queue,
                                                   std::uint32_t queue_family,
-                                                  const char* font_path, ResonateTgfxUi* out_ui)
+                                                  const char* const* font_paths,
+                                                  std::uint32_t font_count, ResonateTgfxUi* out_ui)
 {
     if (instance == nullptr || physical_device == nullptr || device == nullptr || queue == nullptr ||
-        out_ui == nullptr || font_path == nullptr)
+        out_ui == nullptr || font_paths == nullptr || font_count == 0U)
     {
         return -1;
     }
     auto ui = std::make_unique<Ui>();
     ui->device = tgfx::VulkanDevice::MakeFrom(instance, physical_device, device, queue,
-                                             queue_family);
+                                              queue_family);
     if (ui->device == nullptr)
     {
         return -2;
     }
-    ui->typeface = tgfx::Typeface::MakeFromPath(font_path);
-    if (ui->typeface == nullptr)
+    ui->typefaces.reserve(font_count);
+    for (std::uint32_t index = 0; index < font_count; ++index)
     {
-        ui->device.reset();
-        return -2;
+        auto typeface = tgfx::Typeface::MakeFromPath(font_paths[index]);
+        if (typeface == nullptr)
+        {
+            ui->device.reset();
+            return -2;
+        }
+        ui->typefaces.push_back(std::move(typeface));
     }
     *out_ui = ui.release();
     return 0;
@@ -108,33 +155,7 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
     }
     for (std::uint32_t index = 0; index < text_count; ++index)
     {
-        const ResonateTgfxText& run = texts[index];
-        if (run.utf8 == nullptr || run.length == 0U || run.size <= 0.0F)
-        {
-            continue;
-        }
-        tgfx::Font font(ui->typeface, run.size);
-        font.setFauxBold(run.weight >= 600U);
-        std::shared_ptr<tgfx::TextBlob> blob =
-            tgfx::TextBlob::MakeFrom(std::string(run.utf8, run.length), font);
-        if (blob == nullptr)
-        {
-            continue;
-        }
-        const tgfx::Rect bounds = blob->getBounds();
-        float x = run.x;
-        if (run.align == 1U)
-        {
-            x += (run.width - bounds.width()) * 0.5F;
-        }
-        else if (run.align == 2U)
-        {
-            x += run.width - bounds.width();
-        }
-        const tgfx::FontMetrics metrics = font.getMetrics();
-        tgfx::Paint paint;
-        paint.setColor(tgfx::Color{run.r, run.g, run.b, run.a});
-        canvas->drawTextBlob(blob, x, run.y - metrics.ascent, paint);
+        drawText(canvas, texts[index], ui->typefaces);
     }
     context->flushAndSubmit(false);
     ui->device->unlock();
@@ -175,7 +196,7 @@ RESONATE_TGFX_API void resonate_tgfx_ui_destroy(ResonateTgfxUi handle)
         return;
     }
     ui->surface.reset();
-    ui->typeface.reset();
+    ui->typefaces.clear();
     ui->device.reset();
     delete ui;
 }

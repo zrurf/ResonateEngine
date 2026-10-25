@@ -474,7 +474,7 @@ struct RenderSystem::Impl
     std::uint32_t ui_text_height = 0U;
     std::vector<std::uint8_t> ui_pixels;
     std::vector<ResonateTgfxRect> ui_draw_rects;
-    std::vector<std::string> ui_draw_text_storage;
+    std::vector<ResonateTgfxGlyph> ui_draw_glyphs;
     std::vector<ResonateTgfxText> ui_draw_texts;
 #endif
 
@@ -993,11 +993,19 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
             complain("tgfx: the device does not share its native handles");
             return false;
         }
+        std::vector<const char*> font_paths;
+        font_paths.reserve(ui_font_paths.size());
+        for (const std::string& path : ui_font_paths)
+        {
+            font_paths.push_back(path.c_str());
+        }
         if (resonate_tgfx_ui_create(reinterpret_cast<void*>(handles.instance),
                                     reinterpret_cast<void*>(handles.physical_device),
                                     reinterpret_cast<void*>(handles.device),
                                     reinterpret_cast<void*>(handles.queue), handles.queue_family,
-                                    ui_font_paths.front().c_str(), &tgfx_ui) != 0)
+                                    font_paths.data(),
+                                    static_cast<std::uint32_t>(font_paths.size()),
+                                    &tgfx_ui) != 0)
         {
             complain("tgfx: the UI layer was not created");
             tgfx_ui = nullptr;
@@ -1035,31 +1043,28 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
                                                  quad.color.w});
     }
 
-    ui_draw_text_storage.clear();
-    ui_draw_text_storage.reserve(snapshot.ui.texts().size());
+    ui_draw_glyphs.clear();
+    ui_draw_texts.clear();
     for (const ui::TextRun& run : snapshot.ui.texts())
     {
-        ui_draw_text_storage.push_back(run.text);
-    }
-    ui_draw_texts.clear();
-    for (std::size_t index = 0; index < ui_draw_text_storage.size(); ++index)
-    {
-        const ui::TextRun& run = snapshot.ui.texts()[index];
-        const std::string& content = ui_draw_text_storage[index];
+        if (run.glyphs.empty())
+        {
+            continue;
+        }
+        const std::uint32_t base = static_cast<std::uint32_t>(ui_draw_glyphs.size());
+        for (const ui::TextGlyph& glyph : run.glyphs)
+        {
+            ui_draw_glyphs.push_back(ResonateTgfxGlyph{glyph.pen_x, glyph.pen_y, glyph.glyph_id,
+                                                       glyph.font_index});
+        }
         ResonateTgfxText text{};
-        text.x = run.x;
-        text.y = run.y;
-        text.width = run.width;
-        text.height = run.height;
         text.size = run.font_size;
         text.r = run.color.x;
         text.g = run.color.y;
         text.b = run.color.z;
         text.a = run.color.w;
-        text.weight = run.font_weight;
-        text.align = run.align;
-        text.utf8 = content.data();
-        text.length = static_cast<std::uint32_t>(content.size());
+        text.glyphs = ui_draw_glyphs.data() + base;
+        text.glyph_count = static_cast<std::uint32_t>(run.glyphs.size());
         ui_draw_texts.push_back(text);
     }
 
