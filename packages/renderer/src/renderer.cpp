@@ -16,6 +16,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -430,8 +431,8 @@ struct RenderSystem::Impl
     bool ready_noted = false;
     /* Set by whichever thread hits the first failure: the producer can refuse
        queries while the render thread reports a pipeline. */
-    std::atomic<bool> complained{false};
-
+    /* One report per distinct message; the render thread is the only caller. */
+    std::unordered_set<std::string> complained;
     GpuMesh cube{};
     GpuMesh ground{};
     MeshId bound_mesh = kMeshNone;
@@ -453,6 +454,8 @@ struct RenderSystem::Impl
     ResonateRenderImage white_texture{};
     ResonateRenderImage checker_texture{};
     ResonateRenderImage font_atlas{};
+    std::uint32_t font_atlas_width = 0U;
+    std::uint32_t font_atlas_height = 0U;
     std::uint32_t white_texture_slot = 0U;
     std::uint32_t checker_texture_slot = 0U;
     std::uint32_t font_atlas_slot = 0U;
@@ -476,6 +479,7 @@ struct RenderSystem::Impl
     std::vector<ResonateTgfxRect> ui_draw_rects;
     std::vector<ResonateTgfxGlyph> ui_draw_glyphs;
     std::vector<ResonateTgfxText> ui_draw_texts;
+    bool ui_text_cleared = false;
 #endif
 
     /* The producer's copy of the canvas's TextAtlasPage, replaced only when
@@ -500,7 +504,7 @@ struct RenderSystem::Impl
 
     void complain(const char* what)
     {
-        if (!complained.exchange(true))
+        if (complained.insert(what).second)
         {
             std::fprintf(stderr, "renderer: %s\n", what);
         }
@@ -929,7 +933,7 @@ std::uint32_t RenderSystem::Impl::uiTextureSlot(std::uint32_t texture) const
 
 bool RenderSystem::Impl::updateFontAtlas(const FrameSnapshot& snapshot)
 {
-    if (!albedo_ready || snapshot.text_atlas == nullptr)
+    if (device == nullptr || snapshot.text_atlas == nullptr)
     {
         return true;
     }
@@ -943,6 +947,19 @@ bool RenderSystem::Impl::updateFontAtlas(const FrameSnapshot& snapshot)
     {
         complain("the font atlas page is malformed");
         return false;
+    }
+    if (font_atlas.value != 0U && font_atlas_width == atlas.width &&
+        font_atlas_height == atlas.height)
+    {
+        /* The page grew in place: overwrite the image and keep the slot. */
+        if (device->upload_image(device->self, font_atlas, atlas.pixels.data(), atlas.pixels.size(),
+                                 static_cast<std::uint64_t>(atlas.width) * 4U) != RESONATE_OK)
+        {
+            complain("the font atlas texture was not updated");
+            return false;
+        }
+        font_atlas_revision = atlas.revision;
+        return true;
     }
     device->wait_idle(device->self);
     if (font_atlas.value != 0U)
@@ -966,6 +983,8 @@ bool RenderSystem::Impl::updateFontAtlas(const FrameSnapshot& snapshot)
     {
         device->bind_image_slot(device->self, font_atlas_slot, font_atlas, 1U);
     }
+    font_atlas_width = atlas.width;
+    font_atlas_height = atlas.height;
     font_atlas_revision = atlas.revision;
     font_atlas_ready = true;
     return true;
@@ -1067,6 +1086,30 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         text.glyph_count = static_cast<std::uint32_t>(run.glyphs.size());
         ui_draw_texts.push_back(text);
     }
+
+    if (ui_draw_rects.empty() && ui_draw_texts.empty())
+    {
+        /* No tgfx round trip on an empty layer, but the overlay image must be
+           transparent before the pass samples it; one zero upload covers every
+           empty frame after it. */
+        if (ui_text_image.value != 0U && (width != ui_text_width || height != ui_text_height))
+        {
+            device->destroy_image(device->self, ui_text_image);
+            ui_text_image = ResonateRenderImage{};
+            ui_pixels.clear();
+        }
+        if (ui_text_image.value != 0U && !ui_text_cleared)
+        {
+            std::fill(ui_pixels.begin(), ui_pixels.end(), 0U);
+            ui_text_cleared =
+                device->upload_image(device->self, ui_text_image, ui_pixels.data(),
+                                     ui_pixels.size(),
+                                     static_cast<std::uint64_t>(ui_text_width) * 4U) == RESONATE_OK;
+        }
+        ui_tgfx_ready = ui_text_image.value != 0U && ui_text_cleared;
+        return true;
+    }
+    ui_text_cleared = false;
 
     if (resonate_tgfx_ui_draw(tgfx_ui, width, height, ui_draw_rects.data(),
                               static_cast<std::uint32_t>(ui_draw_rects.size()),
@@ -1920,7 +1963,7 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
     if (!quads.empty() || ui_tgfx_ready)
     {
         const std::size_t count = std::min<std::size_t>(quads.size(), kMaxUiQuads);
-        if (quads.size() > count)
+        if (quads.size() > count && !ui_tgfx_ready)
         {
             complain("the UI display list was truncated to the vertex buffer");
         }
@@ -2136,8 +2179,8 @@ void RenderSystem::Impl::drawUi(GraphExecuteContext& commands)
         ResonateRenderBarrierDesc barrier = {};
         barrier.struct_size = sizeof(barrier);
         barrier.image = ui_text_image;
-        barrier.before_stages = RESONATE_RENDER_STAGE_COLOR_OUTPUT;
-        barrier.before_access = RESONATE_RENDER_ACCESS_COLOR_WRITE;
+        barrier.before_stages = RESONATE_RENDER_STAGE_TRANSFER;
+        barrier.before_access = RESONATE_RENDER_ACCESS_TRANSFER_WRITE;
         barrier.after_stages = RESONATE_RENDER_STAGE_FRAGMENT;
         barrier.after_access = RESONATE_RENDER_ACCESS_SHADER_READ;
         barrier.before_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
@@ -2546,6 +2589,9 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
        it. A failed overlay leaves the atlas glyph quads in place. */
     renderTgfxUi(snapshot);
 #endif
+    /* Before the pass: the atlas slot must resolve inside the same frame the
+       glyphs first appear, or frame one draws them as solid rectangles. */
+    updateFontAtlas(snapshot);
     std::string error;
     if (!executor->execute(error, &Impl::prepareEntry, this) && !error.empty())
     {
@@ -2560,7 +2606,6 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
             complain("albedo textures unavailable");
         }
     }
-    updateFontAtlas(snapshot);
 }
 
 void composeDemoScene(ecs::World& world)

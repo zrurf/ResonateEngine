@@ -168,6 +168,16 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
     {
         return false;
     }
+    /* Refresh the UVs before touching the entity, so a failed refresh leaves
+       the previous text intact. */
+    for (detail::GlyphQuad& quad : quads)
+    {
+        if (!impl_->atlas.updateQuad(quad))
+        {
+            error = "a glyph is missing from the atlas";
+            return false;
+        }
+    }
 
     const ecs::BlobHandle old_content = text->content;
     ecs::BlobHandle content{};
@@ -194,14 +204,6 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
             world.destroyBlob(glyphs->records);
         }
         world.remove<Glyphs>(entity);
-    }
-    for (detail::GlyphQuad& quad : quads)
-    {
-        if (!impl_->atlas.updateQuad(quad))
-        {
-            error = "a glyph is missing from the atlas";
-            return false;
-        }
     }
     if (!quads.empty())
     {
