@@ -1,6 +1,7 @@
 #include <resonate/ui/document.h>
 
 #include <resonate/ui/document_schema.h>
+#include <resonate/ui/image_registry.h>
 #include <resonate/ui/string_table.h>
 #include <resonate/ui/style.h>
 #include <resonate/ui/text_runtime.h>
@@ -696,10 +697,12 @@ struct BindingContext
     ecs::ComponentIndex data_component = ecs::kInvalidComponent;
     std::vector<detail::BindingRecord> records;
     dom::StringId text_property = dom::kInvalidString;
+    dom::StringId image_property = dom::kInvalidString;
     std::unique_ptr<detail::TextAtlasBuilder> owned_atlas;
     detail::TextAtlasBuilder* atlas = nullptr;
     TextRuntime* runtime = nullptr;
     const StringTable* strings = nullptr;
+    const ImageRegistry* images = nullptr;
     std::uint32_t page_revision = 1U;
     std::vector<PendingRun> runs;
 };
@@ -1126,6 +1129,26 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
             Image value;
             applied = applyImage(document, component, value, error) &&
                       world.add(entity, value) != nullptr;
+            /* A `path` authoring field names a registered file; the resolved id
+               overrides the authored texture. */
+            if (applied && document.property(node, bindings.image_property) != nullptr)
+            {
+                const dom::Field* property = document.property(node, bindings.image_property);
+                const std::uint32_t id =
+                    bindings.images != nullptr ? bindings.images->find(property->value)
+                                               : ImageRegistry::kUnregistered;
+                if (id == ImageRegistry::kUnregistered)
+                {
+                    world.report(World::Report::Warning,
+                                 "ui document: node '%s': image path '%s' is not registered",
+                                 nodeLabel(document, node).c_str(),
+                                 std::string(property->value).c_str());
+                }
+                else if (Image* image = world.get<Image>(entity); image != nullptr)
+                {
+                    image->texture = id;
+                }
+            }
         }
         else if (name == "StyleRef")
         {
@@ -1281,6 +1304,7 @@ Entity instantiateConfigured(World& world, dom::Document& document,
     CommandBuffer commands(world);
     std::vector<Entity> created;
     bindings.text_property = document.intern("text");
+    bindings.image_property = document.intern("path");
     const Entity entity = instantiateNode(world, commands, document, root, styles, bindings,
                                           component_registry, created);
     if (!entity.valid())
@@ -1402,10 +1426,11 @@ Entity instantiateConfigured(World& world, dom::Document& document,
 Entity instantiate(World& world, dom::Document& document,
                    const dom::ComponentRegistry* component_registry,
                    std::vector<std::shared_ptr<const text::Font>> fonts,
-                   const StringTable* strings)
+                   const StringTable* strings, const ImageRegistry* images)
 {
     BindingContext bindings;
     bindings.strings = strings;
+    bindings.images = images;
     if (!fonts.empty())
     {
         bindings.owned_atlas = std::make_unique<detail::TextAtlasBuilder>(std::move(fonts));
@@ -1416,12 +1441,13 @@ Entity instantiate(World& world, dom::Document& document,
 
 Entity instantiate(World& world, dom::Document& document,
                    const dom::ComponentRegistry* component_registry, TextRuntime& runtime,
-                   const StringTable* strings)
+                   const StringTable* strings, const ImageRegistry* images)
 {
     BindingContext bindings;
     bindings.atlas = TextRuntimeAccess::atlas(runtime);
     bindings.runtime = &runtime;
     bindings.strings = strings;
+    bindings.images = images;
     return instantiateConfigured(world, document, component_registry, bindings);
 }
 

@@ -14,6 +14,9 @@
 #include <resonate/ui/display_list.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/binding.h>
+#include <resonate/ui/image_registry.h>
+
+#include "resonate.ui/components.gen.h"
 #include <resonate/ui/document_schema.h>
 #include <resonate/ui/layout.h>
 
@@ -161,6 +164,41 @@ TEST_CASE("ui document: a Picture emits a textured quad", "[ui][document]")
     CHECK(near(quad.color.z, 0.25F));
 }
 
+TEST_CASE("ui document: a Picture path resolves through the image registry", "[ui][document]")
+{
+    const char* const text = R"xml(<document version="1">
+  <Screen key="hud">
+    <Picture key="known" path="hero.png" x="10" y="20" width="32" height="24"/>
+    <Picture key="unknown" path="missing.png" x="50" y="20" width="8" height="8"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(text, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    resonate::ui::ImageRegistry images;
+    const std::uint32_t hero = images.registerImage("hero.png");
+    CHECK(hero == resonate::ui::ImageRegistry::kFirstId);
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, {}, nullptr,
+                                                  &images);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+
+    const auto children = resonate::hierarchy::children(fixture.world, root);
+    REQUIRE(children.size() == 2U);
+    const resonate::ui::Image* known = fixture.world.get<resonate::ui::Image>(children[0]);
+    REQUIRE(known != nullptr);
+    CHECK(known->texture == hero);
+    const resonate::ui::Image* unknown = fixture.world.get<resonate::ui::Image>(children[1]);
+    REQUIRE(unknown != nullptr);
+    /* An unregistered path keeps the authored texture and reports a warning. */
+    CHECK(unknown->texture == resonate::ui::kTextureWhite);
+}
+
 TEST_CASE("ui document: an authored derived component is refused", "[ui][document]")
 {
     const char* const text = R"xml(<document version="1">
@@ -201,7 +239,10 @@ TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]
     CHECK(diagnostics.empty());
 
     Fixture fixture;
-    const Entity root = resonate::ui::instantiate(fixture.world, *document);
+    resonate::ui::ImageRegistry images;
+    const std::uint32_t logo = images.registerImage("logo.png");
+    const Entity root =
+        resonate::ui::instantiate(fixture.world, *document, nullptr, {}, nullptr, &images);
     REQUIRE(root.valid());
     resonate::ui::updateBindings(fixture.world, root);
     REQUIRE(resonate::ui::layout(fixture.world, root, 1600.0F, 900.0F));
@@ -217,7 +258,7 @@ TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]
     CHECK(near(list.quads()[4].height, 24.0F));
     CHECK(near(list.quads()[5].width, 140.0F));
     CHECK(near(list.quads()[5].height, 36.0F));
-    CHECK(list.quads()[7].texture == resonate::ui::kTextureChecker);
+    CHECK(list.quads()[7].texture == logo);
     CHECK(near(list.quads()[7].width, 48.0F));
 }
 

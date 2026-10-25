@@ -234,6 +234,9 @@
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Image" expose="texture uv_min uv_max tint slice"/>
+    <!-- An image file registered at startup; the resolved id overrides the
+       texture field. -->
+    <field name="path" type="string"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>
     <field name="bind-width" type="binding"/>

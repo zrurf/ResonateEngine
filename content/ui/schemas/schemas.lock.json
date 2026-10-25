@@ -184,6 +184,7 @@
       "version": 1,
       "shape": [
         "node Picture version 1",
+        "  field path string",
         "  field bind-x binding",
         "  field bind-y binding",
         "  field bind-width binding",

@@ -1,5 +1,6 @@
 #include <resonate/startup/startup.hpp>
 
+#include <algorithm>
 #include <array>
 #include <climits>
 #include <cstddef>
@@ -37,6 +38,7 @@
 #include <resonate/ui/document.h>
 #include <resonate/ui/binding.h>
 #include <resonate/ui/document_schema.h>
+#include <resonate/ui/image_registry.h>
 #include <resonate/ui/input.h>
 #include <resonate/ui/layout.h>
 #include <resonate/ui/string_table.h>
@@ -233,6 +235,28 @@ std::string resolveContentFile(const std::string& relative, const char* environm
     return findContentFile(relative);
 }
 
+/* The content directory a shipped layout keeps beside the executable and the
+   project tree keeps in the repository; empty when neither exists. */
+std::string findContentDirectory(const std::string& relative)
+{
+    std::filesystem::path directory = resonate_pal_io_executable_directory();
+    for (int level = 0; level < 6; ++level)
+    {
+        const std::filesystem::path candidate = directory / relative;
+        std::error_code error;
+        if (std::filesystem::is_directory(candidate, error))
+        {
+            return candidate.string();
+        }
+        if (!directory.has_parent_path())
+        {
+            break;
+        }
+        directory = directory.parent_path();
+    }
+    return {};
+}
+
 bool readTextFile(const std::string& path, std::string& out)
 {
     std::ifstream in(path, std::ios::binary);
@@ -248,7 +272,8 @@ bool readTextFile(const std::string& path, std::string& out)
    document falls back to the built-in HUD; a configured one or a broken one
    ends the run with the reason. */
 ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool required,
-                        ui::TextRuntime& text_runtime, const ui::StringTable* strings)
+                        ui::TextRuntime& text_runtime, const ui::StringTable* strings,
+                        const ui::ImageRegistry* images)
 {
     /* A host that stages its assets elsewhere (Android) names the document
        directly; the setting and the content walk cover desktop runs. */
@@ -290,7 +315,7 @@ ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool r
         return ecs::Entity{};
     }
     const ecs::Entity canvas =
-        ui::instantiate(world, *document, &contentComponents(), text_runtime, strings);
+        ui::instantiate(world, *document, &contentComponents(), text_runtime, strings, images);
     if (!canvas.valid())
     {
         return ecs::Entity{};
@@ -728,6 +753,30 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             }
             render_system.setUiFontPaths(std::move(ui_font_paths));
             ui_text = std::make_unique<ui::TextRuntime>(std::move(ui_fonts));
+            /* Picture images: every file under content/ui/images registers
+               under its file name; sorted, so the ids are deterministic. */
+            auto ui_images = std::make_unique<ui::ImageRegistry>();
+            const std::string images_directory = findContentDirectory("content/ui/images");
+            if (!images_directory.empty())
+            {
+                std::vector<std::filesystem::path> files;
+                std::error_code scan_error;
+                for (const std::filesystem::directory_entry& entry :
+                     std::filesystem::directory_iterator(images_directory, scan_error))
+                {
+                    if (entry.is_regular_file(scan_error))
+                    {
+                        files.push_back(entry.path());
+                    }
+                }
+                std::sort(files.begin(), files.end());
+                for (const std::filesystem::path& file : files)
+                {
+                    render_system.setUiImageTexture(ui_images->registerImage(
+                                                        file.filename().string()),
+                                                    file.string());
+                }
+            }
             std::unique_ptr<ui::StringTable> ui_strings;
             const std::string strings_path =
                 resolveContentFile("content/ui/strings.rstrings", "RESONATE_STRINGS_PATH");
@@ -745,8 +794,8 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
                 }
             }
             ui_frame.text = ui_text.get();
-            ui_frame.canvas =
-                loadDemoHud(world, ui_document, ui_document_required, *ui_text, ui_strings.get());
+            ui_frame.canvas = loadDemoHud(world, ui_document, ui_document_required, *ui_text,
+                                          ui_strings.get(), ui_images.get());
             if (!ui_frame.canvas.valid())
             {
                 return RESONATE_E_INVALID;
