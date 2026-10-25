@@ -701,8 +701,13 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             /* Primary font first; the runtime walks the chain per code point. */
             std::vector<std::shared_ptr<const text::Font>> ui_fonts;
             std::vector<std::string> ui_font_paths;
-            for (const char* name : {"content/ui/fonts/ResonateSansSC-Subset.ttf",
-                                     "content/ui/fonts/ResonateSansLatin-Subset.ttf"})
+            /* The chain pairs one face per weight bucket; shaping walks it per
+               code point and prefers the face matching the run's weight. */
+            for (const char* name :
+                 {"content/ui/fonts/ResonateSansSC-Regular.ttf",
+                  "content/ui/fonts/ResonateSansSC-Bold.ttf",
+                  "content/ui/fonts/ResonateSansLatin-Regular.ttf",
+                  "content/ui/fonts/ResonateSansLatin-Bold.ttf"})
             {
                 const std::string font_path = resolveContentFile(name, "RESONATE_FONT_PATH");
                 if (font_path.empty())

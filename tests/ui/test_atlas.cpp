@@ -23,7 +23,7 @@ std::shared_ptr<const resonate::text::Font> loadFontFile(const char* name)
 
 std::shared_ptr<const resonate::text::Font> loadFont()
 {
-    return loadFontFile("ResonateSansSC-Subset.ttf");
+    return loadFontFile("ResonateSansSC-Regular.ttf");
 }
 
 } // namespace
@@ -54,7 +54,7 @@ TEST_CASE("ui atlas: a full page grows and repacks its glyphs", "[ui][text][atla
 
 TEST_CASE("ui atlas: a missing glyph falls through the font chain", "[ui][text][atlas]")
 {
-    const auto latin = loadFontFile("ResonateSansLatin-Subset.ttf");
+    const auto latin = loadFontFile("ResonateSansLatin-Regular.ttf");
     const auto full = loadFont();
     CHECK(latin->glyphIndex(0x4F60U) == 0U);
     CHECK(full->glyphIndex(0x4F60U) != 0U);

@@ -106,6 +106,59 @@ std::uint32_t Font::glyphIndex(std::uint32_t codepoint) const
     return resonate_text_font_glyph_index(impl_->rust, codepoint);
 }
 
+namespace
+{
+
+/* Reads usWeightClass out of the sfnt OS/2 table; 400 when the table or the
+   field is absent. */
+std::uint32_t designWeight(const std::vector<std::uint8_t>& bytes)
+{
+    constexpr std::uint16_t kMissing = 0U;
+    if (bytes.size() < 12U)
+    {
+        return kMissing;
+    }
+    const auto read16 = [&bytes](std::size_t offset)
+    {
+        return static_cast<std::uint16_t>((bytes[offset] << 8U) | bytes[offset + 1U]);
+    };
+    const std::uint16_t tables = read16(4U);
+    for (std::uint16_t index = 0; index < tables; ++index)
+    {
+        const std::size_t record = 12U + static_cast<std::size_t>(index) * 16U;
+        if (record + 16U > bytes.size())
+        {
+            break;
+        }
+        if (std::memcmp(&bytes[record], "OS/2", 4U) != 0)
+        {
+            continue;
+        }
+        const std::size_t offset = (static_cast<std::size_t>(bytes[record + 8U]) << 24U) |
+                                   (static_cast<std::size_t>(bytes[record + 9U]) << 16U) |
+                                   (static_cast<std::size_t>(bytes[record + 10U]) << 8U) |
+                                   static_cast<std::size_t>(bytes[record + 11U]);
+        if (offset + 6U <= bytes.size())
+        {
+            return read16(offset + 4U);
+        }
+        break;
+    }
+    return kMissing;
+}
+
+} // namespace
+
+std::uint32_t Font::weight() const
+{
+    if (impl_ == nullptr)
+    {
+        return 400U;
+    }
+    const std::uint32_t design = designWeight(impl_->bytes);
+    return design != 0U ? design : 400U;
+}
+
 bool Font::rasterize(std::uint32_t glyph, float size, float weight, GlyphBitmap& out) const
 {
     if (impl_ == nullptr || impl_->rust == nullptr || !(size > 0.0F))

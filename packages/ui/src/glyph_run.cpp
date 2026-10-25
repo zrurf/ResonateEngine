@@ -231,6 +231,13 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight,
         return false;
     }
 
+    /* The chain ships one face per weight bucket; a request between buckets
+       snaps so both render paths address the same face. Selection keeps the
+       first covering face as the fallback and prefers one whose design weight
+       matches the bucket. */
+    const std::uint32_t bucket = weight >= 600.0F ? 700U : 400U;
+    weight = static_cast<float>(bucket);
+
     struct RunGlyph
     {
         text::ShapedGlyph glyph;
@@ -245,9 +252,19 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight,
         const std::size_t length = codepointLength(utf8, offset);
         const std::uint32_t codepoint = codepointAt(utf8, static_cast<std::uint32_t>(offset));
         std::uint32_t chosen = 0U;
+        bool covered = false;
         for (std::uint32_t font = 0; font < fonts_.size(); ++font)
         {
-            if (fonts_[font] != nullptr && fonts_[font]->glyphIndex(codepoint) != 0U)
+            if (fonts_[font] == nullptr || fonts_[font]->glyphIndex(codepoint) == 0U)
+            {
+                continue;
+            }
+            if (!covered)
+            {
+                chosen = font;
+                covered = true;
+            }
+            if (fonts_[font]->weight() == bucket)
             {
                 chosen = font;
                 break;

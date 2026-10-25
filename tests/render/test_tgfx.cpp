@@ -38,7 +38,7 @@ TEST_CASE("tgfx shares the render device and draws CJK text", "[render][tgfx]")
 
     ResonateTgfxUi ui = nullptr;
     const std::string font =
-        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Subset.ttf";
+        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Regular.ttf";
     REQUIRE(resonate_tgfx_ui_create(reinterpret_cast<void*>(handles.instance),
                                     reinterpret_cast<void*>(handles.physical_device),
                                     reinterpret_cast<void*>(handles.device),

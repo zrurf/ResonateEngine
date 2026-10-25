@@ -63,6 +63,11 @@ class Font
     [[nodiscard]] bool metrics(float size, float weight, FontMetrics& out) const;
     [[nodiscard]] std::uint32_t glyphIndex(std::uint32_t codepoint) const;
 
+    /* The design weight the face was built for (OS/2.usWeightClass). A static
+       instance answers the weight it was instanced at; the chain matches this
+       against a run's requested weight bucket. */
+    [[nodiscard]] std::uint32_t weight() const;
+
     /* The glyph's SDF bitmap at `size` pixels per em and variable-axis weight.
        A blank glyph (a space) answers true with an empty bitmap and its
        advance. */

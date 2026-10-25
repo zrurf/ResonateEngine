@@ -11,7 +11,12 @@ namespace
 
 std::string fontPath()
 {
-    return std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Subset.ttf";
+    return std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Regular.ttf";
+}
+
+std::string boldPath()
+{
+    return std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Bold.ttf";
 }
 
 } // namespace
@@ -86,23 +91,29 @@ TEST_CASE("text: bad font bytes are refused", "[text]")
     CHECK_FALSE(error.empty());
 }
 
-TEST_CASE("text: the variable weight changes the glyph ink", "[text]")
+TEST_CASE("text: the static instances differ in ink and report their weight", "[text]")
 {
     std::string error;
-    const auto font = resonate::text::Font::loadFile(fontPath(), error);
-    REQUIRE(font != nullptr);
+    const auto regular = resonate::text::Font::loadFile(fontPath(), error);
+    REQUIRE(regular != nullptr);
+    CHECK(regular->weight() == 400U);
+    const auto bold = resonate::text::Font::loadFile(boldPath(), error);
+    REQUIRE(bold != nullptr);
+    CHECK(bold->weight() == 700U);
 
-    resonate::text::GlyphBitmap regular;
-    resonate::text::GlyphBitmap bold;
-    REQUIRE(font->rasterize(font->glyphIndex('A'), 32.0F, 400.0F, regular));
-    REQUIRE(font->rasterize(font->glyphIndex('A'), 32.0F, 700.0F, bold));
-    CHECK(regular.coverage.size() != bold.coverage.size());
-    std::uint32_t regular_ink = 0;
-    std::uint32_t bold_ink = 0;
-    for (std::size_t index = 0; index < regular.coverage.size(); ++index)
+    resonate::text::GlyphBitmap regular_ink;
+    resonate::text::GlyphBitmap bold_ink;
+    REQUIRE(regular->rasterize(regular->glyphIndex('A'), 32.0F, 400.0F, regular_ink));
+    REQUIRE(bold->rasterize(bold->glyphIndex('A'), 32.0F, 700.0F, bold_ink));
+    std::uint32_t regular_dark = 0;
+    std::uint32_t bold_dark = 0;
+    for (const std::uint8_t value : regular_ink.coverage)
     {
-        regular_ink += regular.coverage[index] > 128U ? 1U : 0U;
-        bold_ink += bold.coverage[index] > 128U ? 1U : 0U;
+        regular_dark += value > 128U ? 1U : 0U;
     }
-    CHECK(bold_ink > regular_ink);
+    for (const std::uint8_t value : bold_ink.coverage)
+    {
+        bold_dark += value > 128U ? 1U : 0U;
+    }
+    CHECK(bold_dark > regular_dark);
 }
