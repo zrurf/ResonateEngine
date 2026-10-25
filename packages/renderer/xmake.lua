@@ -38,7 +38,7 @@ target("Resonate.Renderer")
 
     -- The UI layer is drawn by tgfx through a small C ABI; the heavy tgfx
     -- archive stays inside Resonate.UiTgfx.
-    if is_plat("windows") then
+    if is_plat("windows", "android") then
         add_deps("Resonate.UiTgfx")
         add_defines("RESONATE_WITH_TGFX=1")
     end

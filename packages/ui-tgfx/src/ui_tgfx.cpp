@@ -23,7 +23,9 @@
 #if defined(_WIN32)
 #    define RESONATE_TGFX_API __declspec(dllexport)
 #else
-#    define RESONATE_TGFX_API
+/* The Android link hides symbols by default; the C ABI surface must stay
+   visible for the host to resolve it across the shared boundary. */
+#    define RESONATE_TGFX_API __attribute__((visibility("default")))
 #endif
 
 namespace

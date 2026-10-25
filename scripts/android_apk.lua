@@ -89,6 +89,22 @@ for _, library in ipairs(os.files(path.join(plugins, "*.so"))) do
     os.cp(library, path.join(staging, "lib", abi))
 end
 
+-- libtgfx.so lives in its own CMake build tree; the wrapper .so beside the
+-- plugins names it as a dependency, so it travels in the same ABI directory.
+-- tgfx builds against the NDK's shared C++ runtime (the C ABI keeps its STL
+-- objects from crossing the boundary), so the runtime travels with it.
+local tgfx_dir = path.join(os.projectdir(), "build", "tgfx", "android", "release")
+local ndk = ndk_directory()
+local cxx_shared = path.join(ndk, "toolchains", "llvm", "prebuilt", "windows-x86_64",
+                              "sysroot", "usr", "lib", "aarch64-linux-android",
+                              "libc++_shared.so")
+if os.isfile(path.join(tgfx_dir, "libtgfx.so")) then
+    os.cp(path.join(tgfx_dir, "libtgfx.so"), path.join(staging, "lib", abi))
+    if os.isfile(cxx_shared) then
+        os.cp(cxx_shared, path.join(staging, "lib", abi))
+    end
+end
+
 -- The loader pairs a library with `<id>.toml`; the manifests travel as assets
 -- because the APK's library directory is read-only.
 for _, directory in ipairs(os.dirs(path.join(os.projectdir(), "packages", "modules", "*"))) do
@@ -135,6 +151,14 @@ if #ui_fonts > 0 then
     os.mkdir(path.join(staging, "assets", "fonts"))
     for _, font in ipairs(ui_fonts) do
         os.cp(font, path.join(staging, "assets", "fonts"))
+    end
+end
+
+local ui_images = os.files(path.join(ui_source, "images", "*.png"))
+if #ui_images > 0 then
+    os.mkdir(path.join(staging, "assets", "images"))
+    for _, image in ipairs(ui_images) do
+        os.cp(image, path.join(staging, "assets", "images"))
     end
 end
 

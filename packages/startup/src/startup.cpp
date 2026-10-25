@@ -257,6 +257,21 @@ std::string findContentDirectory(const std::string& relative)
     return {};
 }
 
+/* The staged-directory form of resolveContentFile: the environment names a
+   whole directory the platform host extracted. */
+std::string resolveContentDirectory(const std::string& relative, const char* environment)
+{
+    if (const char* staged = std::getenv(environment))
+    {
+        std::error_code error;
+        if (std::filesystem::is_directory(std::filesystem::path(staged), error))
+        {
+            return staged;
+        }
+    }
+    return findContentDirectory(relative);
+}
+
 bool readTextFile(const std::string& path, std::string& out)
 {
     std::ifstream in(path, std::ios::binary);
@@ -756,7 +771,8 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             /* Picture images: every file under content/ui/images registers
                under its file name; sorted, so the ids are deterministic. */
             auto ui_images = std::make_unique<ui::ImageRegistry>();
-            const std::string images_directory = findContentDirectory("content/ui/images");
+            const std::string images_directory =
+                resolveContentDirectory("content/ui/images", "RESONATE_IMAGE_PATH");
             if (!images_directory.empty())
             {
                 std::vector<std::filesystem::path> files;

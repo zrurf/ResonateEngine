@@ -3,8 +3,9 @@ set_version("0.0.1")
 set_xmakever("3.1.1")
 
 -- Top level on purpose: a platform-guarded set_config does not reach a fresh
--- configure, and NDK r28's default API (21) predates libvulkan (24).
-set_config("ndk_sdkver", 30)
+-- configure, and NDK r28's default API (21) predates libvulkan (24). The
+-- reference device is Android 10 (API 29).
+set_config("ndk_sdkver", 29)
 
 add_rules("mode.debug", "mode.release")
 add_rules("plugin.compile_commands.autoupdate", {outputdir = ".compile"})
@@ -367,7 +368,7 @@ includes("packages/physics")
 includes("packages/audio")
 includes("packages/text")
 includes("packages/ui")
-if is_plat("windows") then
+if is_plat("windows", "android") then
     includes("packages/ui-tgfx")
 end
 includes("packages/hierarchy")

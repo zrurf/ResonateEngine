@@ -286,6 +286,12 @@ void android_main(android_app* app)
         setenv("RESONATE_FONT_PATH", fonts.c_str(), 1);
     }
 
+    const std::string images = stageAssets(app, "images");
+    if (!images.empty())
+    {
+        setenv("RESONATE_IMAGE_PATH", images.c_str(), 1);
+    }
+
     const std::string ui = stageAssets(app, "ui");
     if (!ui.empty())
     {
@@ -297,7 +303,8 @@ void android_main(android_app* app)
         const std::string strings = ui + "/strings.rstrings";
         if (access(strings.c_str(), R_OK) == 0)
         {
-            setenv("RESONATE_STRINGS_PATH", strings.c_str(), 1);
+            /* The env names the directory; startup appends the file name. */
+            setenv("RESONATE_STRINGS_PATH", ui.c_str(), 1);
         }
     }
 

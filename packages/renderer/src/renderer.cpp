@@ -1038,8 +1038,11 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
     ui_tgfx_ready = false;
     const std::uint32_t width = snapshot.target_width;
     const std::uint32_t height = snapshot.target_height;
-    if (device == nullptr || width == 0U || height == 0U)
+    if (device == nullptr || width == 0U || height == 0U || !albedo_ready)
     {
+        /* albedo_ready flips after the first frame executed: a target created
+           before the first present samples as a constant on the Mali-G51
+           (see createAlbedoTextures), so frame one draws the atlas fallback. */
         return false;
     }
     if (tgfx_ui == nullptr)
