@@ -377,4 +377,27 @@ bool updateTextComposition(ecs::World& world, ecs::Entity canvas, TextRuntime& r
     return TextRuntimeAccess::updateComposition(world, canvas, runtime, utf8, error);
 }
 
+bool setFocusedText(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
+                    std::string_view utf8, std::string& error)
+{
+    const PointerState* pointer = world.get<PointerState>(canvas);
+    if (pointer == nullptr || !pointer->focused.valid() ||
+        world.get<Text>(pointer->focused) == nullptr)
+    {
+        return true;
+    }
+    if (readContent(world, pointer->focused) == utf8)
+    {
+        return true;
+    }
+    return runtime.setText(world, canvas, pointer->focused, std::string(utf8), error);
+}
+
+bool focusedTextEditable(ecs::World& world, ecs::Entity canvas)
+{
+    const PointerState* pointer = world.get<PointerState>(canvas);
+    return pointer != nullptr && pointer->focused.valid() &&
+           world.get<Text>(pointer->focused) != nullptr;
+}
+
 } // namespace resonate::ui

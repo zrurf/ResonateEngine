@@ -4,7 +4,11 @@
 #include <android/native_window.h>
 #include <android_native_app_glue.h>
 
+#include <jni.h>
+
 #include <cstdio>
+#include <mutex>
+#include <string>
 
 #include <resonate/window/android.hpp>
 #include <resonate/window/host.hpp>
@@ -24,6 +28,15 @@ struct AndroidState
     bool held[RESONATE_MOUSE_BUTTON_COUNT] = {};
     float pointer[2] = {};
     float delta[2] = {};
+
+    /* The Java activity's editor owns the IME connection; its text arrives here
+       from another thread and is drained by the frame that reads the input. */
+    JavaVM* java_vm = nullptr;
+    jobject activity = nullptr;
+    std::mutex text_mutex;
+    std::string text;
+    bool text_changed = false;
+    bool keyboard_requested = false;
 };
 
 AndroidState g_state;
@@ -286,6 +299,58 @@ ResonateRenderCanvas g_canvas = {
     nullptr,
 };
 
+/* Drains the editor's text when it changed since the previous read. */
+uint32_t textSnapshot(void*, char* out_text, uint32_t capacity)
+{
+    if (out_text == nullptr || capacity == 0U)
+    {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(g_state.text_mutex);
+    if (!g_state.text_changed)
+    {
+        return 0;
+    }
+    const std::size_t count = g_state.text.size() < capacity ? g_state.text.size() : capacity;
+    g_state.text.copy(out_text, count);
+    g_state.text_changed = false;
+    return static_cast<uint32_t>(count);
+}
+
+/* Shows or hides the soft keyboard by calling the activity's own methods; the
+   Java side owns the InputMethodManager dance. */
+void setTextFocus(void*, int32_t active)
+{
+    const bool wanted = active != 0;
+    if (wanted == g_state.keyboard_requested)
+    {
+        return;
+    }
+    g_state.keyboard_requested = wanted;
+    std::fprintf(stderr, "window: keyboard %s\n", wanted ? "shown" : "hidden");
+    JNIEnv* env = nullptr;
+    if (g_state.java_vm == nullptr || g_state.activity == nullptr ||
+        g_state.java_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || env == nullptr)
+    {
+        return;
+    }
+    jclass activity_class = env->GetObjectClass(g_state.activity);
+    if (activity_class != nullptr)
+    {
+        const jmethodID method =
+            env->GetMethodID(activity_class, wanted ? "showKeyboard" : "hideKeyboard", "()V");
+        if (method != nullptr)
+        {
+            env->CallVoidMethod(g_state.activity, method);
+        }
+        env->DeleteLocalRef(activity_class);
+    }
+    if (env->ExceptionCheck())
+    {
+        env->ExceptionClear();
+    }
+}
+
 ResonateInput g_input = {
     RESONATE_CAPABILITY_HEADER_INIT(ResonateInput, RESONATE_THREAD_MAIN),
     &keyDown,
@@ -293,11 +358,17 @@ ResonateInput g_input = {
     &mouseDown,
     &pointerPosition,
     &pointerDelta,
-    /* Android has no gamepad source yet; the nulls are the ABI's "none". */
+    /* self, then Android's "none" for the gamepad and the incremental text
+       fields: text arrives through the activity's editor, not keystrokes. */
     nullptr,
     nullptr,
     nullptr,
     nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    &textSnapshot,
+    &setTextFocus,
 };
 
 } // namespace
@@ -308,6 +379,11 @@ void attachAndroidApp(android_app* app)
     if (app == nullptr)
     {
         return;
+    }
+    if (app->activity != nullptr)
+    {
+        g_state.java_vm = app->activity->vm;
+        g_state.activity = app->activity->clazz;
     }
 
     app->onAppCmd = &onAppCmd;
@@ -332,4 +408,29 @@ ResonateInput& inputCapability()
     return g_input;
 }
 
+/* Keeps the editor's text for the next frame; the JNI entry below hands it
+   over from the Java UI thread. */
+void setEditorText(std::string text)
+{
+    std::lock_guard<std::mutex> lock(g_state.text_mutex);
+    g_state.text = std::move(text);
+    g_state.text_changed = true;
+}
+
 } // namespace resonate::window
+
+extern "C" __attribute__((visibility("default"))) void JNICALL
+Java_com_resonate_engine_ResonateActivity_nativeTextChanged(JNIEnv* env, jclass, jbyteArray text)
+{
+    if (env == nullptr || text == nullptr)
+    {
+        return;
+    }
+    const jsize size = env->GetArrayLength(text);
+    std::string value(static_cast<std::size_t>(size), 0);
+    if (size > 0)
+    {
+        env->GetByteArrayRegion(text, 0, size, reinterpret_cast<jbyte*>(value.data()));
+    }
+    resonate::window::setEditorText(std::move(value));
+}

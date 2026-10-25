@@ -128,6 +128,29 @@ struct UiFrame
                     std::fprintf(stderr, "resonate: ui text composition: %s\n", error.c_str());
                 }
             }
+            if (frame->text != nullptr && frame->input->set_text_focus != nullptr)
+            {
+                /* The soft keyboard follows focus: it belongs to the text widget
+                   that owns the caret, not to the window. */
+                const bool editable = ui::focusedTextEditable(world, frame->canvas);
+                frame->input->set_text_focus(frame->input->self, editable ? 1 : 0);
+            }
+            if (frame->text != nullptr && frame->input->text_snapshot != nullptr)
+            {
+                /* A platform editor reports its whole buffer; mirror it. */
+                char snapshot[512] = {};
+                const std::uint32_t snapshot_length =
+                    frame->input->text_snapshot(frame->input->self, snapshot, sizeof(snapshot));
+                if (snapshot_length > 0U)
+                {
+                    std::string error;
+                    if (!ui::setFocusedText(world, frame->canvas, *frame->text,
+                                            std::string_view(snapshot, snapshot_length), error))
+                    {
+                        std::fprintf(stderr, "resonate: ui text: %s\n", error.c_str());
+                    }
+                }
+            }
             if (frame->text != nullptr)
             {
                 char typed[256] = {};

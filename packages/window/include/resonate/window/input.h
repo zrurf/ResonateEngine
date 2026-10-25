@@ -383,6 +383,16 @@ typedef struct ResonateInput
     /* Tail: wheel detents since the previous call (positive scrolls down),
        consumed by the read. A provider without one answers 0. */
     void (*pointer_wheel)(void* self, ResonateVec2* out_delta);
+
+    /* Tail: the whole text the platform's text editor holds, sent when it
+       changed since the previous call (committed text plus the composing
+       preedit). Copies up to `capacity` bytes, answers the bytes written, and
+       answers 0 when nothing changed. A provider without this answers 0. */
+    uint32_t (*text_snapshot)(void* self, char* out_text, uint32_t capacity);
+
+    /* Tail: shows or hides the platform's soft keyboard because a text widget
+       took or lost focus. A provider without this does nothing. */
+    void (*set_text_focus)(void* self, int32_t active);
 } ResonateInput;
 
 #ifdef __cplusplus

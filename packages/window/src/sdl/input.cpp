@@ -216,6 +216,10 @@ ResonateInput g_input = {
     &textInput,
     &textEditing,
     &pointerWheel,
+    /* SDL delivers text incrementally and keeps text input on; the buffer and
+       soft-keyboard tails are the mobile platform's. */
+    nullptr,
+    nullptr,
 };
 
 } // namespace

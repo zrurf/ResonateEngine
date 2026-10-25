@@ -177,6 +177,32 @@ local function run(program, argv)
     end
 end
 
+-- The Java activity owns the IME input connection (Android delivers composed
+-- text to a View, not to the native window). There is no Gradle here, so javac
+-- compiles the sources against android.jar and d8 turns the classes into the
+-- single classes.dex the package carries.
+local java_source = path.join(os.projectdir(), "packages", "host", "android", "java")
+local java_files = os.files(path.join(java_source, "**.java"))
+local dex_directory = path.join(staging, "dex")
+if #java_files > 0 then
+    local classes = path.join(staging, "classes")
+    os.mkdir(classes)
+    os.mkdir(dex_directory)
+    local javac_argv = {"-source", "8", "-target", "8", "-nowarn",
+                        "-classpath", path.join(platform, "android.jar"), "-d", classes}
+    for _, file in ipairs(java_files) do
+        table.insert(javac_argv, file)
+    end
+    run("javac", javac_argv)
+    local d8 = path.join(build_tools, "d8" .. (os.host() == "windows" and ".bat" or ""))
+    local d8_argv = {"--lib", path.join(platform, "android.jar"),
+                     "--min-api", sdk_version, "--output", dex_directory}
+    for _, file in ipairs(os.files(path.join(classes, "**.class"))) do
+        table.insert(d8_argv, file)
+    end
+    run(d8, d8_argv)
+end
+
 -- The theme in res/ carries the display-cutout setting; aapt2 needs it
 -- compiled before the link.
 local resources = path.join(staging, "resources.zip")
@@ -194,6 +220,9 @@ run(aapt2, {"link", "-o", base,
 -- forward slashes.
 run("jar", {"--update", "--file", base,
             "-C", staging, "lib", "-C", staging, "assets"})
+if os.isfile(path.join(dex_directory, "classes.dex")) then
+    run("jar", {"--update", "--file", base, "-C", dex_directory, "classes.dex"})
+end
 run(zipalign, {"-f", "-p", "4", base, aligned})
 
 local keystore = path.join(build, "debug.keystore")

@@ -71,6 +71,17 @@ struct TextRuntimeAccess
                                          TextRuntime& runtime, std::string_view utf8,
                                          std::string& error);
 
+/* Replaces the focused field's whole text. A platform that owns its own text
+   editor (Android's IME connection) reports that editor's buffer instead of
+   keystrokes, so the field mirrors the buffer rather than replaying edits.
+   Answers true without touching anything when no text widget has focus. */
+[[nodiscard]] bool setFocusedText(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
+                                  std::string_view utf8, std::string& error);
+
+/* True when the canvas' focused widget carries text a keyboard could edit, which
+   is when a platform should show its soft keyboard. */
+[[nodiscard]] bool focusedTextEditable(ecs::World& world, ecs::Entity canvas);
+
 } // namespace resonate::ui
 
 #endif /* RESONATE_UI_TEXT_RUNTIME_H */
