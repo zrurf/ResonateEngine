@@ -722,8 +722,12 @@ bool RenderSystem::Impl::initialize()
     const std::uint32_t shadow_count = compat_tier ? 1U : kCascades;
     for (std::uint32_t cascade = 0; cascade < shadow_count; ++cascade)
     {
+        /* Mobile tier: half the map size — a 4-tap PCF at 2048 over a soft
+           cascade is indistinguishable here, and the clear/store bandwidth
+           halves. */
         shadow_resource[cascade] = graph.declareImage(
-            "shadow", RESONATE_RENDER_FORMAT_D32_SFLOAT, 2048U, 2048U,
+            "shadow", RESONATE_RENDER_FORMAT_D32_SFLOAT,
+            compat_tier ? 1024U : 2048U, compat_tier ? 1024U : 2048U,
             RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     }
     boxes_resource = graph.declareBuffer("cluster_boxes", kClusterCount * sizeof(ShaderClusterAABB),
@@ -758,14 +762,19 @@ bool RenderSystem::Impl::initialize()
     boxes_write.resource = boxes_resource;
     boxes_write.stages = resonate::render::kStageCompute;
     boxes_write.access = resonate::render::kAccessShaderWrite;
-    resonate::render::PassDesc cluster_build{};
-    cluster_build.name = "cluster-build";
+    /* The compat tier shades from uniform lights and never reads the cluster
+       grid: building it there is wasted GPU time. */
+    if (!compat_tier)
+    {
+        resonate::render::PassDesc cluster_build{};
+        cluster_build.name = "cluster-build";
     cluster_build.queue = resonate::render::Queue::Compute;
     cluster_build.writes = &boxes_write;
     cluster_build.write_count = 1U;
     cluster_build.context = this;
-    cluster_build.execute = &Impl::clusterBuildEntry;
-    graph.addPass(cluster_build);
+        cluster_build.execute = &Impl::clusterBuildEntry;
+        graph.addPass(cluster_build);
+    }
 
     Use cull_reads[1]{};
     cull_reads[0].resource = boxes_resource;
@@ -778,16 +787,20 @@ bool RenderSystem::Impl::initialize()
     cull_writes[1].resource = indices_resource;
     cull_writes[1].stages = resonate::render::kStageCompute;
     cull_writes[1].access = resonate::render::kAccessShaderWrite;
-    resonate::render::PassDesc cluster_cull{};
-    cluster_cull.name = "cluster-cull";
-    cluster_cull.queue = resonate::render::Queue::Compute;
-    cluster_cull.reads = cull_reads;
-    cluster_cull.read_count = 1U;
-    cluster_cull.writes = cull_writes;
-    cluster_cull.write_count = 2U;
-    cluster_cull.context = this;
-    cluster_cull.execute = &Impl::clusterCullEntry;
-    graph.addPass(cluster_cull);
+    if (!compat_tier)
+    {
+        resonate::render::PassDesc cluster_cull{};
+        cluster_cull.name = "cluster-cull";
+        cluster_cull.queue = resonate::render::Queue::Compute;
+        cluster_cull.reads = cull_reads;
+        cluster_cull.read_count = 1U;
+        cluster_cull.writes = cull_writes;
+        cluster_cull.write_count = 2U;
+        cluster_cull.context = this;
+        cluster_cull.execute = &Impl::clusterCullEntry;
+        graph.addPass(cluster_cull);
+    }
+
 
     Use scene_reads[5]{};
     scene_reads[0].resource = grid_resource;
