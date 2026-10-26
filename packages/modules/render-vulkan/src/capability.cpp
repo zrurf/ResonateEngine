@@ -331,6 +331,13 @@ ResonateStatus nativeImage(void* self, ResonateRenderImage image,
                : RESONATE_E_STATE;
 }
 
+ResonateRenderFormat surfaceFormat(void* self)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr ? state->context->surfaceFormat()
+                                                         : RESONATE_RENDER_FORMAT_UNKNOWN;
+}
+
 ResonateRenderDevice g_device = {
     RESONATE_CAPABILITY_HEADER_INIT(ResonateRenderDevice, RESONATE_THREAD_ANY),
     &attachSurface,
@@ -370,6 +377,7 @@ ResonateRenderDevice g_device = {
     &bindImageSlot,
     &nativeHandles,
     &nativeImage,
+    &surfaceFormat,
 };
 
 } // namespace

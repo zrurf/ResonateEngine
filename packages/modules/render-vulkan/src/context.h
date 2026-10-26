@@ -108,7 +108,7 @@ class Context
        when off, FIFO when neither is offered. Read once from the run's
        configuration at attach; restart-to-apply. The canvas is where frame
        sizes come from. */
-    Context(bool vsync, ResonateRenderCanvas* canvas);
+    Context(bool vsync, bool prefer_srgb, ResonateRenderCanvas* canvas);
     ~Context();
 
     Context(const Context&) = delete;
@@ -133,6 +133,11 @@ class Context
 
     /* RESONATE_RENDER_FEATURE_* of the created device. */
     uint32_t featureBits() const;
+
+    /* The format the frame is presented through; UNKNOWN before a target
+       exists. The final pass matches the surface's transfer function against
+       it: an SRGB format encodes on write, a linear one needs the shader to. */
+    ResonateRenderFormat surfaceFormat() const;
 
     /* The Vulkan objects a host-side library sharing this device needs. */
     VkInstance instance() const { return instance_; }
@@ -431,6 +436,9 @@ class Context
     uint32_t image_index_ = 0;
     VkPresentModeKHR present_mode_ = VK_PRESENT_MODE_FIFO_KHR;
     bool vsync_ = true;
+    /* Whether the swapchain should prefer an sRGB surface format; a linear
+       surface leaves the transfer function to the final pass. */
+    bool prefer_srgb_ = true;
     bool recreate_pending_ = false;
     ResonateRenderCanvas* canvas_ = nullptr; /* frame sizes come from here */
     uint32_t canvas_width_ = 0;

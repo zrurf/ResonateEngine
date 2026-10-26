@@ -84,6 +84,7 @@ typedef enum ResonateRenderFormat : uint8_t
        (mobile) tier renders its HDR target with it. */
     RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT,
     RESONATE_RENDER_FORMAT_D16_UNORM,
+    RESONATE_RENDER_FORMAT_B8G8R8A8_UNORM, /* a linear surface fallback */
     /* A pipeline marker, not a real format: a pipeline whose color format is
        NONE has no color outputs (depth-only). */
     RESONATE_RENDER_FORMAT_NONE = 0xFF,
@@ -419,6 +420,13 @@ typedef struct ResonateRenderDevice
        Same fallback as native_handles. */
     ResonateStatus (*native_image)(void* self, ResonateRenderImage image,
                                    ResonateRenderNativeImage* out_image);
+
+    /* Tail: the format the frame is presented through — the swapchain's for a
+       window, the offscreen target's otherwise, UNKNOWN before a target
+       exists. A final pass must match the surface's transfer function: an
+       SRGB format encodes on write, a linear one needs the shader to. An
+       older writer stops before this and means SRGB. */
+    ResonateRenderFormat (*surface_format)(void* self);
 } ResonateRenderDevice;
 
 /* The resource table is partially bound and sampled-image indices may differ

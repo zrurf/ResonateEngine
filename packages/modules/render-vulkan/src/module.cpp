@@ -39,10 +39,14 @@ class RenderVulkanModule final : public resonate::Module
         }
         *state_ = State{};
         state_->canvas = &*canvas_;
-        /* Vsync comes from the run's configuration, read once here; the
-           swapchain it decides is created on the first window. */
+        /* Vsync and the color space come from the run's configuration, read
+           once here; the swapchain they decide is created on the first
+           window. "linear" hands the transfer function to the final pass. */
+        const std::optional<std::string> color_space =
+            host.readConfig("resonate.render", "color-space");
+        const bool prefer_srgb = color_space != std::optional<std::string>("linear");
         state_->context = new resonate::render_vulkan::Context(
-            host.readBool("resonate.render", "vsync", true), &*canvas_);
+            host.readBool("resonate.render", "vsync", true), prefer_srgb, &*canvas_);
 
         ResonateRenderDevice& published = resonate::render_vulkan::device();
         published.self = state_;

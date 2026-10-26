@@ -186,7 +186,8 @@ VkImageLayout layoutToVulkan(ResonateRenderImageLayout layout)
 
 } // namespace
 
-Context::Context(bool vsync, ResonateRenderCanvas* canvas) : vsync_(vsync), canvas_(canvas)
+Context::Context(bool vsync, bool prefer_srgb, ResonateRenderCanvas* canvas)
+    : vsync_(vsync), prefer_srgb_(prefer_srgb), canvas_(canvas)
 {
 }
 
@@ -1389,6 +1390,23 @@ uint32_t Context::featureBits() const
     return bindless_ ? RESONATE_RENDER_FEATURE_DESCRIPTOR_INDEXING : 0U;
 }
 
+ResonateRenderFormat Context::surfaceFormat() const
+{
+    switch (surface_format_.format)
+    {
+        case VK_FORMAT_R8G8B8A8_SRGB:
+            return RESONATE_RENDER_FORMAT_R8G8B8A8_SRGB;
+        case VK_FORMAT_B8G8R8A8_SRGB:
+            return RESONATE_RENDER_FORMAT_B8G8R8A8_SRGB;
+        case VK_FORMAT_R8G8B8A8_UNORM:
+            return RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+        case VK_FORMAT_B8G8R8A8_UNORM:
+            return RESONATE_RENDER_FORMAT_B8G8R8A8_UNORM;
+        default:
+            return RESONATE_RENDER_FORMAT_UNKNOWN;
+    }
+}
+
 ResonateStatus Context::attachOffscreen(uint32_t width, uint32_t height)
 {
     if (width == 0U || height == 0U || surface_ != VK_NULL_HANDLE)
@@ -1428,15 +1446,26 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
     vkGetPhysicalDeviceSurfaceFormatsKHR(physical_, surface_, &format_count, formats.data());
     surface_format_ = formats.empty() ? surface_format_ : formats[0];
     /* The shaders end the frame in linear light; an sRGB swapchain encodes on
-       write. A linear swapchain would show the scene unencoded and dark. */
-    for (const VkSurfaceFormatKHR& format : formats)
+       write. A linear swapchain would show the scene unencoded and dark unless
+       the final pass encodes itself — the configured color space decides who
+       owns the transfer function. */
+    if (prefer_srgb_)
     {
-        const bool srgb = format.format == VK_FORMAT_B8G8R8A8_SRGB ||
-                          format.format == VK_FORMAT_R8G8B8A8_SRGB;
-        if (srgb && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        bool srgb_surface = false;
+        for (const VkSurfaceFormatKHR& format : formats)
         {
-            surface_format_ = format;
-            break;
+            const bool srgb = format.format == VK_FORMAT_B8G8R8A8_SRGB ||
+                              format.format == VK_FORMAT_R8G8B8A8_SRGB;
+            if (srgb && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            {
+                surface_format_ = format;
+                srgb_surface = true;
+                break;
+            }
+        }
+        if (!srgb_surface)
+        {
+            std::fprintf(stderr, "render-vulkan: no sRGB surface format; the final pass encodes\n");
         }
     }
     std::fprintf(stderr, "render-vulkan: swapchain format %u\n",
