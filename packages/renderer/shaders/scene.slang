@@ -163,10 +163,12 @@ float shadowFactor(float3 world_position, float view_depth, FrameData frame)
 // A device without descriptor indexing cannot index the table per pixel. The
 // three cascade slots are push constants, so each lookup is dynamically
 // uniform; sample all three and select the one the pixel's cascade names.
+// The compat tier renders a single full-range cascade (cascade 0), so one fetch
+// set covers the whole shadow distance — no per-pixel cascade selection, which
+// is exactly what this tier cannot do.
 float shadowFactorCompat(float3 world_position, float view_depth, FrameData frame)
 {
-    uint cascade = cascadeOf(view_depth, frame);
-    float4 shadow_position = mul(frame.light_view_proj[cascade], float4(world_position, 1.0));
+    float4 shadow_position = mul(frame.light_view_proj[0], float4(world_position, 1.0));
     float3 shadow_ndc = shadow_position.xyz / shadow_position.w;
     if (shadow_ndc.x < -1.0 || shadow_ndc.x > 1.0 || shadow_ndc.y < -1.0 || shadow_ndc.y > 1.0)
     {
@@ -175,11 +177,7 @@ float shadowFactorCompat(float3 world_position, float view_depth, FrameData fram
     float2 uv = float2(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * 0.5 + 0.5);
     float receiver = shadow_ndc.z;
     float texel = 1.0 / 2048.0;
-
-    float cascades0 = pcfOf(push.slots2[1], uv, receiver, texel);
-    float cascades1 = pcfOf(push.slots2[2], uv, receiver, texel);
-    float cascades2 = pcfOf(push.slots2[3], uv, receiver, texel);
-    return cascade == 0 ? cascades0 : (cascade == 1 ? cascades1 : cascades2);
+    return pcfOf(push.slots2[1], uv, receiver, texel);
 }
 
 static const float PI = 3.14159265;

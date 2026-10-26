@@ -448,6 +448,10 @@ struct RenderSystem::Impl
        tonemap and bloom read, so changing it never rebuilds the graph. The UI
        keeps its own full-resolution target, so text stays sharp. */
     bool overrides_read = false;
+    /* The compat tier (no descriptor indexing) also shades like a mobile part:
+       fewer uniform lights and a single full-range cascade. Set once the device
+       is resolved. */
+    bool compat_tier = false;
     float render_scale = 1.0F;
     std::uint32_t render_width = 0U;
     std::uint32_t render_height = 0U;
@@ -649,6 +653,11 @@ bool RenderSystem::Impl::initialize()
     /* The graph is built from the scale, and the warmup builds it before the
        first frame: the overrides are read here, once. */
     readRenderScaleOverrides();
+    compat_tier =
+        device->header.struct_size >=
+            offsetof(ResonateRenderDevice, feature_bits) + sizeof(device->feature_bits) &&
+        device->feature_bits != nullptr &&
+        (device->feature_bits(device->self) & RESONATE_RENDER_FEATURE_DESCRIPTOR_INDEXING) == 0U;
 
     /* The fixed spine: three CSM shadow passes, two cluster compute passes and
        the lit scene into HDR. The post chain after it comes from the feature
@@ -703,7 +712,8 @@ bool RenderSystem::Impl::initialize()
             "blur_b", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, bloom_width, bloom_height,
             RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     }
-    for (std::uint32_t cascade = 0; cascade < kCascades; ++cascade)
+    const std::uint32_t shadow_count = compat_tier ? 1U : kCascades;
+    for (std::uint32_t cascade = 0; cascade < shadow_count; ++cascade)
     {
         shadow_resource[cascade] = graph.declareImage(
             "shadow", RESONATE_RENDER_FORMAT_D32_SFLOAT, 2048U, 2048U,
@@ -718,7 +728,8 @@ bool RenderSystem::Impl::initialize()
         RESONATE_RENDER_BUFFER_STORAGE);
 
     Impl* const self = this;
-    for (std::uint32_t cascade = 0; cascade < kCascades; ++cascade)
+    const std::uint32_t cascade_count = compat_tier ? 1U : kCascades;
+    for (std::uint32_t cascade = 0; cascade < cascade_count; ++cascade)
     {
         Use shadow_write{};
         shadow_write.resource = shadow_resource[cascade];
@@ -780,7 +791,7 @@ bool RenderSystem::Impl::initialize()
     scene_reads[1].stages = resonate::render::kStageFragment;
     scene_reads[1].access = resonate::render::kAccessShaderRead;
     scene_reads[1].layout = kLayoutShaderReadOnly;
-    for (std::uint32_t cascade = 0; cascade < kCascades; ++cascade)
+    for (std::uint32_t cascade = 0; cascade < cascade_count; ++cascade)
     {
         scene_reads[2 + cascade].resource = shadow_resource[cascade];
         scene_reads[2 + cascade].stages = resonate::render::kStageFragment;
@@ -803,7 +814,7 @@ bool RenderSystem::Impl::initialize()
     resonate::render::PassDesc scene{};
     scene.name = "scene";
     scene.reads = scene_reads;
-    scene.read_count = 5U;
+    scene.read_count = 2U + cascade_count;
     scene.writes = scene_writes;
     scene.write_count = 2U;
     scene.context = this;
@@ -2007,8 +2018,11 @@ bool RenderSystem::Impl::extract(ecs::World& world)
                             light.position_radius.z};
         return lengthSquared(position - centre);
     };
+    /* Mobile tier: a low uniform-light budget — the fallback shading loop runs
+       it per pixel with no clustering, so this is the dominant pixel cost. */
+    const std::uint32_t light_budget = compat_tier ? 8U : kUniformLights;
     const auto uniform_lights = static_cast<std::uint32_t>(
-        std::min<std::size_t>(scratch.lights.size(), kUniformLights));
+        std::min<std::size_t>(scratch.lights.size(), light_budget));
     std::partial_sort(nearest.begin(), nearest.begin() + uniform_lights, nearest.end(),
                       [&](std::uint32_t a, std::uint32_t b)
                       {
@@ -2080,11 +2094,17 @@ bool RenderSystem::Impl::extract(ecs::World& world)
     const Vec3 light_forward = normalize(directional_direction);
     const Vec3 light_side = normalize(cross(Vec3{0.0F, 1.0F, 0.0F}, light_forward));
     const Vec3 light_up = cross(light_forward, light_side);
+    const std::uint32_t cascades = compat_tier ? 1U : kCascades;
     float previous_split = near_z;
-    float split_values[3] = {0.0F, 0.0F, 0.0F};
-    for (std::uint32_t cascade = 0; cascade < kCascades; ++cascade)
+    float split_values[3] = {far_z, far_z, far_z};
+    for (std::uint32_t cascade = 0; cascade < kCascades && cascade < cascades; ++cascade)
     {
-        const float split = far_z * std::pow(kSplitRatio, static_cast<float>(kCascades - cascade));
+        /* The compat tier renders one cascade over the whole shadow range: its
+           shader cannot pick a cascade per pixel, and a mobile GPU cannot afford
+           the fetches the three-map fallback would cost. */
+        const float split = cascades == 1U ? far_z
+                                           : far_z * std::pow(kSplitRatio,
+                                                              static_cast<float>(kCascades - cascade));
         split_values[cascade] = split;
         Vec3 minimum;
         Vec3 maximum;
@@ -2381,7 +2401,10 @@ void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
     constants.slots2[0] = light_list_slot;
     for (std::uint32_t cascade = 0; cascade < kCascades; ++cascade)
     {
-        constants.slots2[1 + cascade] = commands.imageSlot(shadow_resource[cascade]);
+        /* Slots past the tier's cascade count mirror cascade 0: the compat
+           shader reads slot 1 only, and unbound table entries stay dummy. */
+        const std::uint32_t source = std::min(cascade, compat_tier ? 1U : kCascades - 1U);
+        constants.slots2[1 + cascade] = commands.imageSlot(shadow_resource[source]);
     }
     for (const DrawInstance& instance : active->instances)
     {
