@@ -7,7 +7,8 @@
 struct PostPush
 {
     uint4 slots;   // x: input image, y: second input (bloom for the composite)
-    float4 params; // bright: threshold in x; blur: texel step in x/y
+    float4 params; // bright: threshold in x; blur: texel step in x/y;
+                   // composite: x is 1 when the pass applies the sRGB encode
 };
 
 [[vk::binding(5, 0)]] Sampler2D image_table[16];
@@ -73,6 +74,13 @@ float3 tonemap(float3 color)
     return saturate((color * (a * color + b)) / (color * (c * color + d) + e));
 }
 
+// The sRGB transfer function, for a surface that does not encode on write.
+float3 encodeSrgb(float3 color)
+{
+    const float3 high = 1.055 * pow(max(color, float3(0.0, 0.0, 0.0)), 1.0 / 2.4) - 0.055;
+    return lerp(high, 12.92 * color, step(color, float3(0.0031308, 0.0031308, 0.0031308)));
+}
+
 [shader("fragment")]
 float4 tonemapFragment(VertexOutput input) : SV_Target
 {
@@ -86,7 +94,15 @@ float4 tonemapFragment(VertexOutput input) : SV_Target
     float3 bloom = push.params.z > 0.5
                        ? image_table[push.slots.y].Sample(input.uv).rgb
                        : float3(0.0, 0.0, 0.0);
-    return float4(tonemap(hdr + bloom * 0.35), 1.0);
+    float3 ldr = tonemap(hdr + bloom * 0.35);
+    // x: 1 when the surface presents linear and this pass owns the encode.
+    // Encoding here puts FXAA on perceptual luma and leaves the blend a
+    // plain composite of display-ready values.
+    if (push.params.x > 0.5)
+    {
+        ldr = encodeSrgb(ldr);
+    }
+    return float4(ldr, 1.0);
 }
 
 [shader("fragment")]

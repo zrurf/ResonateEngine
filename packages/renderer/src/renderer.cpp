@@ -2654,18 +2654,48 @@ void RenderSystem::Impl::blurVEntry(void* context, GraphExecuteContext& commands
                   Vec4{0.0F, 1.0F / static_cast<float>(self->bloom_height), 0.0F, 0.0F});
 }
 
+namespace
+{
+
+/* The transfer function the presented surface applies: an SRGB format encodes
+   on write. A writer without the surface-format tail predates the query and
+   always presented through sRGB; UNKNOWN (no target yet) reads the same way,
+   so the encode switches on with the swapchain that needs it. */
+bool surfaceEncodes(ResonateRenderDevice& device)
+{
+    if (device.header.struct_size <
+            offsetof(ResonateRenderDevice, surface_format) + sizeof(device.surface_format) ||
+        device.surface_format == nullptr)
+    {
+        return true;
+    }
+    switch (device.surface_format(device.self))
+    {
+        case RESONATE_RENDER_FORMAT_R8G8B8A8_SRGB:
+        case RESONATE_RENDER_FORMAT_B8G8R8A8_SRGB:
+        case RESONATE_RENDER_FORMAT_UNKNOWN:
+            return true;
+        default:
+            return false;
+    }
+}
+
+} // namespace
+
 void RenderSystem::Impl::compositeEntry(void* context, GraphExecuteContext& commands)
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
     const bool bloom = self->features.has("bloom");
     /* y/w carry the uv window: the scene rendered into the scaled sub-rectangle
-       of the full-size HDR target, and the tonemap reads it back up. */
+       of the full-size HDR target, and the tonemap reads it back up. x is 1
+       when the surface presents linear and the pass owns the encode. */
     const float uv_x = static_cast<float>(self->render_width) / static_cast<float>(self->target_width);
     const float uv_y = static_cast<float>(self->render_height) / static_cast<float>(self->target_height);
+    const float encode = surfaceEncodes(*commands.device) ? 0.0F : 1.0F;
     self->runPost(commands, self->ldr_resource, self->composite_pipeline,
                   commands.imageSlot(self->hdr_resource),
                   bloom ? commands.imageSlot(self->blur_b_resource) : 0U, 0U,
-                  Vec4{0.0F, uv_x, bloom ? 1.0F : 0.0F, uv_y});
+                  Vec4{encode, uv_x, bloom ? 1.0F : 0.0F, uv_y});
 }
 
 void RenderSystem::Impl::fxaaEntry(void* context, GraphExecuteContext& commands)

@@ -60,6 +60,19 @@ default = 1.0
 description = "Brightness above which bloom picks a pixel up."
 
 [[setting]]
+key = "resonate.render.vsync"
+type = "bool"
+default = true
+description = "Present frames through the display's refresh; off trades tearing for latency."
+
+[[setting]]
+key = "resonate.render.color-space"
+type = "enum"
+values = ["auto", "srgb", "linear"]
+default = "auto"
+description = "Who encodes sRGB: auto and srgb prefer a surface that encodes on write; linear keeps a linear surface and the final pass encodes."
+
+[[setting]]
 key = "resonate.input.action-map"
 type = "string"
 default = ""
