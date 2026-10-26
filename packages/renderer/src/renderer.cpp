@@ -2471,6 +2471,26 @@ void RenderSystem::Impl::runPost(GraphExecuteContext& commands, ResourceId targe
     pass.struct_size = sizeof(pass);
     pass.color = target == canvas_resource ? ResonateRenderImage{} : commands.image(target);
     pass.clear_color = kClearColor;
+    /* RESONATE_PASS_SENTINELS: each post pass clears to a colour of its own, so a
+       frame that arrives showing only a clear names the pass whose draw was lost
+       instead of looking identical for all of them. This is what identified the
+       dropped-pass flash. */
+    static const bool sentinels = std::getenv("RESONATE_PASS_SENTINELS") != nullptr;
+    if (sentinels)
+    {
+        if (pipeline.value == composite_pipeline.value)
+        {
+            pass.clear_color = ResonateVec4{0.0F, 1.0F, 0.0F, 1.0F};
+        }
+        else if (pipeline.value == fxaa_pipeline.value)
+        {
+            pass.clear_color = ResonateVec4{0.0F, 0.0F, 1.0F, 1.0F};
+        }
+        else if (pipeline.value == blend_pipeline.value)
+        {
+            pass.clear_color = ResonateVec4{1.0F, 0.0F, 1.0F, 1.0F};
+        }
+    }
     static const bool trace_failures = std::getenv("RESONATE_FRAME_TRACE") != nullptr;
     const ResonateStatus begun = device.begin_pass(device.self, &pass);
     if (begun != RESONATE_OK)
