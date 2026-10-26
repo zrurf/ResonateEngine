@@ -447,6 +447,7 @@ struct RenderSystem::Impl
        final composite upscales them; the UI keeps its own full-resolution
        target, so text stays sharp. Mobile devices need this to hold a frame
        budget at a 2400-wide output. */
+    bool overrides_read = false;
     float render_scale = 1.0F;
     std::uint32_t render_width = 0U;
     std::uint32_t render_height = 0U;
@@ -628,6 +629,11 @@ struct RenderSystem::Impl
    rebuild forever. */
 void RenderSystem::Impl::readRenderScaleOverrides()
 {
+    if (overrides_read)
+    {
+        return;
+    }
+    overrides_read = true;
     if (const char* scale = std::getenv("RESONATE_RENDER_SCALE"))
     {
         render_scale = std::clamp(static_cast<float>(std::atof(scale)), kMinRenderScale, 1.0F);
@@ -640,6 +646,10 @@ void RenderSystem::Impl::readRenderScaleOverrides()
 
 bool RenderSystem::Impl::initialize()
 {
+    /* The graph is built from the scale, and the warmup builds it before the
+       first frame: the overrides are read here, once. */
+    readRenderScaleOverrides();
+
     /* The fixed spine: three CSM shadow passes, two cluster compute passes and
        the lit scene into HDR. The post chain after it comes from the feature
        stack: bloom adds its extraction and blur passes, the tonemap writes the
@@ -2906,12 +2916,13 @@ void RenderSystem::Impl::renderLoop()
                 const double scale = frames > 0.0 ? 1.0 / frames : 0.0;
                 std::fprintf(stderr,
                              "renderer: profile %.0f fps: frame %.2f ms (ui %.2f, graph %.2f), "
-                             "extract %.2f, publish wait %.2f\n",
+                             "extract %.2f, publish wait %.2f, scale %.2f at %ux%u\n",
                              frames / reported, profile.frame_ms.exchange(0.0) * scale,
                              profile.ui_ms.exchange(0.0) * scale,
                              profile.graph_ms.exchange(0.0) * scale,
                              profile.extract_ms.exchange(0.0) * scale,
-                             profile.publish_wait_ms.exchange(0.0) * scale);
+                             profile.publish_wait_ms.exchange(0.0) * scale,
+                             static_cast<double>(render_scale), render_width, render_height);
                 profile_frames = 0;
                 profile_since = std::chrono::steady_clock::now();
             }
@@ -3033,6 +3044,8 @@ bool RenderSystem::Impl::prepareTargets(uint32_t width, uint32_t height)
 
 void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
 {
+    /* Read before the first `initialize`: the graph is built from the scale, and
+       reading it later would build at full size and never revisit it. */
     if (!prepareTargets(snapshot.target_width, snapshot.target_height))
     {
         return;
@@ -3052,12 +3065,6 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
     /* Before the pass: the atlas slot must resolve inside the same frame the
        glyphs first appear, or frame one draws them as solid rectangles. */
     updateFontAtlas(snapshot);
-    static bool scale_overrides_read = false;
-    if (!scale_overrides_read)
-    {
-        scale_overrides_read = true;
-        readRenderScaleOverrides();
-    }
     std::string error;
     const auto graph_begin = std::chrono::steady_clock::now();
     const bool executed = executor->execute(error, &Impl::prepareEntry, this);
