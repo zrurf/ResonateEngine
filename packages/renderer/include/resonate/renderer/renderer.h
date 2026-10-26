@@ -88,6 +88,16 @@ class RenderSystem
        keeps the fixed scale. */
     void setTargetFrameMs(float milliseconds);
 
+    /* The HDR scene target's format: "auto" picks the tier's choice (packed
+       B10G11R11 on a mobile GPU, RGBA16F otherwise); "rgba16f" and
+       "b10g11r11" name one explicitly. Answers false with the reason for an
+       unknown name. Call before the frame loop. */
+    [[nodiscard]] bool setHdrFormat(const std::string& name, std::string& out_error);
+
+    /* The shadow map's extent in texels, square; zero keeps the tier's choice
+       (1024 on a mobile GPU, 2048 otherwise). Call before the frame loop. */
+    void setShadowSize(std::uint32_t size);
+
     /* Registers the render components; idempotent, and a refusal (a name
        collision) answers false. */
     static bool registerComponents(ecs::World& world);

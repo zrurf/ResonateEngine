@@ -452,6 +452,10 @@ struct RenderSystem::Impl
        fewer uniform lights and a single full-range cascade. Set once the device
        is resolved. */
     bool compat_tier = false;
+    /* Settings overrides: an explicit HDR format and shadow extent; "auto"
+       and zero keep the tier's choice. */
+    std::string hdr_format_name = "auto";
+    std::uint32_t shadow_size = 0U;
     float render_scale = 1.0F;
     std::uint32_t render_width = 0U;
     std::uint32_t render_height = 0U;
@@ -582,6 +586,8 @@ struct RenderSystem::Impl
     }
 
     void readRenderScaleOverrides();
+    ResonateRenderFormat hdrFormat() const;
+    std::uint32_t shadowExtent() const;
     bool initialize();
     bool createAlbedoTextures(const FrameSnapshot& snapshot);
     bool ensurePipelines();
@@ -648,6 +654,25 @@ void RenderSystem::Impl::readRenderScaleOverrides()
     }
 }
 
+ResonateRenderFormat RenderSystem::Impl::hdrFormat() const
+{
+    if (hdr_format_name == "rgba16f")
+    {
+        return RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT;
+    }
+    if (hdr_format_name == "b10g11r11")
+    {
+        return RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT;
+    }
+    return compat_tier ? RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT
+                       : RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT;
+}
+
+std::uint32_t RenderSystem::Impl::shadowExtent() const
+{
+    return shadow_size != 0U ? shadow_size : (compat_tier ? 1024U : 2048U);
+}
+
 bool RenderSystem::Impl::initialize()
 {
     /* The graph is built from the scale, and the warmup builds it before the
@@ -670,10 +695,9 @@ bool RenderSystem::Impl::initialize()
     resonate::render::RenderGraph graph;
     canvas_resource = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
     /* The tier picks the scene formats: packed HDR and 16-bit depth halve the
-       bandwidth of the full-size targets on a mobile GPU. */
-    const ResonateRenderFormat hdr_format =
-        compat_tier ? RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT
-                    : RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT;
+       bandwidth of the full-size targets on a mobile GPU; the settings may
+       name the HDR format explicitly. */
+    const ResonateRenderFormat hdr_format = hdrFormat();
     const ResonateRenderFormat depth_format =
         compat_tier ? RESONATE_RENDER_FORMAT_D16_UNORM : RESONATE_RENDER_FORMAT_D32_SFLOAT;
     depth_resource = graph.declareImage("depth", depth_format, target_width, target_height,
@@ -727,7 +751,7 @@ bool RenderSystem::Impl::initialize()
            halves. */
         shadow_resource[cascade] = graph.declareImage(
             "shadow", RESONATE_RENDER_FORMAT_D32_SFLOAT,
-            compat_tier ? 1024U : 2048U, compat_tier ? 1024U : 2048U,
+            shadowExtent(), shadowExtent(),
             RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     }
     boxes_resource = graph.declareBuffer("cluster_boxes", kClusterCount * sizeof(ShaderClusterAABB),
@@ -1607,9 +1631,7 @@ bool RenderSystem::Impl::ensurePipelines()
     scene_desc.streams = &stream;
     /* The formats must match the graph's declarations: the compat tier renders
        the scene into a packed-HDR target with a 16-bit depth. */
-    const ResonateRenderFormat hdr_format =
-        compat_tier ? RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT
-                    : RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT;
+    const ResonateRenderFormat hdr_format = hdrFormat();
     const ResonateRenderFormat depth_format =
         compat_tier ? RESONATE_RENDER_FORMAT_D16_UNORM : RESONATE_RENDER_FORMAT_D32_SFLOAT;
     scene_desc.color_format = hdr_format;
@@ -2832,6 +2854,23 @@ void RenderSystem::setRenderScale(float scale)
 void RenderSystem::setTargetFrameMs(float milliseconds)
 {
     impl_->target_frame_ms = milliseconds > 0.0F ? milliseconds : 0.0F;
+}
+
+bool RenderSystem::setHdrFormat(const std::string& name, std::string& out_error)
+{
+    if (name != "auto" && name != "rgba16f" && name != "b10g11r11")
+    {
+        out_error = "unknown hdr format '" + name + "' (auto, rgba16f or b10g11r11)";
+        return false;
+    }
+    impl_->hdr_format_name = name;
+    out_error.clear();
+    return true;
+}
+
+void RenderSystem::setShadowSize(std::uint32_t size)
+{
+    impl_->shadow_size = size;
 }
 
 void RenderSystem::setUiImageTexture(std::uint32_t id, std::string path)

@@ -73,6 +73,20 @@ default = "auto"
 description = "Who encodes sRGB: auto and srgb prefer a surface that encodes on write; linear keeps a linear surface and the final pass encodes."
 
 [[setting]]
+key = "resonate.render.hdr-format"
+type = "enum"
+values = ["auto", "rgba16f", "b10g11r11"]
+default = "auto"
+description = "The HDR scene target's format; auto picks packed B10G11R11 on a mobile tier and RGBA16F otherwise."
+
+[[setting]]
+key = "resonate.render.shadow-size"
+type = "int"
+range = [0, 4096]
+default = 0
+description = "Shadow map extent in texels, square; zero keeps the tier's choice (1024 mobile, 2048 desktop)."
+
+[[setting]]
 key = "resonate.input.action-map"
 type = "string"
 default = ""

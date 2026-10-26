@@ -652,6 +652,20 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
     }
     render_system.setFeatures(features);
 
+    /* The HDR target's format and the shadow map's extent are configurably
+       data too: an unknown name ends the run with the reason. */
+    {
+        std::string error;
+        if (!render_system.setHdrFormat(
+                schema.readString(config.settings, "resonate.render.hdr-format", "auto"), error))
+        {
+            std::fprintf(stderr, "resonate: hdr format: %s\n", error.c_str());
+            return EXIT_FAILURE;
+        }
+    }
+    render_system.setShadowSize(
+        schema.readUInt(config.settings, "resonate.render.shadow-size", 0U));
+
 #if defined(RESONATE_WITH_CSHARP)
     /* An optional managed assembly: its systems register alongside the C++
        ones and run through the dispatch table, so the frame never touches a
