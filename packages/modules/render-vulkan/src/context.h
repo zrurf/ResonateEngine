@@ -286,6 +286,11 @@ class Context
     /* RESONATE_FRAME_TRACE: one line per swapchain event, so a device capture
        shows what the present path did on the frames around a symptom. */
     void trace(const char* format, ...) const;
+    /* RESONATE_FRAME_PROFILE: a GPU timestamp at every pass boundary, reported
+       as per-pass milliseconds one frame later. Disabled when the device has no
+       usable timestamp support. */
+    void profileTimestamp(VkCommandBuffer command);
+    void profileReport(std::size_t slot);
     /* RESONATE_FRAME_TRACE_TEXEL: the presented image's centre texel, read
        three frames late through the slot's already-waited fence. */
     void tracePresentedTexel(VkCommandBuffer command);
@@ -324,11 +329,17 @@ class Context
     VmaAllocation_T* debug_canvas_allocation_ = nullptr;
     uint32_t debug_canvas_frames_ = 0;
     /* Frame trace: one texel per frame slot plus the frame that wrote it. */
+    static constexpr uint32_t kFramesInFlight = 2;
     VkBuffer trace_buffer_ = VK_NULL_HANDLE;
     VmaAllocation_T* trace_allocation_ = nullptr;
     uint32_t trace_frames_[3] = {0U, 0U, 0U};
     /* When each slot's frame was submitted, for the fence wait's duration. */
-    std::uint64_t trace_submit_ns_[3] = {0U, 0U, 0U};
+    std::uint64_t trace_submit_ns_[kFramesInFlight] = {};
+    static constexpr std::uint32_t kMaxPassTimestamps = 48U;
+    VkQueryPool profile_pool_[kFramesInFlight] = {};
+    std::uint32_t profile_count_[kFramesInFlight] = {};
+    std::uint32_t profile_reported_[kFramesInFlight] = {};
+    float timestamp_period_ns_ = 0.0F;
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     VkSurfaceFormatKHR surface_format_{};
     VkExtent2D extent_{};
@@ -347,7 +358,7 @@ class Context
     std::vector<OwnedImage> offscreen_images_;
     bool offscreen_ = false;
 
-    static constexpr uint32_t kFramesInFlight = 2;
+
     static constexpr uint32_t kMaxConstants = 128;
     Frame frames_[kFramesInFlight];
     uint32_t frame_ = 0;

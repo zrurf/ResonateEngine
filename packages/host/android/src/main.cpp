@@ -267,18 +267,25 @@ void applyDebugProperties()
     {
         const char* property;
         const char* variable;
+        /* A text property passes its value through instead of being a flag. */
+        bool is_text = false;
     };
     static constexpr Property kProperties[] = {
         {"debug.resonate.frame_trace", "RESONATE_FRAME_TRACE"},
         {"debug.resonate.frame_trace_texel", "RESONATE_FRAME_TRACE_TEXEL"},
         {"debug.resonate.dump_ui_target", "RESONATE_DUMP_UI_TARGET"},
+        {"debug.resonate.frame_profile", "RESONATE_FRAME_PROFILE"},
+        {"debug.resonate.render_clear_only", "RESONATE_RENDER_CLEAR_ONLY"},
+        {"debug.resonate.skip_passes", "RESONATE_RENDER_SKIP_PASSES", true},
+        {"debug.resonate.render_scale", "RESONATE_RENDER_SCALE", true},
     };
     for (const Property& entry : kProperties)
     {
         char value[PROP_VALUE_MAX] = {};
-        if (__system_property_get(entry.property, value) > 0 && value[0] == '1')
+        const int length = __system_property_get(entry.property, value);
+        if (length > 0 && (entry.is_text || value[0] == '1'))
         {
-            setenv(entry.variable, "1", 1);
+            setenv(entry.variable, entry.is_text ? value : "1", 1);
         }
     }
 }
@@ -290,6 +297,10 @@ void android_main(android_app* app)
     installCrashHandler();
     redirectStdioToLogcat();
     resonate::window::attachAndroidApp(app);
+    /* No config files travel with the package yet, so the handheld render scale
+       is the built-in default: this GPU cannot hold 60 fps at the full 2400-wide
+       target, and the UI keeps its own resolution either way. */
+    setenv("RESONATE_RENDER_SCALE", "0.45", 1);
     applyDebugProperties();
 
     std::vector<std::string> arguments{"resonate"};

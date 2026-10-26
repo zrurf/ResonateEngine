@@ -1,9 +1,103 @@
 #include <resonate/render/executor.h>
 
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <string_view>
 
 namespace resonate::render
 {
+namespace
+{
+
+/* RESONATE_FRAME_PROFILE: splits a frame into the device's frame boundary
+   (acquire), the recorded passes, and the present, which is where a stuck
+   frame on a device shows up. Single-threaded: only the render thread uses it. */
+struct ExecutorProfile
+{
+    double begin_ms = 0.0;
+    double passes_ms = 0.0;
+    double present_ms = 0.0;
+    unsigned frames = 0U;
+    std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
+};
+
+ExecutorProfile g_profile;
+
+/* Read on first use, not at static initialization: the platform sets the
+   environment after the process starts (Android passes it as a property). */
+bool profileEnabled()
+{
+    static const bool enabled = std::getenv("RESONATE_FRAME_PROFILE") != nullptr;
+    return enabled;
+}
+
+/* RESONATE_RENDER_CLEAR_ONLY skips every pass; RESONATE_RENDER_SKIP_PASSES names
+   passes (comma separated) to skip one at a time. Both leave the presented
+   frame stale, so they exist only to attribute a frame's GPU cost. */
+bool skipPasses()
+{
+    static const bool skip = std::getenv("RESONATE_RENDER_CLEAR_ONLY") != nullptr;
+    return skip;
+}
+
+bool skipPassNamed(const char* name)
+{
+    static const std::string listing = [] {
+        const char* value = std::getenv("RESONATE_RENDER_SKIP_PASSES");
+        return std::string(value != nullptr ? value : "");
+    }();
+    if (name == nullptr || listing.empty())
+    {
+        return false;
+    }
+    const std::string target = name;
+    std::size_t start = 0U;
+    while (start < listing.size())
+    {
+        const std::size_t comma = listing.find(',', start);
+        const std::string_view entry(listing.data() + start,
+                                     (comma == std::string::npos ? listing.size() : comma) - start);
+        if (entry == target)
+        {
+            return true;
+        }
+        if (comma == std::string::npos)
+        {
+            break;
+        }
+        start = comma + 1U;
+    }
+    return false;
+}
+
+double millisSince(std::chrono::steady_clock::time_point start)
+{
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+        .count();
+}
+
+void reportProfile()
+{
+    const double elapsed =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - g_profile.since).count();
+    if (elapsed < 1.0)
+    {
+        return;
+    }
+    const double frames = g_profile.frames > 0U ? static_cast<double>(g_profile.frames) : 1.0;
+    std::fprintf(stderr, "render: profile begin %.2f ms, passes %.2f ms, present %.2f ms\n",
+                 g_profile.begin_ms / frames, g_profile.passes_ms / frames,
+                 g_profile.present_ms / frames);
+    g_profile.begin_ms = 0.0;
+    g_profile.passes_ms = 0.0;
+    g_profile.present_ms = 0.0;
+    g_profile.frames = 0U;
+    g_profile.since = std::chrono::steady_clock::now();
+}
+
+} // namespace
 
 GraphExecutor::GraphExecutor(ResonateRenderDevice& device, const GraphPlan& plan, ResourceId canvas)
     : device_(device), plan_(plan), canvas_(canvas)
@@ -126,10 +220,16 @@ bool GraphExecutor::execute(std::string& out_error, PrepareFn prepare, void* pre
         materialize_failed_ = true;
         return false;
     }
+    const auto begin_start = std::chrono::steady_clock::now();
     if (device_.begin_frame(device_.self) != RESONATE_OK)
     {
         return false;
     }
+    if (profileEnabled())
+    {
+        g_profile.begin_ms += millisSince(begin_start);
+    }
+    const auto passes_start = std::chrono::steady_clock::now();
 
     GraphExecuteContext context{&device_, images_.data(), buffers_.data()};
     if (prepare != nullptr)
@@ -152,7 +252,7 @@ bool GraphExecutor::execute(std::string& out_error, PrepareFn prepare, void* pre
             }
         }
         const PlanPass& pass = plan_.passes[step.pass];
-        if (pass.execute != nullptr)
+        if (pass.execute != nullptr && !skipPasses() && !skipPassNamed(pass.name))
         {
             pass.execute(pass.context, context);
         }
@@ -172,7 +272,18 @@ bool GraphExecutor::execute(std::string& out_error, PrepareFn prepare, void* pre
         }
     }
 
+    if (profileEnabled())
+    {
+        g_profile.passes_ms += millisSince(passes_start);
+    }
+    const auto present_start = std::chrono::steady_clock::now();
     device_.present(device_.self);
+    if (profileEnabled())
+    {
+        g_profile.present_ms += millisSince(present_start);
+        ++g_profile.frames;
+        reportProfile();
+    }
     return true;
 }
 

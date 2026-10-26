@@ -76,6 +76,18 @@ class RenderSystem
        the frame loop; a platform without a tgfx build ignores it. */
     void setUiImageTexture(std::uint32_t id, std::string path);
 
+    /* The fraction of the target the 3D and post targets render at, 0.25..1.
+       The UI keeps full resolution, so text stays sharp while a mobile GPU
+       spends its budget on fewer pixels. Changing it mid-run is allowed: the
+       graph is rebuilt between frames. */
+    void setRenderScale(float scale);
+
+    /* A positive frame time enables adaptive scaling: the render scale moves
+       within its bounds to hold roughly this budget, so a weak GPU trades
+       resolution for frame rate and a strong one keeps full resolution. Zero
+       keeps the fixed scale. */
+    void setTargetFrameMs(float milliseconds);
+
     /* Registers the render components; idempotent, and a refusal (a name
        collision) answers false. */
     static bool registerComponents(ecs::World& world);

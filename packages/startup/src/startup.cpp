@@ -615,6 +615,13 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
                                             RESONATE_STAGE_LATE_UPDATE,
                                             &hierarchy::PropagationSystem::invoke, &propagation};
     renderer::RenderSystem render_system;
+    /* Resolution trades against frame time; a handheld GPU cannot afford the
+       full 2400-wide target for this pipeline, so the budget adapts the scale
+       instead of leaving the device at 14 fps. */
+    render_system.setRenderScale(
+        schema.readFloat(config.settings, "resonate.render.scale", 1.0F));
+    render_system.setTargetFrameMs(
+        schema.readFloat(config.settings, "resonate.render.target-frame-ms", 0.0F));
 
     /* The view's post chain is data: the configured feature names are validated
        at assembly, and a bad stack ends the run with the reason rather than

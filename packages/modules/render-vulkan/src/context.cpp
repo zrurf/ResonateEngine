@@ -273,6 +273,14 @@ Context::~Context()
         {
             vmaDestroyBuffer(allocator_, trace_buffer_, trace_allocation_);
         }
+        for (VkQueryPool& pool : profile_pool_)
+        {
+            if (pool != VK_NULL_HANDLE)
+            {
+                vkDestroyQueryPool(device_, pool, nullptr);
+                pool = VK_NULL_HANDLE;
+            }
+        }
         if (table_dummy_view_ != VK_NULL_HANDLE)
         {
             vkDestroyImageView(device_, table_dummy_view_, nullptr);
@@ -345,6 +353,27 @@ void Context::note(bool& once, const char* what)
     }
 }
 
+namespace
+{
+
+/* A timestamp query is only meaningful when the queue family reports valid
+   bits; anything above zero gives a usable clock. */
+constexpr uint32_t kTimestampBits = 1U;
+
+/* RESONATE_FRAME_PROFILE: the GPU's own frame duration, summed across slots. */
+double gpu_time_ms = 0.0;
+unsigned gpu_time_frames = 0U;
+
+/* Read on first use: the platform sets the environment after the process
+   starts (Android passes it as a system property). */
+bool profileEnabled()
+{
+    static const bool enabled = std::getenv("RESONATE_FRAME_PROFILE") != nullptr;
+    return enabled;
+}
+
+} // namespace
+
 void Context::trace(const char* format, ...) const
 {
     static const bool enabled = std::getenv("RESONATE_FRAME_TRACE") != nullptr;
@@ -415,6 +444,56 @@ void Context::tracePresentedTexel(VkCommandBuffer command)
                          VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
                          &to_present);
     trace_frames_[frame_ % kFramesInFlight] = frame_;
+}
+
+void Context::profileTimestamp(VkCommandBuffer command)
+{
+    if (timestamp_period_ns_ <= 0.0F)
+    {
+        return;
+    }
+    const std::size_t slot = frame_ % kFramesInFlight;
+    if (profile_pool_[slot] == VK_NULL_HANDLE ||
+        profile_count_[slot] >= kMaxPassTimestamps)
+    {
+        return;
+    }
+    vkCmdWriteTimestamp(command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profile_pool_[slot],
+                        profile_count_[slot]);
+    ++profile_count_[slot];
+}
+
+/* Reads the previous frame of this slot: the timestamps are the frame start and
+   one per pass boundary, so the deltas are the passes themselves. */
+void Context::profileReport(std::size_t slot)
+{
+    if (timestamp_period_ns_ <= 0.0F || profile_pool_[slot] == VK_NULL_HANDLE ||
+        profile_reported_[slot] < 2U)
+    {
+        return;
+    }
+    std::uint64_t stamps[kMaxPassTimestamps] = {};
+    const std::uint32_t count = profile_reported_[slot] < kMaxPassTimestamps
+                                    ? profile_reported_[slot]
+                                    : kMaxPassTimestamps;
+    const VkResult read = vkGetQueryPoolResults(
+        device_, profile_pool_[slot], 0, count,
+        static_cast<std::size_t>(count) * sizeof(std::uint64_t), stamps, sizeof(std::uint64_t),
+        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    profile_reported_[slot] = 0U;
+    if (read != VK_SUCCESS)
+    {
+        return;
+    }
+    std::fprintf(stderr, "render-vulkan: gpu passes");
+    for (std::uint32_t index = 1U; index < count; ++index)
+    {
+        const double ms =
+            static_cast<double>(stamps[index] - stamps[index - 1U]) * timestamp_period_ns_ /
+            1.0e6;
+        std::fprintf(stderr, " %.2f", ms);
+    }
+    std::fputc('\n', stderr);
 }
 
 void Context::tracePreviousTexel()
@@ -851,6 +930,28 @@ ResonateStatus Context::ensureDevice()
     }
 
     vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
+
+    /* Timestamp queries are the only honest per-pass GPU timer; a device whose
+       queue family has no valid timestamp bits gets none. */
+    if (profileEnabled())
+    {
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(physical_, &properties);
+        uint32_t family_count = 0U;
+        vkGetPhysicalDeviceQueueFamilyProperties(physical_, &family_count, nullptr);
+        std::vector<VkQueueFamilyProperties> families(family_count);
+        vkGetPhysicalDeviceQueueFamilyProperties(physical_, &family_count, families.data());
+        if (queue_family_ < family_count && properties.limits.timestampPeriod > 0.0F &&
+            families[queue_family_].timestampValidBits >= kTimestampBits)
+        {
+            timestamp_period_ns_ = properties.limits.timestampPeriod;
+        }
+        std::fprintf(stderr,
+                     "render-vulkan: timestamps period=%.2f ns, valid bits=%u, enabled=%d\n",
+                     static_cast<double>(properties.limits.timestampPeriod),
+                     queue_family_ < family_count ? families[queue_family_].timestampValidBits : 0U,
+                     timestamp_period_ns_ > 0.0F ? 1 : 0);
+    }
 
     /* The table's per-stage size is what decides whether the shaders can be
        compiled at all; a mobile driver with small limits refuses the pipeline
@@ -1952,14 +2053,24 @@ ResonateStatus Context::beginFrame()
 
     Frame& frame = frames_[frame_ % kFramesInFlight];
     const std::size_t slot = frame_ % kFramesInFlight;
-    const auto wait_begin = std::chrono::steady_clock::now();
     vkWaitForFences(device_, 1, &frame.in_flight, VK_TRUE, UINT64_MAX);
     if (trace_submit_ns_[slot] != 0U)
     {
-        const auto waited = std::chrono::duration_cast<std::chrono::microseconds>(
-                                std::chrono::steady_clock::now() - wait_begin)
-                                .count();
-        trace("fence slot %zu waited %.2f ms", slot, static_cast<double>(waited) / 1000.0);
+        /* From that slot's submit to its fence: how long the GPU held the
+           frame. Sampled after the wait, so it is the real duration. */
+        const std::uint64_t done = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        gpu_time_ms += static_cast<double>(done - trace_submit_ns_[slot]) / 1.0e6;
+        ++gpu_time_frames;
+        if (profileEnabled() && gpu_time_frames >= 30U)
+        {
+            std::fprintf(stderr, "render-vulkan: gpu frame %.2f ms\n",
+                         gpu_time_ms / static_cast<double>(gpu_time_frames));
+            gpu_time_ms = 0.0;
+            gpu_time_frames = 0U;
+        }
         trace_submit_ns_[slot] = 0U;
     }
     drainGraveyard(frame.graveyard);
@@ -2001,6 +2112,28 @@ ResonateStatus Context::beginFrame()
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(frame.command, &begin);
+    profileReport(slot);
+    if (timestamp_period_ns_ > 0.0F)
+    {
+        if (profile_pool_[slot] == VK_NULL_HANDLE)
+        {
+            VkQueryPoolCreateInfo pool{};
+            pool.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+            pool.queryType = VK_QUERY_TYPE_TIMESTAMP;
+            pool.queryCount = kMaxPassTimestamps;
+            if (vkCreateQueryPool(device_, &pool, nullptr, &profile_pool_[slot]) != VK_SUCCESS)
+            {
+                profile_pool_[slot] = VK_NULL_HANDLE;
+                timestamp_period_ns_ = 0.0F;
+            }
+        }
+        if (profile_pool_[slot] != VK_NULL_HANDLE)
+        {
+            vkCmdResetQueryPool(frame.command, profile_pool_[slot], 0, kMaxPassTimestamps);
+            profile_count_[slot] = 0U;
+            profileTimestamp(frame.command);
+        }
+    }
 
     /* Every pipeline reads the resource table as set 0, so the frame binds it
        once at each bind point. */
@@ -2165,6 +2298,7 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
     pass_begin.renderArea.extent = pass_extent;
     pass_begin.clearValueCount = clear_count;
     pass_begin.pClearValues = clears;
+    profileTimestamp(command);
     vkCmdBeginRenderPass(command, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
 
     VkViewport viewport{};
@@ -2190,6 +2324,7 @@ ResonateStatus Context::endPass()
         return RESONATE_E_STATE;
     }
     vkCmdEndRenderPass(frames_[frame_ % kFramesInFlight].command);
+    profileTimestamp(frames_[frame_ % kFramesInFlight].command);
     pass_open_ = false;
     return RESONATE_OK;
 }
@@ -2383,6 +2518,7 @@ ResonateStatus Context::present()
         submit.signalSemaphoreCount = 1;
         submit.pSignalSemaphores = &render_done;
     }
+    profile_reported_[frame_ % kFramesInFlight] = profile_count_[frame_ % kFramesInFlight];
     const std::uint64_t submitted_at = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch())

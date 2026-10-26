@@ -344,6 +344,19 @@ void cascadeBounds(const Mat4& view_proj, const Mat4& camera_world, float near_d
 
 } // namespace
 
+/* RESONATE_FRAME_PROFILE: where a frame's CPU time goes, split by the thread
+   that spends it. The producer writes from the game thread and the consumer
+   from the render thread, so the counters are atomic. */
+struct FrameProfile
+{
+    bool enabled = std::getenv("RESONATE_FRAME_PROFILE") != nullptr;
+    std::atomic<double> extract_ms{0.0};
+    std::atomic<double> publish_wait_ms{0.0};
+    std::atomic<double> frame_ms{0.0};
+    std::atomic<double> ui_ms{0.0};
+    std::atomic<double> graph_ms{0.0};
+};
+
 struct RenderSystem::Impl
 {
     ResonateCapabilityRegistry* registry = nullptr;
@@ -430,6 +443,24 @@ struct RenderSystem::Impl
     std::uint32_t target_height = 0U;
     std::uint32_t bloom_width = 1U;
     std::uint32_t bloom_height = 1U;
+    /* 3D and post targets render at this fraction of the target extent and the
+       final composite upscales them; the UI keeps its own full-resolution
+       target, so text stays sharp. Mobile devices need this to hold a frame
+       budget at a 2400-wide output. */
+    float render_scale = 1.0F;
+    std::uint32_t render_width = 0U;
+    std::uint32_t render_height = 0U;
+    /* Adaptive scaling: the scale moves between these bounds to hold
+       target_frame_ms, one step per sample window. */
+    static constexpr float kMinRenderScale = 0.35F;
+    float target_frame_ms = 0.0F;
+    bool render_scale_dirty = false;
+    /* The first frames carry pipeline warmup and the first present; letting them
+       into the average would drive the scale straight to its floor. */
+    unsigned warmup_frames = 30U;
+    double sample_ms = 0.0;
+    unsigned sample_frames = 0U;
+    std::chrono::steady_clock::time_point sample_since = std::chrono::steady_clock::now();
 
     ResonateRenderPipeline scene_pipeline{};
     ResonateRenderPipeline shadow_pipeline{};
@@ -493,6 +524,9 @@ struct RenderSystem::Impl
     /* The content hash of the layer as last rasterized, and whether it is. */
     std::uint64_t ui_layer_signature = 0U;
     bool ui_layer_drawn = false;
+    FrameProfile profile;
+    unsigned profile_frames = 0U;
+    std::chrono::steady_clock::time_point profile_since = std::chrono::steady_clock::now();
     std::vector<std::uint8_t> ui_pixels;
     std::vector<ResonateTgfxRect> ui_draw_rects;
     std::vector<ResonateTgfxGlyph> ui_draw_glyphs;
@@ -590,6 +624,14 @@ struct RenderSystem::Impl
 
 bool RenderSystem::Impl::initialize()
 {
+    if (const char* scale = std::getenv("RESONATE_RENDER_SCALE"))
+    {
+        render_scale = std::clamp(static_cast<float>(std::atof(scale)), kMinRenderScale, 1.0F);
+    }
+    if (const char* budget = std::getenv("RESONATE_TARGET_FRAME_MS"))
+    {
+        target_frame_ms = std::fmax(0.0F, static_cast<float>(std::atof(budget)));
+    }
     /* The fixed spine: three CSM shadow passes, two cluster compute passes and
        the lit scene into HDR. The post chain after it comes from the feature
        stack: bloom adds its extraction and blur passes, the tonemap writes the
@@ -600,10 +642,16 @@ bool RenderSystem::Impl::initialize()
 
     resonate::render::RenderGraph graph;
     canvas_resource = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
-    depth_resource = graph.declareImage("depth", RESONATE_RENDER_FORMAT_D32_SFLOAT, target_width,
-                                        target_height, RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT);
+    render_width = std::max(1U, static_cast<std::uint32_t>(
+                                    static_cast<float>(target_width) * render_scale + 0.5F));
+    render_height = std::max(1U, static_cast<std::uint32_t>(
+                                     static_cast<float>(target_height) * render_scale + 0.5F));
+    bloom_width = std::max(1U, render_width / kBloomDivisor);
+    bloom_height = std::max(1U, render_height / kBloomDivisor);
+    depth_resource = graph.declareImage("depth", RESONATE_RENDER_FORMAT_D32_SFLOAT, render_width,
+                                        render_height, RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT);
     hdr_resource = graph.declareImage(
-        "hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, target_width, target_height,
+        "hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, render_width, render_height,
         RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     /* The UI overlay is straight-alpha color the composite blends over the
        tonemapped frame; it is always declared, even with no widgets, so the
@@ -622,13 +670,13 @@ bool RenderSystem::Impl::initialize()
     /* The LDR scene exists in both modes: the tonemap always writes it, and the
        blend pass reads it back when it composites the UI. */
     ldr_resource = graph.declareImage(
-        "ldr", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
+        "ldr", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, render_width, render_height,
         RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     if (fxaa)
     {
         /* A second LDR target because FXAA cannot read and write one image. */
         ldr_aa_resource = graph.declareImage(
-            "ldr_aa", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
+            "ldr_aa", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, render_width, render_height,
             RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     }
     if (bloom)
@@ -2093,6 +2141,7 @@ bool RenderSystem::Impl::extract(ecs::World& world)
 
 void RenderSystem::Impl::publish()
 {
+    const auto wait_begin = std::chrono::steady_clock::now();
     std::unique_lock<std::mutex> lock(handoff_mutex);
     for (;;)
     {
@@ -2110,6 +2159,13 @@ void RenderSystem::Impl::publish()
             pending_snapshot = slot;
             snapshot_pending = true;
             lock.unlock();
+            if (profile.enabled)
+            {
+                profile.publish_wait_ms.fetch_add(
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                              wait_begin)
+                        .count());
+            }
             handoff_wake.notify_one();
             return;
         }
@@ -2517,8 +2573,8 @@ void RenderSystem::Impl::fxaaEntry(void* context, GraphExecuteContext& commands)
     auto* self = static_cast<RenderSystem::Impl*>(context);
     self->runPost(commands, self->ldr_aa_resource, self->fxaa_pipeline,
                   commands.imageSlot(self->ldr_resource), 0U, 0U,
-                  Vec4{1.0F / static_cast<float>(self->target_width),
-                       1.0F / static_cast<float>(self->target_height), 0.0F, 0.0F});
+                  Vec4{1.0F / static_cast<float>(std::max(1U, self->render_width)),
+                       1.0F / static_cast<float>(std::max(1U, self->render_height)), 0.0F, 0.0F});
 }
 
 namespace
@@ -2632,6 +2688,16 @@ void RenderSystem::setUiFontPaths(std::vector<std::string> paths)
 #endif
 }
 
+void RenderSystem::setRenderScale(float scale)
+{
+    impl_->render_scale = std::clamp(scale, Impl::kMinRenderScale, 1.0F);
+}
+
+void RenderSystem::setTargetFrameMs(float milliseconds)
+{
+    impl_->target_frame_ms = milliseconds > 0.0F ? milliseconds : 0.0F;
+}
+
 void RenderSystem::setUiImageTexture(std::uint32_t id, std::string path)
 {
 #if defined(RESONATE_WITH_TGFX)
@@ -2706,9 +2772,16 @@ void RenderSystem::run(ecs::World& world)
         return;
     }
     impl.ensureThread();
+    const auto extract_begin = std::chrono::steady_clock::now();
     if (!impl.extract(world))
     {
         return;
+    }
+    if (impl.profile.enabled)
+    {
+        impl.profile.extract_ms.fetch_add(std::chrono::duration<double, std::milli>(
+                                              std::chrono::steady_clock::now() - extract_begin)
+                                              .count());
     }
     impl.publish();
 }
@@ -2762,9 +2835,79 @@ void RenderSystem::Impl::renderLoop()
             active = snapshot;
         }
 
+        const auto frame_begin = std::chrono::steady_clock::now();
         if (device != nullptr && canvas != nullptr)
         {
             renderFrame(*snapshot);
+        }
+        if (target_frame_ms > 0.0F && warmup_frames > 0U)
+        {
+            --warmup_frames;
+            sample_since = std::chrono::steady_clock::now();
+            sample_ms = 0.0;
+            sample_frames = 0U;
+        }
+        else if (target_frame_ms > 0.0F)
+        {
+            /* One decision per window: a step every frame would chase noise and
+               rebuild the graph constantly. */
+            sample_ms += std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - frame_begin)
+                             .count();
+            ++sample_frames;
+            const double window =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - sample_since)
+                    .count();
+            if (window >= 0.5 && sample_frames >= 10U)
+            {
+                const double average = sample_ms / static_cast<double>(sample_frames);
+                /* Frame time is roughly linear in pixels, so the square root of
+                   the budget ratio is the scale that would hit the budget; the
+                   step is bounded so one noisy window cannot swing resolution. */
+                float wanted = render_scale;
+                if (average > target_frame_ms * 1.15 || average < target_frame_ms * 0.85)
+                {
+                    const float ratio = static_cast<float>(target_frame_ms / average);
+                    wanted = std::clamp(render_scale * std::sqrt(ratio), render_scale - 0.15F,
+                                        render_scale + 0.1F);
+                    wanted = std::clamp(wanted, kMinRenderScale, 1.0F);
+                }
+                if (wanted != render_scale)
+                {
+                    render_scale = wanted;
+                    render_scale_dirty = true;
+                    std::fprintf(stderr, "renderer: render scale %.2f for %.1f ms\n",
+                                 static_cast<double>(render_scale), average);
+                }
+                sample_ms = 0.0;
+                sample_frames = 0U;
+                sample_since = std::chrono::steady_clock::now();
+            }
+        }
+        if (profile.enabled)
+        {
+            profile.frame_ms.fetch_add(std::chrono::duration<double, std::milli>(
+                                           std::chrono::steady_clock::now() - frame_begin)
+                                           .count());
+            const double reported = std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                                  profile_since)
+                                        .count();
+            if (reported >= 1.0)
+            {
+                const double frames = profile_frames;
+                const double scale = frames > 0.0 ? 1.0 / frames : 0.0;
+                std::fprintf(stderr,
+                             "renderer: profile %.0f fps: frame %.2f ms (ui %.2f, graph %.2f), "
+                             "extract %.2f, publish wait %.2f\n",
+                             frames / reported, profile.frame_ms.exchange(0.0) * scale,
+                             profile.ui_ms.exchange(0.0) * scale,
+                             profile.graph_ms.exchange(0.0) * scale,
+                             profile.extract_ms.exchange(0.0) * scale,
+                             profile.publish_wait_ms.exchange(0.0) * scale);
+                profile_frames = 0;
+                profile_since = std::chrono::steady_clock::now();
+            }
+            ++profile_frames;
         }
 
         {
@@ -2832,8 +2975,9 @@ bool RenderSystem::Impl::prepareTargets(uint32_t width, uint32_t height)
     /* The scene and post targets follow the canvas extent; a resize waits out
        the frames in flight, rebuilds the plan and its executor, and keeps the
        format-keyed pipelines. */
-    if (!initialized || width != target_width || height != target_height)
+    if (!initialized || render_scale_dirty || width != target_width || height != target_height)
     {
+        render_scale_dirty = false;
         device->wait_idle(device->self);
         executor.reset();
         /* An offscreen target is device-owned, so the renderer re-attaches it
@@ -2869,13 +3013,28 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
 #if defined(RESONATE_WITH_TGFX)
     /* The text layer is uploaded outside the frame; the UI pass only samples
        it. A failed overlay leaves the atlas glyph quads in place. */
+    const auto ui_begin = std::chrono::steady_clock::now();
     renderTgfxUi(snapshot);
+    if (profile.enabled)
+    {
+        profile.ui_ms.fetch_add(std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - ui_begin)
+                                    .count());
+    }
 #endif
     /* Before the pass: the atlas slot must resolve inside the same frame the
        glyphs first appear, or frame one draws them as solid rectangles. */
     updateFontAtlas(snapshot);
     std::string error;
-    if (!executor->execute(error, &Impl::prepareEntry, this) && !error.empty())
+    const auto graph_begin = std::chrono::steady_clock::now();
+    const bool executed = executor->execute(error, &Impl::prepareEntry, this);
+    if (profile.enabled)
+    {
+        profile.graph_ms.fetch_add(std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now() - graph_begin)
+                                       .count());
+    }
+    if (!executed && !error.empty())
     {
         complain(error.c_str());
     }

@@ -39,6 +39,20 @@ default = "fxaa"
 description = "Antialiasing mode."
 
 [[setting]]
+key = "resonate.render.scale"
+type = "float"
+range = [0.25, 1.0]
+default = 1.0
+description = "Internal resolution as a fraction of the target; the UI keeps full resolution."
+
+[[setting]]
+key = "resonate.render.target-frame-ms"
+type = "float"
+range = [0.0, 100.0]
+default = 0.0
+description = "With a positive value the render scale adapts to hold this frame time; zero keeps it fixed."
+
+[[setting]]
 key = "resonate.render.bloom-threshold"
 type = "float"
 range = [0.001, 100.0]
