@@ -576,6 +576,7 @@ struct RenderSystem::Impl
         }
     }
 
+    void readRenderScaleOverrides();
     bool initialize();
     bool createAlbedoTextures(const FrameSnapshot& snapshot);
     bool ensurePipelines();
@@ -622,7 +623,10 @@ struct RenderSystem::Impl
     static void blendEntry(void* context, GraphExecuteContext& commands);
 };
 
-bool RenderSystem::Impl::initialize()
+/* The scale and the frame budget are read once: `initialize` runs again on every
+   rebuild, and re-reading them would undo the controller's own adjustments and
+   rebuild forever. */
+void RenderSystem::Impl::readRenderScaleOverrides()
 {
     if (const char* scale = std::getenv("RESONATE_RENDER_SCALE"))
     {
@@ -632,6 +636,10 @@ bool RenderSystem::Impl::initialize()
     {
         target_frame_ms = std::fmax(0.0F, static_cast<float>(std::atof(budget)));
     }
+}
+
+bool RenderSystem::Impl::initialize()
+{
     /* The fixed spine: three CSM shadow passes, two cluster compute passes and
        the lit scene into HDR. The post chain after it comes from the feature
        stack: bloom adds its extraction and blur passes, the tonemap writes the
@@ -2978,7 +2986,18 @@ bool RenderSystem::Impl::prepareTargets(uint32_t width, uint32_t height)
     if (!initialized || render_scale_dirty || width != target_width || height != target_height)
     {
         render_scale_dirty = false;
-        device->wait_idle(device->self);
+        static const bool trace_rebuild = std::getenv("RESONATE_FRAME_TRACE") != nullptr;
+        if (trace_rebuild)
+        {
+            std::fprintf(stderr, "renderer: rebuild (scale %.2f) draining\n",
+                         static_cast<double>(render_scale));
+        }
+        const ResonateStatus drained = device->wait_idle(device->self);
+        if (trace_rebuild)
+        {
+            std::fprintf(stderr, "renderer: rebuild drained (%d), resetting\n",
+                         static_cast<int>(drained));
+        }
         executor.reset();
         /* An offscreen target is device-owned, so the renderer re-attaches it
            at the new extent; the first attach already used the current size.
@@ -2994,12 +3013,20 @@ bool RenderSystem::Impl::prepareTargets(uint32_t width, uint32_t height)
         target_height = height;
         bloom_width = std::max(1U, width / kBloomDivisor);
         bloom_height = std::max(1U, height / kBloomDivisor);
+        if (trace_rebuild)
+        {
+            std::fprintf(stderr, "renderer: rebuild reset, initializing\n");
+        }
         if (!initialize())
         {
             initialized = false;
             return false;
         }
         initialized = true;
+        if (trace_rebuild)
+        {
+            std::fprintf(stderr, "renderer: rebuild done\n");
+        }
     }
     return ensurePipelines();
 }
@@ -3025,6 +3052,12 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
     /* Before the pass: the atlas slot must resolve inside the same frame the
        glyphs first appear, or frame one draws them as solid rectangles. */
     updateFontAtlas(snapshot);
+    static bool scale_overrides_read = false;
+    if (!scale_overrides_read)
+    {
+        scale_overrides_read = true;
+        readRenderScaleOverrides();
+    }
     std::string error;
     const auto graph_begin = std::chrono::steady_clock::now();
     const bool executed = executor->execute(error, &Impl::prepareEntry, this);

@@ -278,6 +278,10 @@ void applyDebugProperties()
         {"debug.resonate.render_clear_only", "RESONATE_RENDER_CLEAR_ONLY"},
         {"debug.resonate.skip_passes", "RESONATE_RENDER_SKIP_PASSES", true},
         {"debug.resonate.render_scale", "RESONATE_RENDER_SCALE", true},
+        {"debug.resonate.target_frame_ms", "RESONATE_TARGET_FRAME_MS", true},
+        {"debug.resonate.pass_sentinels", "RESONATE_PASS_SENTINELS"},
+        {"debug.resonate.tgfx_disable", "RESONATE_TGFX_DISABLE"},
+        {"debug.resonate.tgfx_sync", "RESONATE_TGFX_SYNC"},
     };
     for (const Property& entry : kProperties)
     {
@@ -300,7 +304,7 @@ void android_main(android_app* app)
     /* No config files travel with the package yet, so the handheld render scale
        is the built-in default: this GPU cannot hold 60 fps at the full 2400-wide
        target, and the UI keeps its own resolution either way. */
-    setenv("RESONATE_RENDER_SCALE", "0.45", 1);
+    setenv("RESONATE_RENDER_SCALE", "0.40", 1);
     applyDebugProperties();
 
     std::vector<std::string> arguments{"resonate"};

@@ -196,7 +196,10 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
         const tgfx::SamplingOptions sampling(tgfx::FilterMode::Linear, tgfx::MipmapMode::None);
         canvas->drawImageRect(image, source, destination, sampling);
     }
-    context->flushAndSubmit(false);
+    /* RESONATE_TGFX_SYNC waits for the layer's own GPU work before returning; a
+       device bisect uses it to tell an ordering race from a state problem. */
+    static const bool sync = std::getenv("RESONATE_TGFX_SYNC") != nullptr;
+    context->flushAndSubmit(sync);
     if (ui->attached)
     {
         /* The renderer's sampling barrier starts from the layout tgfx left the

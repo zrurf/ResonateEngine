@@ -267,6 +267,9 @@ class Context
         VkCommandBuffer command = VK_NULL_HANDLE;
         VkSemaphore image_available = VK_NULL_HANDLE;
         VkFence in_flight = VK_NULL_HANDLE;
+        /* False only after a submission failed: that submission never signals the
+           fence, so the next frame must not wait on it. */
+        bool fence_pending = false;
         std::vector<Retired> graveyard;
     };
 
