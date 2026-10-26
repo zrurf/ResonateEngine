@@ -669,10 +669,17 @@ bool RenderSystem::Impl::initialize()
 
     resonate::render::RenderGraph graph;
     canvas_resource = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
-    depth_resource = graph.declareImage("depth", RESONATE_RENDER_FORMAT_D32_SFLOAT, target_width,
-                                        target_height, RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT);
+    /* The tier picks the scene formats: packed HDR and 16-bit depth halve the
+       bandwidth of the full-size targets on a mobile GPU. */
+    const ResonateRenderFormat hdr_format =
+        compat_tier ? RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT
+                    : RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT;
+    const ResonateRenderFormat depth_format =
+        compat_tier ? RESONATE_RENDER_FORMAT_D16_UNORM : RESONATE_RENDER_FORMAT_D32_SFLOAT;
+    depth_resource = graph.declareImage("depth", depth_format, target_width, target_height,
+                                        RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT);
     hdr_resource = graph.declareImage(
-        "hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, target_width, target_height,
+        "hdr", hdr_format, target_width, target_height,
         RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     /* The UI overlay is straight-alpha color the composite blends over the
        tonemapped frame; it is always declared, even with no widgets, so the
@@ -1585,8 +1592,15 @@ bool RenderSystem::Impl::ensurePipelines()
     scene_desc.fragment_shader = fragment;
     scene_desc.stream_count = 1U;
     scene_desc.streams = &stream;
-    scene_desc.color_format = RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT;
-    scene_desc.depth_format = RESONATE_RENDER_FORMAT_D32_SFLOAT;
+    /* The formats must match the graph's declarations: the compat tier renders
+       the scene into a packed-HDR target with a 16-bit depth. */
+    const ResonateRenderFormat hdr_format =
+        compat_tier ? RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT
+                    : RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT;
+    const ResonateRenderFormat depth_format =
+        compat_tier ? RESONATE_RENDER_FORMAT_D16_UNORM : RESONATE_RENDER_FORMAT_D32_SFLOAT;
+    scene_desc.color_format = hdr_format;
+    scene_desc.depth_format = depth_format;
     scene_desc.depth_test = 1U;
     scene_desc.depth_write = 1U;
     if (device->create_pipeline(device->self, &scene_desc, &scene_pipeline) != RESONATE_OK)
@@ -1631,8 +1645,8 @@ bool RenderSystem::Impl::ensurePipelines()
 
     /* The tonemap and FXAA passes write LDR targets; only the final blend
        owns the canvas, so its pipeline names the swapchain format. */
-    const ResonateRenderFormat post_targets[5] = {RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
-                                                  RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+    const ResonateRenderFormat post_targets[5] = {hdr_format,
+                                                  hdr_format,
                                                   RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
                                                   RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
                                                   RESONATE_RENDER_FORMAT_UNKNOWN};

@@ -76,8 +76,11 @@ uint32_t formatBytesOf(ResonateRenderFormat format)
             return 8U;
         case RESONATE_RENDER_FORMAT_R32G32B32_SFLOAT:
             return 12U;
+        case RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT:
         case RESONATE_RENDER_FORMAT_D32_SFLOAT:
             return 4U;
+        case RESONATE_RENDER_FORMAT_D16_UNORM:
+            return 2U;
         case RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM:
         case RESONATE_RENDER_FORMAT_R8G8B8A8_SRGB:
         case RESONATE_RENDER_FORMAT_B8G8R8A8_SRGB:

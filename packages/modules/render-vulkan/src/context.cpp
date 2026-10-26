@@ -960,9 +960,15 @@ ResonateStatus Context::ensureDevice()
     vkGetPhysicalDeviceFormatProperties(physical_, VK_FORMAT_R16G16B16A16_SFLOAT, &color_props);
     VkFormatProperties depth_props{};
     vkGetPhysicalDeviceFormatProperties(physical_, VK_FORMAT_D32_SFLOAT, &depth_props);
+    VkFormatProperties packed_props{};
+    vkGetPhysicalDeviceFormatProperties(physical_, VK_FORMAT_B10G11R11_UFLOAT_PACK32,
+                                        &packed_props);
+    VkFormatProperties d16_props{};
+    vkGetPhysicalDeviceFormatProperties(physical_, VK_FORMAT_D16_UNORM, &d16_props);
     std::fprintf(stderr,
                  "render-vulkan: %s, Vulkan %u.%u, %s table, samplers/stage=%u, "
-                 "storage/stage=%u, resources/stage=%u, rgba16f color=%u, d32 depth=%u\n",
+                 "storage/stage=%u, resources/stage=%u, rgba16f color=%u, d32 depth=%u, "
+                 "b10g11r11 color=%u, d16 depth=%u\n",
                  properties.deviceName, VK_VERSION_MAJOR(properties.apiVersion),
                  VK_VERSION_MINOR(properties.apiVersion), bindless_ ? "bindless" : "compat",
                  properties.limits.maxPerStageDescriptorSamplers,
@@ -970,6 +976,9 @@ ResonateStatus Context::ensureDevice()
                  properties.limits.maxPerStageResources,
                  (color_props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0U,
                  (depth_props.optimalTilingFeatures &
+                  VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0U,
+                 (packed_props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0U,
+                 (d16_props.optimalTilingFeatures &
                   VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0U);
 
     /* The pipeline cache is per machine, not per run: it is what keeps a
@@ -1731,6 +1740,10 @@ VkFormat Context::formatOf(ResonateRenderFormat format) const
             return VK_FORMAT_R32G32B32_SFLOAT;
         case RESONATE_RENDER_FORMAT_R32G32B32A32_SFLOAT:
             return VK_FORMAT_R32G32B32A32_SFLOAT;
+        case RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT:
+            return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+        case RESONATE_RENDER_FORMAT_D16_UNORM:
+            return VK_FORMAT_D16_UNORM;
         case RESONATE_RENDER_FORMAT_D32_SFLOAT:
             return VK_FORMAT_D32_SFLOAT;
         case RESONATE_RENDER_FORMAT_UNKNOWN:

@@ -80,6 +80,10 @@ typedef enum ResonateRenderFormat : uint8_t
     RESONATE_RENDER_FORMAT_R32G32B32_SFLOAT,
     RESONATE_RENDER_FORMAT_D32_SFLOAT,
     RESONATE_RENDER_FORMAT_R32G32B32A32_SFLOAT, /* vertex colors, UI overlays */
+    /* Packed HDR: half the bandwidth of RGBA16F with no alpha. The low
+       (mobile) tier renders its HDR target with it. */
+    RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT,
+    RESONATE_RENDER_FORMAT_D16_UNORM,
     /* A pipeline marker, not a real format: a pipeline whose color format is
        NONE has no color outputs (depth-only). */
     RESONATE_RENDER_FORMAT_NONE = 0xFF,
