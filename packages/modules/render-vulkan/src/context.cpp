@@ -2293,6 +2293,19 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
     }
 
     VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
+    /* The clear covers the whole attachment; the viewport may be a sub-rectangle
+       of it (dynamic-resolution rendering), so the draw only fills that part. */
+    VkExtent2D draw_extent = pass_extent;
+    if (desc.struct_size >=
+        offsetof(ResonateRenderPassDesc, viewport_width) + sizeof(uint32_t) * 2)
+    {
+        if (desc.viewport_width != 0U && desc.viewport_height != 0U &&
+            desc.viewport_width <= pass_extent.width &&
+            desc.viewport_height <= pass_extent.height)
+        {
+            draw_extent = VkExtent2D{desc.viewport_width, desc.viewport_height};
+        }
+    }
     /* One clear value per cleared attachment: a depth-only pass's sole
        attachment is the depth image, a color pass's second is depth. */
     VkClearValue clears[2] = {};
@@ -2322,11 +2335,11 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
     vkCmdBeginRenderPass(command, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
 
     VkViewport viewport{};
-    viewport.width = static_cast<float>(pass_extent.width);
-    viewport.height = static_cast<float>(pass_extent.height);
+    viewport.width = static_cast<float>(draw_extent.width);
+    viewport.height = static_cast<float>(draw_extent.height);
     viewport.maxDepth = 1.0f;
     VkRect2D scissor{};
-    scissor.extent = pass_extent;
+    scissor.extent = draw_extent;
     vkCmdSetViewport(command, 0, 1, &viewport);
     vkCmdSetScissor(command, 0, 1, &scissor);
 

@@ -41,7 +41,8 @@ VertexOutput postVertex(PostVertexInput input)
 float4 brightFragment(VertexOutput input) : SV_Target
 {
     // The threshold is in HDR units: what exceeds it contributes by its excess.
-    float3 color = image_table[push.slots.x].Sample(input.uv).rgb;
+    float2 uv = input.uv * push.params.yw;
+    float3 color = image_table[push.slots.x].Sample(uv).rgb;
     float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
     float contribution = max(luma - push.params.x, 0.0);
     return float4(color * contribution, 1.0);
@@ -75,9 +76,13 @@ float3 tonemap(float3 color)
 [shader("fragment")]
 float4 tonemapFragment(VertexOutput input) : SV_Target
 {
-    float3 hdr = image_table[push.slots.x].Sample(input.uv).rgb;
+    // The scene may have been rendered into a sub-rectangle of its target
+    // (dynamic resolution): y/w carry the uv window the tonemap reads.
+    float2 uv = input.uv * push.params.yw;
+    float3 hdr = image_table[push.slots.x].Sample(uv).rgb;
     // z: 1 when the stack has bloom, so the second slot is sampled only when
     // the feature exists.
+    // The bloom chain covers the whole target, so it is sampled unscaled.
     float3 bloom = push.params.z > 0.5
                        ? image_table[push.slots.y].Sample(input.uv).rgb
                        : float3(0.0, 0.0, 0.0);
@@ -90,11 +95,13 @@ float4 fxaaFragment(VertexOutput input) : SV_Target
     // Console-style FXAA: blend toward the edge-perpendicular average when the
     // local luma contrast exceeds the threshold.
     float2 texel = push.params.xy;
-    float3 rgb_m = image_table[push.slots.x].Sample(input.uv).rgb;
-    float3 rgb_n = image_table[push.slots.x].Sample(input.uv + float2(0.0, -texel.y)).rgb;
-    float3 rgb_s = image_table[push.slots.x].Sample(input.uv + float2(0.0, texel.y)).rgb;
-    float3 rgb_e = image_table[push.slots.x].Sample(input.uv + float2(texel.x, 0.0)).rgb;
-    float3 rgb_w = image_table[push.slots.x].Sample(input.uv + float2(-texel.x, 0.0)).rgb;
+    // z/w carry the uv window the scene was rendered into (dynamic resolution).
+    float2 uv = input.uv * push.params.zw;
+    float3 rgb_m = image_table[push.slots.x].Sample(uv).rgb;
+    float3 rgb_n = image_table[push.slots.x].Sample(uv + float2(0.0, -texel.y)).rgb;
+    float3 rgb_s = image_table[push.slots.x].Sample(uv + float2(0.0, texel.y)).rgb;
+    float3 rgb_e = image_table[push.slots.x].Sample(uv + float2(texel.x, 0.0)).rgb;
+    float3 rgb_w = image_table[push.slots.x].Sample(uv + float2(-texel.x, 0.0)).rgb;
 
     float luma_m = dot(rgb_m, float3(0.299, 0.587, 0.114));
     float luma_n = dot(rgb_n, float3(0.299, 0.587, 0.114));
@@ -114,7 +121,7 @@ float4 fxaaFragment(VertexOutput input) : SV_Target
     blend_direction = normalize(
         float2(-blend_direction.y, blend_direction.x) *
         min(texel.x, texel.y));
-    float3 blended = 0.5 * (image_table[push.slots.x].Sample(input.uv + blend_direction).rgb +
+    float3 blended = 0.5 * (image_table[push.slots.x].Sample(uv + blend_direction).rgb +
                             image_table[push.slots.x].Sample(input.uv - blend_direction).rgb);
     return float4(blended, 1.0);
 }
@@ -126,7 +133,10 @@ float4 blendFragment(VertexOutput input) : SV_Target
     // premultiplied color — tgfx draws into its target that way and the overlay
     // pass accumulates quads with source-alpha blending — so compositing here
     // is a plain source-over.
-    float3 scene = image_table[push.slots.x].Sample(input.uv).rgb;
+    // x names the scene, z the UI layer; the scene was rendered into a
+    // sub-rectangle (dynamic resolution) and is magnified here, the UI is
+    // full-size and sampled as is.
+    float3 scene = image_table[push.slots.x].Sample(input.uv * push.params.zw).rgb;
     float4 ui = image_table[push.slots.z].Sample(input.uv);
     return float4(scene * (1.0 - ui.a) + ui.rgb, 1.0);
 }

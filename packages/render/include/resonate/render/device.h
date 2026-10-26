@@ -229,6 +229,11 @@ typedef struct ResonateRenderPassDesc
     ResonateVec4 clear_color;
     ResonateRenderImage depth;
     uint32_t colorless;
+    /* Tail: render into this sub-rectangle of the attachments (the rest keeps
+       whatever the clear left there). Zero follows the attachment extent.
+       Dynamic-resolution rendering uses it instead of resizing targets. */
+    uint32_t viewport_width;
+    uint32_t viewport_height;
 } ResonateRenderPassDesc;
 
 /* A memory dependency: what a resource's state was, what it becomes. The

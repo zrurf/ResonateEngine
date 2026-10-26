@@ -443,10 +443,10 @@ struct RenderSystem::Impl
     std::uint32_t target_height = 0U;
     std::uint32_t bloom_width = 1U;
     std::uint32_t bloom_height = 1U;
-    /* 3D and post targets render at this fraction of the target extent and the
-       final composite upscales them; the UI keeps its own full-resolution
-       target, so text stays sharp. Mobile devices need this to hold a frame
-       budget at a 2400-wide output. */
+    /* 3D and post targets are always allocated at the target extent; the scale
+       only picks the sub-viewport the scene renders into and the UV window the
+       tonemap and bloom read, so changing it never rebuilds the graph. The UI
+       keeps its own full-resolution target, so text stays sharp. */
     bool overrides_read = false;
     float render_scale = 1.0F;
     std::uint32_t render_width = 0U;
@@ -660,16 +660,10 @@ bool RenderSystem::Impl::initialize()
 
     resonate::render::RenderGraph graph;
     canvas_resource = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
-    render_width = std::max(1U, static_cast<std::uint32_t>(
-                                    static_cast<float>(target_width) * render_scale + 0.5F));
-    render_height = std::max(1U, static_cast<std::uint32_t>(
-                                     static_cast<float>(target_height) * render_scale + 0.5F));
-    bloom_width = std::max(1U, render_width / kBloomDivisor);
-    bloom_height = std::max(1U, render_height / kBloomDivisor);
-    depth_resource = graph.declareImage("depth", RESONATE_RENDER_FORMAT_D32_SFLOAT, render_width,
-                                        render_height, RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT);
+    depth_resource = graph.declareImage("depth", RESONATE_RENDER_FORMAT_D32_SFLOAT, target_width,
+                                        target_height, RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT);
     hdr_resource = graph.declareImage(
-        "hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, render_width, render_height,
+        "hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, target_width, target_height,
         RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     /* The UI overlay is straight-alpha color the composite blends over the
        tonemapped frame; it is always declared, even with no widgets, so the
@@ -688,13 +682,13 @@ bool RenderSystem::Impl::initialize()
     /* The LDR scene exists in both modes: the tonemap always writes it, and the
        blend pass reads it back when it composites the UI. */
     ldr_resource = graph.declareImage(
-        "ldr", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, render_width, render_height,
+        "ldr", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
         RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     if (fxaa)
     {
         /* A second LDR target because FXAA cannot read and write one image. */
         ldr_aa_resource = graph.declareImage(
-            "ldr_aa", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, render_width, render_height,
+            "ldr_aa", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
             RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     }
     if (bloom)
@@ -805,6 +799,7 @@ bool RenderSystem::Impl::initialize()
     scene_writes[1].stages = resonate::render::kStageDepthOutput;
     scene_writes[1].access = resonate::render::kAccessDepthWrite;
     scene_writes[1].layout = kLayoutDepthAttachment;
+
     resonate::render::PassDesc scene{};
     scene.name = "scene";
     scene.reads = scene_reads;
@@ -2365,6 +2360,10 @@ void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
     pass.color = commands.image(hdr_resource);
     pass.clear_color = kClearColor;
     pass.depth = commands.image(depth_resource);
+    /* Dynamic resolution: the scene renders into the scaled sub-rectangle; the
+       tonemap reads exactly that window back up. */
+    pass.viewport_width = render_width;
+    pass.viewport_height = render_height;
     if (device.begin_pass(device.self, &pass) != RESONATE_OK)
     {
         return;
@@ -2471,6 +2470,13 @@ void RenderSystem::Impl::runPost(GraphExecuteContext& commands, ResourceId targe
     pass.struct_size = sizeof(pass);
     pass.color = target == canvas_resource ? ResonateRenderImage{} : commands.image(target);
     pass.clear_color = kClearColor;
+    /* Every pass but the final blend renders into the scaled sub-rectangle; the
+       blend is what magnifies it to the output. */
+    if (target != canvas_resource)
+    {
+        pass.viewport_width = render_width;
+        pass.viewport_height = render_height;
+    }
     /* RESONATE_PASS_SENTINELS: each post pass clears to a colour of its own, so a
        frame that arrives showing only a clear names the pass whose draw was lost
        instead of looking identical for all of them. This is what identified the
@@ -2575,9 +2581,11 @@ void RenderSystem::Impl::prepareEntry(void* context, GraphExecuteContext& comman
 void RenderSystem::Impl::brightEntry(void* context, GraphExecuteContext& commands)
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
+    const float uv_x = static_cast<float>(self->render_width) / static_cast<float>(self->target_width);
+    const float uv_y = static_cast<float>(self->render_height) / static_cast<float>(self->target_height);
     self->runPost(commands, self->bright_resource, self->bright_pipeline,
                   commands.imageSlot(self->hdr_resource), 0U, 0U,
-                  Vec4{self->features.bloom_threshold, 0.0F, 0.0F, 0.0F});
+                  Vec4{self->features.bloom_threshold, uv_x, 0.0F, uv_y});
 }
 
 void RenderSystem::Impl::blurHEntry(void* context, GraphExecuteContext& commands)
@@ -2600,19 +2608,25 @@ void RenderSystem::Impl::compositeEntry(void* context, GraphExecuteContext& comm
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
     const bool bloom = self->features.has("bloom");
+    /* y/w carry the uv window: the scene rendered into the scaled sub-rectangle
+       of the full-size HDR target, and the tonemap reads it back up. */
+    const float uv_x = static_cast<float>(self->render_width) / static_cast<float>(self->target_width);
+    const float uv_y = static_cast<float>(self->render_height) / static_cast<float>(self->target_height);
     self->runPost(commands, self->ldr_resource, self->composite_pipeline,
                   commands.imageSlot(self->hdr_resource),
                   bloom ? commands.imageSlot(self->blur_b_resource) : 0U, 0U,
-                  Vec4{0.0F, 0.0F, bloom ? 1.0F : 0.0F, 0.0F});
+                  Vec4{0.0F, uv_x, bloom ? 1.0F : 0.0F, uv_y});
 }
 
 void RenderSystem::Impl::fxaaEntry(void* context, GraphExecuteContext& commands)
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
+    const float uv_x = static_cast<float>(self->render_width) / static_cast<float>(self->target_width);
+    const float uv_y = static_cast<float>(self->render_height) / static_cast<float>(self->target_height);
     self->runPost(commands, self->ldr_aa_resource, self->fxaa_pipeline,
                   commands.imageSlot(self->ldr_resource), 0U, 0U,
-                  Vec4{1.0F / static_cast<float>(std::max(1U, self->render_width)),
-                       1.0F / static_cast<float>(std::max(1U, self->render_height)), 0.0F, 0.0F});
+                  Vec4{1.0F / static_cast<float>(self->target_width),
+                       1.0F / static_cast<float>(self->target_height), uv_x, uv_y});
 }
 
 namespace
@@ -2682,7 +2696,9 @@ void RenderSystem::Impl::blendEntry(void* context, GraphExecuteContext& commands
         device.barrier(device.self, &barrier);
         ui_slot = self->ui_text_slot;
         self->runPost(commands, self->canvas_resource, self->blend_pipeline,
-                      commands.imageSlot(scene), 0U, ui_slot, Vec4{0.0F, 0.0F, 0.0F, 0.0F});
+                      commands.imageSlot(scene), 0U, ui_slot, Vec4{0.0F, 0.0F,
+                           static_cast<float>(self->render_width) / static_cast<float>(self->target_width),
+                           static_cast<float>(self->render_height) / static_cast<float>(self->target_height)});
         if (self->ui_target_attached && tgfx_layout != RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY)
         {
             /* Return the target to tgfx's layout for its next draw. */
@@ -2698,7 +2714,9 @@ void RenderSystem::Impl::blendEntry(void* context, GraphExecuteContext& commands
         return;
     }
     self->runPost(commands, self->canvas_resource, self->blend_pipeline,
-                  commands.imageSlot(scene), 0U, ui_slot, Vec4{0.0F, 0.0F, 0.0F, 0.0F});
+                  commands.imageSlot(scene), 0U, ui_slot, Vec4{0.0F, 0.0F,
+                           static_cast<float>(self->render_width) / static_cast<float>(self->target_width),
+                           static_cast<float>(self->render_height) / static_cast<float>(self->target_height)});
 }
 
 RenderSystem::RenderSystem() : impl_(std::make_unique<Impl>())
@@ -2913,7 +2931,6 @@ void RenderSystem::Impl::renderLoop()
                 if (wanted != render_scale)
                 {
                     render_scale = wanted;
-                    render_scale_dirty = true;
                     std::fprintf(stderr, "renderer: render scale %.2f for %.1f ms\n",
                                  static_cast<double>(render_scale), average);
                 }
@@ -3014,9 +3031,8 @@ bool RenderSystem::Impl::prepareTargets(uint32_t width, uint32_t height)
     /* The scene and post targets follow the canvas extent; a resize waits out
        the frames in flight, rebuilds the plan and its executor, and keeps the
        format-keyed pipelines. */
-    if (!initialized || render_scale_dirty || width != target_width || height != target_height)
+    if (!initialized || width != target_width || height != target_height)
     {
-        render_scale_dirty = false;
         static const bool trace_rebuild = std::getenv("RESONATE_FRAME_TRACE") != nullptr;
         if (trace_rebuild)
         {
@@ -3070,6 +3086,12 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
     {
         return;
     }
+    /* The scaled extent is state, not graph shape: the passes below render into
+       this sub-rectangle of the full-size targets. */
+    render_width = std::max(1U, static_cast<std::uint32_t>(
+                                    static_cast<float>(target_width) * render_scale + 0.5F));
+    render_height = std::max(1U, static_cast<std::uint32_t>(
+                                     static_cast<float>(target_height) * render_scale + 0.5F));
 #if defined(RESONATE_WITH_TGFX)
     /* The text layer is uploaded outside the frame; the UI pass only samples
        it. A failed overlay leaves the atlas glyph quads in place. */
