@@ -25,6 +25,7 @@ namespace
 using resonate::ecs::Entity;
 using resonate::ecs::World;
 using resonate::ui::DisplayList;
+using resonate::ui::Input;
 using resonate::ui::Event;
 using resonate::ui::EventKind;
 using resonate::ui::EventPhase;
@@ -209,4 +210,86 @@ TEST_CASE("ui scroll: the viewport clips paint and hit testing", "[ui][event]")
        the point belongs to the canvas above the list. */
     const Entity outside = resonate::ui::hitTest(fixture.world, fixture.root, 10.0F, 105.0F);
     CHECK(outside == fixture.root);
+}
+
+TEST_CASE("ui event: a touch drag scrolls the viewport and cancels the click",
+          "[ui][event]")
+{
+    Fixture fixture;
+    Recorder row_recorder;
+    fixture.addListener(fixture.rows[0], row_recorder, false, 0xFFFFU);
+
+    /* One detent first so the viewport can follow a downward finger. */
+    REQUIRE(resonate::ui::scrollInput(fixture.world, fixture.root, 10.0F, 50.0F, 1.0F));
+
+    /* Press on the first row and drag down in small steps; the motion passes
+       the slop on the third sample and the viewport follows the finger. */
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 10.0F, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 16.0F, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 22.0F, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 28.0F, true));
+    const ScrollView* view = fixture.world.get<ScrollView>(fixture.list);
+    /* Two post-slop samples, six pixels each, against the row step. */
+    CHECK(near(view->scroll, 20.0F - 12.0F));
+
+    /* The release neither activates nor clicks the row the press began on. */
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 28.0F, false));
+    const Input* row = fixture.world.get<Input>(fixture.rows[0]);
+    REQUIRE(row != nullptr);
+    CHECK_FALSE(row->activated);
+    /* The drag suppresses up and click; the press itself went through before
+       the motion passed the slop. */
+    for (const std::string& call : row_recorder.calls)
+    {
+        CHECK(call.back() != 'u');
+        CHECK(call.back() != 'k');
+    }
+}
+
+TEST_CASE("ui event: a tap shorter than the slop still clicks", "[ui][event]")
+{
+    Fixture fixture;
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 10.0F, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 13.0F, 13.0F, false));
+    const Input* row = fixture.world.get<Input>(fixture.rows[0]);
+    REQUIRE(row != nullptr);
+    CHECK(row->activated);
+}
+
+TEST_CASE("ui event: the wheel and a drag scroll over plain content", "[ui][event]")
+{
+    const char* const kPlain = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Scroll key="list" x="0" y="0" width="100" height="100"
+            direction="Column" align="Stretch">
+      <Label key="row" width="100" height="160" text="plain"/>
+    </Scroll>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kPlain, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 200.0F));
+    const Entity list = resonate::hierarchy::children(world, root)[0];
+
+    /* The row carries no Input, so no event path exists; the viewport still
+       scrolls, driven by the chain from the widget under the point. Half a
+       detent keeps the range below the clamp for the drag that follows. */
+    CHECK(resonate::ui::scrollInput(world, root, 50.0F, 50.0F, 0.5F));
+    const ScrollView* view = world.get<ScrollView>(list);
+    CHECK(near(view->scroll, 24.0F));
+
+    /* A drag upward moves the content down with the finger. */
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 90.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 80.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 70.0F, true));
+    view = world.get<ScrollView>(list);
+    CHECK(near(view->scroll, 44.0F));
 }

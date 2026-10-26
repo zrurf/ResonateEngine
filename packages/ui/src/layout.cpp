@@ -4,6 +4,7 @@
 
 #include <resonate/hierarchy/tree.h>
 #include <resonate/ui/event.h>
+#include <resonate/ui/input.h>
 
 #include "resonate.ui/components.gen.h"
 
@@ -311,6 +312,7 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<Listener>() != ecs::kInvalidComponent &&
            world.registerComponent<Input>() != ecs::kInvalidComponent &&
            world.registerComponent<PointerState>() != ecs::kInvalidComponent &&
+           world.registerComponent<DragState>() != ecs::kInvalidComponent &&
            world.registerComponent<StateStyles>() != ecs::kInvalidComponent &&
            world.registerComponent<StyleRef>() != ecs::kInvalidComponent;
 }

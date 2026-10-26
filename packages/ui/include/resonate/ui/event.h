@@ -71,6 +71,14 @@ struct Listener
    built-in wheel scroll. */
 [[nodiscard]] bool dispatchEvent(ecs::World& world, ecs::Entity canvas, Event& event);
 
+/* Touch-style scrolling: the first viewport on the chain from the widget under
+   the point upward that can still move follows the finger. `pixels` is the
+   finger's downward travel, so content tracks it one to one; a viewport clamped
+   at its edge defers to its ancestor. Handlers are not involved — updateInput
+   only gets here once the motion passed the drag slop. */
+[[nodiscard]] bool dragScroll(ecs::World& world, ecs::Entity canvas, float x, float y,
+                              float pixels);
+
 } // namespace resonate::ui
 
 namespace resonate::ecs

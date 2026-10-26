@@ -2,6 +2,7 @@
 
 #include <resonate/ui/document_schema.h>
 #include <resonate/ui/image_registry.h>
+#include <resonate/ui/input.h>
 #include <resonate/ui/string_table.h>
 #include <resonate/ui/style.h>
 #include <resonate/ui/text_runtime.h>
@@ -1377,7 +1378,8 @@ Entity instantiateConfigured(World& world, dom::Document& document,
         TextRuntimeAccess::attach(*bindings.runtime, entity);
         bindings.page_revision = TextRuntimeAccess::revision(*bindings.runtime);
     }
-    if (world.add(entity, PointerState{}) == nullptr)
+    if (world.add(entity, PointerState{}) == nullptr ||
+        world.add(entity, ui::DragState{}) == nullptr)
     {
         report(world, document, root, "PointerState could not be attached");
         for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)

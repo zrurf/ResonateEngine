@@ -134,15 +134,18 @@ TEST_CASE("ui input: leaving while pressed cancels the release", "[ui][input]")
 {
     Fixture fixture;
     const Entity button = fixture.buttons[0];
-    const PointerState* pointer = fixture.world.get<PointerState>(fixture.root);
-    REQUIRE(pointer != nullptr);
 
     REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 10.0F, false));
     REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 10.0F, true));
+    /* The long travel is a drag, so the pending press is dropped and the
+       release neither activates nor clicks; the widget keeps focus, not the
+       pressed style. */
     REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 180.0F, 180.0F, true));
     CHECK(fixture.world.get<Input>(button)->state == WidgetState::Focused);
     CHECK(near(fixture.red(button), 0.7F));
-    CHECK(pointer->press == button);
+    const PointerState* pointer = fixture.world.get<PointerState>(fixture.root);
+    REQUIRE(pointer != nullptr);
+    CHECK_FALSE(pointer->press.valid());
     CHECK(pointer->down);
 
     REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 180.0F, 180.0F, false));

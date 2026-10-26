@@ -86,39 +86,41 @@ bool invoke(ecs::World& world, const ecs::Entity* entities, std::size_t count, E
     return false;
 }
 
-/* The built-in action a ScrollView performs for a wheel event. The first view on
-   the path that can still move owns the event. */
-bool scrollChain(ecs::World& world, const ecs::Entity* entities, std::size_t count,
-                 const Event& event)
+/* The built-in scroll action shared by the wheel and a touch drag: the first
+   viewport on the chain from the widget under the point upward that can still
+   move absorbs the motion; one already clamped at its edge defers to its
+   ancestor. `wanted` maps a candidate viewport to the scroll it would take. */
+template <typename Wanted>
+bool scrollWalk(ecs::World& world, ecs::Entity canvas, float x, float y, Wanted wanted)
 {
-    for (std::size_t index = 0U; index < count; ++index)
+    ecs::Entity entity = hitTest(world, canvas, x, y);
+    for (std::uint32_t depth = 0U; entity.valid() && depth <= hierarchy::kMaxDepth; ++depth)
     {
-        const ecs::Entity entity = entities[index];
-        if (!world.alive(entity))
-        {
-            continue;
-        }
         ScrollView* view = world.get<ScrollView>(entity);
         const ComputedRect* rect = world.get<ComputedRect>(entity);
-        if (view == nullptr || rect == nullptr)
+        if (view != nullptr && rect != nullptr)
         {
-            continue;
+            const float max_scroll = std::max(0.0F, view->content_height - rect->height);
+            const float target = std::clamp(wanted(*view), 0.0F, max_scroll);
+            if (target != view->scroll)
+            {
+                view->scroll = target;
+                world.markChanged<ScrollView>(entity);
+                return true;
+            }
         }
-        const float max_scroll = std::max(0.0F, view->content_height - rect->height);
-        const float step = view->step > 0.0F ? view->step : kWheelPixels;
-        const float wanted = std::clamp(view->scroll + event.wheel * step, 0.0F, max_scroll);
-        if (wanted == view->scroll)
-        {
-            continue;
-        }
-        view->scroll = wanted;
-        world.markChanged<ScrollView>(entity);
-        return true;
+        entity = hierarchy::parentOf(world, entity);
     }
     return false;
 }
 
 } // namespace
+
+bool dragScroll(ecs::World& world, ecs::Entity canvas, float x, float y, float pixels)
+{
+    return scrollWalk(world, canvas, x, y,
+                      [pixels](const ScrollView& view) { return view.scroll - pixels; });
+}
 
 bool dispatchEvent(ecs::World& world, ecs::Entity canvas, Event& event)
 {
@@ -126,40 +128,41 @@ bool dispatchEvent(ecs::World& world, ecs::Entity canvas, Event& event)
     {
         return false;
     }
-    const ecs::Entity target = eventTarget(world, canvas, event.x, event.y);
-    if (!target.valid())
-    {
-        return false;
-    }
-
     std::vector<ecs::Entity>& path = scratch();
-    collectPath(world, canvas, target, path);
-    if (path.empty())
+    std::size_t count = 0U;
+    const ecs::Entity target = eventTarget(world, canvas, event.x, event.y);
+    if (target.valid())
     {
-        return false;
+        collectPath(world, canvas, target, path);
+        count = path.size();
     }
-    const std::size_t count = path.size();
 
     /* Capture runs canvas first, target last; the target phase is that last
        entry; bubble runs the target's parent upward to the canvas. */
-    std::reverse(path.begin(), path.end());
-    if (invoke(world, path.data(), count, EventPhase::Capture, event))
+    if (count > 0U)
     {
-        return true;
-    }
-    if (invoke(world, path.data() + (count - 1U), 1U, EventPhase::Target, event))
-    {
-        return true;
-    }
-    if (invoke(world, path.data(), count - 1U, EventPhase::Bubble, event))
-    {
-        return true;
+        std::reverse(path.begin(), path.end());
+        if (invoke(world, path.data(), count, EventPhase::Capture, event))
+        {
+            return true;
+        }
+        if (invoke(world, path.data() + (count - 1U), 1U, EventPhase::Target, event))
+        {
+            return true;
+        }
+        if (invoke(world, path.data(), count - 1U, EventPhase::Bubble, event))
+        {
+            return true;
+        }
     }
 
     if (event.kind == EventKind::Wheel)
     {
-        std::reverse(path.begin(), path.end());
-        if (scrollChain(world, path.data(), count, event))
+        const float detents = event.wheel;
+        if (scrollWalk(world, canvas, event.x, event.y, [detents](const ScrollView& view) {
+                const float step = view.step > 0.0F ? view.step : kWheelPixels;
+                return view.scroll + detents * step;
+            }))
         {
             event.consumed = true;
             return true;

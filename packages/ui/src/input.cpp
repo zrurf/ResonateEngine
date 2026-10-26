@@ -15,6 +15,10 @@ namespace resonate::ui
 namespace
 {
 
+/* Finger travel past this slop turns a press into a drag, which cancels the
+   click; under it the gesture stays a tap. In logical pixels like the pointer. */
+constexpr float kDragSlop = 8.0F;
+
 void setState(ecs::World& world, ecs::Entity entity, WidgetState state)
 {
     Input* input = world.get<Input>(entity);
@@ -67,6 +71,21 @@ void collectFocusable(ecs::World& world, ecs::Entity entity, std::vector<ecs::En
 
 bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool down)
 {
+    /* Attaching DragState moves the canvas to a new archetype, so PointerState
+       is fetched only after the structural change; the pointers must not
+       straddle it. */
+    DragState* drag = world.get<DragState>(canvas);
+    if (drag == nullptr)
+    {
+        drag = world.add(canvas, DragState{});
+        if (drag == nullptr)
+        {
+            world.report(ecs::World::Report::Error,
+                         "ui input: the canvas %u:%u rejected a DragState", canvas.index,
+                         canvas.generation);
+            return false;
+        }
+    }
     PointerState* pointer = world.get<PointerState>(canvas);
     if (pointer == nullptr)
     {
@@ -75,6 +94,9 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                      canvas.generation);
         return false;
     }
+    const float last_y = drag->y;
+    drag->x = x;
+    drag->y = y;
 
     /* A release was reported once; clear it before this frame's sample so a
        reader sees it for exactly one update. */
@@ -131,6 +153,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         pointer->down = true;
         pointer->press = hover;
         world.markChanged<PointerState>(canvas);
+        drag->pressed = true;
+        drag->dragging = false;
+        drag->press_x = x;
+        drag->press_y = y;
         if (hover.valid())
         {
             setState(world, hover, WidgetState::Pressed);
@@ -140,6 +166,8 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
     {
         pointer->down = false;
         world.markChanged<PointerState>(canvas);
+        drag->pressed = false;
+        drag->dragging = false;
         const ecs::Entity press = pointer->press;
         Event released = move;
         released.kind = EventKind::PointerUp;
@@ -177,6 +205,29 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                      : (pointer->press == pointer->focused ? WidgetState::Focused
                                                            : WidgetState::Normal));
     }
+
+    /* Once the finger travels past the slop the press becomes a drag: drop the
+       pending press so the release neither activates nor clicks, and let the
+       viewport chain under the finger follow it. */
+    if (drag->pressed && pointer->down)
+    {
+        if (!drag->dragging)
+        {
+            const float dx = x - drag->press_x;
+            const float dy = y - drag->press_y;
+            if (dx * dx + dy * dy > kDragSlop * kDragSlop)
+            {
+                drag->dragging = true;
+                pointer->press = ecs::Entity{};
+                world.markChanged<PointerState>(canvas);
+            }
+        }
+        if (drag->dragging)
+        {
+            dragScroll(world, canvas, x, y, y - last_y);
+        }
+    }
+
     if (hover.valid())
     {
         setState(world, hover,

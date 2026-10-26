@@ -1,11 +1,26 @@
 #ifndef RESONATE_UI_INPUT_H
 #define RESONATE_UI_INPUT_H
 
+#include <resonate/ecs/component.h>
 #include <resonate/ecs/entity.h>
 #include <resonate/ecs/world.h>
 
 namespace resonate::ui
 {
+
+/* Touch-drag bookkeeping the input system keeps beside PointerState on the
+   canvas: the running pointer sample, where the press began and whether the
+   motion has grown into a drag (past the slop, which also cancels the click).
+   Runtime data, never authored, so it names itself like Listener. */
+struct DragState
+{
+    bool pressed = false;
+    bool dragging = false;
+    float x = 0.0F;
+    float y = 0.0F;
+    float press_x = 0.0F;
+    float press_y = 0.0F;
+};
 
 /* Samples the pointer once per frame against the canvas' retained tree.
    `x` and `y` are in the same space layout works in: the target size divided
@@ -17,7 +32,11 @@ namespace resonate::ui
    button also shields its parent. Hovered, pressed and the one-update
    `activated` flag live on the canvas' PointerState; Input::state drives the
    compiled state styles. Call it before layout and before anything reads
-   activation. */
+   activation.
+
+   A press that moves past the drag slop becomes a drag: the viewport chain
+   under the pointer follows the finger and the release neither activates nor
+   clicks. */
 [[nodiscard]] bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool down);
 
 /* Moves focus to the next (or previous) focusable Input in tree order and
@@ -32,5 +51,14 @@ namespace resonate::ui
                                float detents);
 
 } // namespace resonate::ui
+
+namespace resonate::ecs
+{
+
+/* DragState is runtime data (the input system's own bookkeeping), never
+   authored, so it has no schema declaration and names itself here. */
+RESONATE_COMPONENT(resonate::ui::DragState, "resonate.ui.DragState");
+
+} // namespace resonate::ecs
 
 #endif /* RESONATE_UI_INPUT_H */
