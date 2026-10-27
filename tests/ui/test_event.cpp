@@ -517,6 +517,59 @@ TEST_CASE("ui event: a dropdown opens, selects an item row and closes", "[ui][ev
     CHECK(dropdown->selected == 1U);
 }
 
+TEST_CASE("ui event: a dropdown row whose caption is a child label still selects",
+          "[ui][event]")
+{
+    /* The gallery's shape: each item row is a Button wrapping its caption in a
+       child Label, and the popup box is padded, so the hit inside a row is the
+       label while the press belongs to the row's Input ancestor. */
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="dropdown" x="0" y="0" width="220" height="26" text="A" font_size="13">
+      <Input/>
+      <Dropdown/>
+      <Panel key="popup" x="0" y="28" width="220" height="96" position="Absolute" z="50"
+             padding_left="1" padding_top="1" padding_right="1" padding_bottom="1"
+             direction="Column" align="Stretch" gap="0" color="0.2 0.2 0.2 1">
+        <DropdownList/>
+        <Button key="item-0" height="30" color="0.1 0.1 0.1 1">
+          <Label key="item-0-label" width="218" height="30" text="A" font_size="13"/>
+        </Button>
+        <Button key="item-1" height="30" color="0.1 0.1 0.1 1">
+          <Label key="item-1-label" width="218" height="30" text="B" font_size="13"/>
+        </Button>
+      </Panel>
+    </Label>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 400.0F, 400.0F));
+    const Entity dropdown_entity = resonate::hierarchy::children(world, root)[0];
+    const auto children = resonate::hierarchy::children(world, dropdown_entity);
+    REQUIRE(children.size() == 1U);
+    const Entity popup = children[0];
+
+    REQUIRE(resonate::ui::updateInput(world, root, 20.0F, 10.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 20.0F, 10.0F, false));
+
+    const float row_y = rect_of(world, popup).y + 40.0F;
+    REQUIRE(resonate::ui::updateInput(world, root, 100.0F, row_y, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 100.0F, row_y, false));
+    const resonate::ui::Dropdown* dropdown = world.get<resonate::ui::Dropdown>(dropdown_entity);
+    REQUIRE(dropdown != nullptr);
+    CHECK_FALSE(dropdown->open);
+    CHECK(dropdown->selected == 1U);
+}
+
 TEST_CASE("ui event: a tab click switches the visible page", "[ui][event]")
 {
     const char* const text = R"xml(<document version="1" schemas="resonate.ui">

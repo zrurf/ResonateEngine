@@ -183,15 +183,10 @@ void pumpEvents(void* self)
         return;
     }
 
-    /* Presses are latched by this pump's key-down events and read by every
-       consumer of the frame; the previous frame's latches clear here. Sampling
-       them from the keyboard state instead lost every tap that went down and up
-       between two frames. */
-    for (int key = 0; key < RESONATE_KEY_COUNT; ++key)
-    {
-        state->input.pressed[key] = false;
-    }
-
+    /* Presses are latched by key-down events and cleared by clearPresses once
+       the frame's simulation steps have read them. Clearing here instead was
+       wrong: the pump runs per loop iteration and the steps only on the frames
+       the clock grants one, so most latches were dropped unread. */
     SDL_Event event = {};
     while (SDL_PollEvent(&event))
     {

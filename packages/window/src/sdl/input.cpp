@@ -31,6 +31,19 @@ int32_t keyPressed(void* self, ResonateKey key)
     return state->input.pressed[key] ? 1 : 0;
 }
 
+void clearPresses(void* self)
+{
+    auto* state = static_cast<WindowState*>(self);
+    if (state == nullptr)
+    {
+        return;
+    }
+    for (int key = 0; key < RESONATE_KEY_COUNT; ++key)
+    {
+        state->input.pressed[key] = false;
+    }
+}
+
 int32_t mouseDown(void* self, ResonateMouseButton button)
 {
     const auto* state = static_cast<const WindowState*>(self);
@@ -220,6 +233,8 @@ ResonateInput g_input = {
        soft-keyboard tails are the mobile platform's. */
     nullptr,
     nullptr,
+    nullptr,
+    &clearPresses,
 };
 
 } // namespace

@@ -232,6 +232,16 @@ int Application::run(const Config& config)
         for (std::uint32_t step = 0; step < steps; ++step)
         {
             host->runSimulationStep(clock.stepSeconds());
+
+            /* Every consumer in the step has read the presses by now, and the
+               pump cannot add more until the next frame, so the rest of this
+               frame's steps start with none: one tap is one edit, however many
+               steps the clock grants. A frame that runs no step keeps them for
+               the next one instead of losing them. */
+            if (config.clear_presses)
+            {
+                config.clear_presses();
+            }
         }
         host->runRenderFrame(elapsed_seconds);
 

@@ -56,6 +56,11 @@ class Session
        gone, which is how a quit request reads. */
     [[nodiscard]] bool pump();
 
+    /* Drops the pressed-key latches. The caller does this once per frame after
+       the simulation steps read them, so a press survives the frames the clock
+       grants no step. */
+    void clearKeyPresses();
+
   private:
     bool started_ = false;
 };

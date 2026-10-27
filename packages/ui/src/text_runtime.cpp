@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <resonate/ecs/query.h>
+#include <resonate/hierarchy/tree.h>
 
 #include "glyph_run.h"
 #include "resonate.ui/components.gen.h"
@@ -179,7 +180,7 @@ bool TextRuntimeAccess::updateComposition(ecs::World& world, ecs::Entity canvas,
     {
         return false;
     }
-    if (!focused.valid() || world.get<Text>(focused) == nullptr)
+    if (!focused.valid() || !isTextField(world, focused))
     {
         return true;
     }
@@ -303,14 +304,20 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
             maximum_y = std::fmax(maximum_y, quad.y + quad.height);
         }
     }
+    float ascent = text->font_size * 0.8F;
+    float descent = -text->font_size * 0.2F;
+    impl_->atlas.lineMetrics(text->font_size, static_cast<float>(text->font_weight), ascent,
+                             descent);
     if (TextMetrics* metrics = world.get<TextMetrics>(entity))
     {
         metrics->width = maximum_x - minimum_x;
         metrics->height = maximum_y - minimum_y;
         metrics->advance = advance;
+        metrics->ascent = ascent;
+        metrics->descent = descent;
     }
-    else if (world.add(entity, TextMetrics{maximum_x - minimum_x, maximum_y - minimum_y,
-                                           advance}) == nullptr)
+    else if (world.add(entity, TextMetrics{maximum_x - minimum_x, maximum_y - minimum_y, advance,
+                                           ascent, descent}) == nullptr)
     {
         error = "text metrics could not be attached";
         return false;
@@ -423,7 +430,7 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
     {
         return true;
     }
-    if (world.get<Text>(pointer->focused) == nullptr)
+    if (!isTextField(world, pointer->focused))
     {
         return true;
     }
@@ -505,7 +512,7 @@ bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion)
 {
     const PointerState* pointer = world.get<PointerState>(canvas);
     if (pointer == nullptr || !pointer->focused.valid() ||
-        world.get<Text>(pointer->focused) == nullptr)
+        !isTextField(world, pointer->focused))
     {
         return false;
     }
@@ -541,7 +548,7 @@ bool setFocusedText(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
 {
     const PointerState* pointer = world.get<PointerState>(canvas);
     if (pointer == nullptr || !pointer->focused.valid() ||
-        world.get<Text>(pointer->focused) == nullptr)
+        !isTextField(world, pointer->focused))
     {
         return true;
     }
@@ -568,11 +575,110 @@ bool setText(ecs::World& world, ecs::Entity canvas, ecs::Entity entity, std::str
     return reference->runtime->setText(world, canvas, entity, utf8, error);
 }
 
+namespace
+{
+
+/* The caption a row shows: its own Text, or the first Text under it. */
+ecs::Entity captionOf(ecs::World& world, ecs::Entity row)
+{
+    if (world.get<Text>(row) != nullptr)
+    {
+        return row;
+    }
+    ecs::Entity found{};
+    for (const ecs::Entity child : hierarchy::children(world, row))
+    {
+        found = captionOf(world, child);
+        if (found.valid())
+        {
+            break;
+        }
+    }
+    return found;
+}
+
+bool syncDropdown(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime, ecs::Entity entity,
+                  std::string& error)
+{
+    const Dropdown* dropdown = world.get<Dropdown>(entity);
+    if (dropdown == nullptr)
+    {
+        return true;
+    }
+    for (const ecs::Entity child : hierarchy::children(world, entity))
+    {
+        if (world.get<DropdownList>(child) == nullptr)
+        {
+            continue;
+        }
+        const auto rows = hierarchy::children(world, child);
+        if (dropdown->selected >= rows.size())
+        {
+            return true;
+        }
+        const ecs::Entity caption = captionOf(world, rows[dropdown->selected]);
+        if (!caption.valid() || caption == entity)
+        {
+            return true;
+        }
+        const std::string selected = readContent(world, caption);
+        if (readContent(world, entity) == selected)
+        {
+            return true;
+        }
+        return runtime.setText(world, canvas, entity, selected, error);
+    }
+    return true;
+}
+
+bool syncDropdownsIn(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
+                     ecs::Entity entity, std::string& error)
+{
+    if (!syncDropdown(world, canvas, runtime, entity, error))
+    {
+        return false;
+    }
+    for (const ecs::Entity child : hierarchy::children(world, entity))
+    {
+        if (!syncDropdownsIn(world, canvas, runtime, child, error))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+bool syncDropdowns(ecs::World& world, ecs::Entity canvas, std::string& error)
+{
+    const TextRuntimeRef* reference = world.get<TextRuntimeRef>(canvas);
+    if (reference == nullptr || reference->runtime == nullptr)
+    {
+        return true;
+    }
+    return syncDropdownsIn(world, canvas, *reference->runtime, canvas, error);
+}
+
+bool isTextField(ecs::World& world, ecs::Entity entity)
+{
+    if (world.get<Text>(entity) == nullptr || world.get<Input>(entity) == nullptr)
+    {
+        return false;
+    }
+    /* Text on any of these is a caption over an interaction the component
+       already owns; a caret there is a stray cursor over a checkbox. */
+    return world.get<Checkbox>(entity) == nullptr && world.get<Slider>(entity) == nullptr &&
+           world.get<Dropdown>(entity) == nullptr && world.get<DropdownList>(entity) == nullptr &&
+           world.get<Scrubber>(entity) == nullptr && world.get<Selectable>(entity) == nullptr &&
+           world.get<Tab>(entity) == nullptr && world.get<Tabs>(entity) == nullptr &&
+           world.get<TabPage>(entity) == nullptr && world.get<Splitter>(entity) == nullptr;
+}
+
 bool focusedTextEditable(ecs::World& world, ecs::Entity canvas)
 {
     const PointerState* pointer = world.get<PointerState>(canvas);
-    return pointer != nullptr && pointer->focused.valid() &&
-           world.get<Text>(pointer->focused) != nullptr;
+    return pointer != nullptr && pointer->focused.valid() && isTextField(world, pointer->focused);
 }
 
 ecs::Entity focusedEntity(ecs::World& world, ecs::Entity canvas)
@@ -585,7 +691,7 @@ std::string focusedText(ecs::World& world, ecs::Entity canvas)
 {
     const PointerState* pointer = world.get<PointerState>(canvas);
     if (pointer == nullptr || !pointer->focused.valid() ||
-        world.get<Text>(pointer->focused) == nullptr)
+        !isTextField(world, pointer->focused))
     {
         return {};
     }

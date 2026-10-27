@@ -10,6 +10,7 @@
 #include "widget_shown.h"
 
 #include <resonate/ui/input.h>
+#include <resonate/ui/text_runtime.h>
 #include "resonate.ui/components.gen.h"
 
 namespace resonate::ui
@@ -295,6 +296,9 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                so the caret stays visible; the clip keeps the rest cut. */
             float caret_local = 0.0F;
             float scroll_x = 0.0F;
+            /* The glyph the caret sits before; count is past the last one, whose
+               line is where the caret then is. */
+            std::size_t caret_index = count;
             const TextCaret* caret = focused_ == entity ? world.get<TextCaret>(entity) : nullptr;
             if (focused_ == entity && count > 0U)
             {
@@ -308,6 +312,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                         if (records[index].byte_offset >= caret->offset)
                         {
                             caret_local = records[index].pen_x;
+                            caret_index = index;
                             break;
                         }
                     }
@@ -371,7 +376,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
             }
             const CaretBlink* blink = world.get<CaretBlink>(blink_source_);
             const bool caret_visible = blink == nullptr || blink->visible;
-            if (focused_ == entity && caret_visible)
+            if (focused_ == entity && caret_visible && isTextField(world, entity))
             {
                 /* The caret sits where the shaped run ends; an empty field
                    starts it at the alignment edge. The ink extents cannot
@@ -379,20 +384,40 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                    not visible pixels. */
                 float caret_x = rect->x;
                 float caret_y = rect->y;
-                const float caret_height = text->font_size > 0.0F ? text->font_size
-                                                                  : rect->height;
+                /* The caret spans the line box, so its height does not follow
+                   the letters next to it and an empty field still has one. */
+                const TextMetrics* metrics = world.get<TextMetrics>(entity);
+                const float ascent = metrics != nullptr && metrics->ascent > 0.0F
+                                         ? metrics->ascent
+                                         : text->font_size * 0.8F;
+                const float descent = metrics != nullptr && metrics->descent < 0.0F
+                                          ? metrics->descent
+                                          : -text->font_size * 0.2F;
+                const float caret_height = ascent - descent;
                 if (count > 0U)
                 {
-                    caret_y = origin_y + records[count - 1U].y;
+                    const std::size_t line = caret_index < count ? caret_index : count - 1U;
+                    caret_y = origin_y + records[line].pen_y - ascent;
                     caret_x = rect->x + text->padding_left - scroll_x + caret_local;
                 }
-                else if (text->align == TextAlign::Center)
+                else
                 {
-                    caret_x = rect->x + (rect->width - 1.0F) * 0.5F;
-                }
-                else if (text->align == TextAlign::End)
-                {
-                    caret_x = rect->x + rect->width - 1.0F;
+                    if (text->align == TextAlign::Center)
+                    {
+                        caret_x = rect->x + (rect->width - 1.0F) * 0.5F;
+                    }
+                    else if (text->align == TextAlign::End)
+                    {
+                        caret_x = rect->x + rect->width - 1.0F;
+                    }
+                    if (text->v_align == VAlign::Middle)
+                    {
+                        caret_y = rect->y + (rect->height - caret_height) * 0.5F;
+                    }
+                    else if (text->v_align == VAlign::Bottom)
+                    {
+                        caret_y = rect->y + rect->height - caret_height;
+                    }
                 }
                 if (visible(clip, caret_x, caret_y, 1.0F, caret_height))
                 {

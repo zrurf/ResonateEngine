@@ -77,6 +77,12 @@ class Application
            Empty means the host has no per-frame work. */
         std::function<bool()> tick;
 
+        /* Called after the frame's simulation steps, once per frame that ran at
+           least one step: the frame's input latches are dropped here, not after
+           the pump, so a tap that arrived while the clock granted no step still
+           reaches the next step. Empty means the host has no latches. */
+        std::function<void()> clear_presses;
+
         /* Called after the frame loop ends and before the modules detach, so a
            system holding device resources releases them while the device is
            still alive. Empty means nothing to release. */

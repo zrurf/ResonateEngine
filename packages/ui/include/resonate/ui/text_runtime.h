@@ -113,9 +113,21 @@ struct TextRuntimeRef
 [[nodiscard]] bool setFocusedText(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
                                   std::string_view utf8, std::string& error);
 
-/* True when the canvas' focused widget carries text a keyboard could edit, which
-   is when a platform should show its soft keyboard. */
+/* True when the widget's Text is an editable field rather than a caption: it
+   carries Input and none of the components that own their own interaction
+   (checkbox, slider, dropdown, scrubber, tab, selectable, splitter). Those
+   widgets draw their text but take no caret and no typing. */
+[[nodiscard]] bool isTextField(ecs::World& world, ecs::Entity entity);
+
+/* True when the canvas' focused widget is a text field, which is when a
+   platform should show its soft keyboard and the caret belongs on screen. */
 [[nodiscard]] bool focusedTextEditable(ecs::World& world, ecs::Entity canvas);
+
+/* Makes every dropdown's header read its selected row's caption, so a choice
+   shows without every caller relaying it. A row's caption is its own Text or
+   the first Text under it. Called after input and before layout; a header that
+   already reads the caption is left alone, so this costs one subtree walk. */
+[[nodiscard]] bool syncDropdowns(ecs::World& world, ecs::Entity canvas, std::string& error);
 
 /* The canvas' focused widget, or an invalid entity when none has focus. */
 [[nodiscard]] ecs::Entity focusedEntity(ecs::World& world, ecs::Entity canvas);

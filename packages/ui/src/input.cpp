@@ -340,7 +340,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         {
             /* A press inside a text field drops the caret where it landed. */
             const ComputedRect* rect = world.get<ComputedRect>(hover);
-            if (rect != nullptr)
+            if (rect != nullptr && isTextField(world, hover))
             {
                 (void)placeCaretAt(world, hover, x - rect->x);
             }

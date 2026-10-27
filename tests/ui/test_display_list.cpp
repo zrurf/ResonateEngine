@@ -235,3 +235,55 @@ TEST_CASE("ui display list: a slider narrower than its knob paints safely", "[ui
     REQUIRE(resonate::ui::buildDisplayList(fixture.world, fixture.root, list));
     CHECK_FALSE(list.quads().empty());
 }
+
+TEST_CASE("ui display list: a focused empty field centres its caret", "[ui][display-list]")
+{
+    Fixture fixture;
+    const Entity field = fixture.add(fixture.root, 10.0F, 20.0F, 120.0F, 26.0F, 0,
+                                     resonate::Vec4{}, false);
+    resonate::ui::Text text;
+    text.font_size = 13.0F;
+    text.v_align = resonate::ui::VAlign::Middle;
+    fixture.world.add(field, text);
+    fixture.world.add(field, resonate::ui::Input{});
+    resonate::ui::PointerState pointer;
+    pointer.focused = field;
+    fixture.world.add(fixture.root, pointer);
+    fixture.finish();
+
+    DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, fixture.root, list));
+    const auto quads = list.quads();
+    /* Root's background, then the caret: an empty field has no glyph quads. */
+    REQUIRE(quads.size() == 2U);
+    const auto& caret = quads[1];
+    CHECK(caret.width == 1.0F);
+    /* The caret spans the fallback line box (0.8 + 0.2 of the font size) and
+       sits centred in the box, not against its top. */
+    CHECK(caret.height > 12.9F);
+    CHECK(caret.height < 13.1F);
+    CHECK(caret.y > 26.0F);
+    CHECK(caret.y < 26.6F);
+}
+
+TEST_CASE("ui display list: a focused checkbox draws no caret", "[ui][display-list]")
+{
+    Fixture fixture;
+    const Entity check = fixture.add(fixture.root, 10.0F, 20.0F, 120.0F, 24.0F, 0,
+                                     resonate::Vec4{}, false);
+    resonate::ui::Text text;
+    text.font_size = 13.0F;
+    fixture.world.add(check, text);
+    fixture.world.add(check, resonate::ui::Input{});
+    fixture.world.add(check, resonate::ui::Checkbox{});
+    resonate::ui::PointerState pointer;
+    pointer.focused = check;
+    fixture.world.add(fixture.root, pointer);
+    fixture.finish();
+
+    DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, fixture.root, list));
+    /* The root's background and the box's four outline bars; a caret would add
+       a fifth column spanning the line box. */
+    CHECK(list.quads().size() == 5U);
+}

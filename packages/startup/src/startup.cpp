@@ -270,6 +270,14 @@ struct UiFrame
             }
         }
         ui::updateBindings(world, frame->canvas);
+        if (frame->text != nullptr)
+        {
+            std::string error;
+            if (!ui::syncDropdowns(world, frame->canvas, error))
+            {
+                std::fprintf(stderr, "resonate: ui dropdown: %s\n", error.c_str());
+            }
+        }
         ui::layout(world, frame->canvas, static_cast<float>(width), static_cast<float>(height));
     }
 };
@@ -1109,6 +1117,9 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
 
         /* False once the window is gone, which is how a quit request reads. */
         config.tick = [&session] { return session.pump(); };
+
+        /* Presses latch until a step reads them; the loop clears them after. */
+        config.clear_presses = [&session] { session.clearKeyPresses(); };
     }
 
     return Application::run(config);

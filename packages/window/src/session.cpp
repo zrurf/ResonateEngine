@@ -82,4 +82,17 @@ bool Session::pump()
     return window.width(window.self) > 0U;
 }
 
+void Session::clearKeyPresses()
+{
+    if (!started_)
+    {
+        return;
+    }
+    ResonateInput& input = inputCapability();
+    if (input.clear_presses != nullptr)
+    {
+        input.clear_presses(input.self);
+    }
+}
+
 } // namespace resonate::window

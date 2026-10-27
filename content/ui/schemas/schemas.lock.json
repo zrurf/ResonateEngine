@@ -472,13 +472,15 @@
     {
       "name": "TextMetrics",
       "kind": "component",
-      "version": 2,
+      "version": 3,
       "shape": [
-        "component TextMetrics version 2",
-        "  size 12 align 4",
+        "component TextMetrics version 3",
+        "  size 20 align 4",
         "  field width f32 @0 size 4",
         "  field height f32 @4 size 4",
-        "  field advance f32 @8 size 4"
+        "  field advance f32 @8 size 4",
+        "  field ascent f32 @12 size 4",
+        "  field descent f32 @16 size 4"
       ]
     },
     {

@@ -400,6 +400,14 @@ typedef struct ResonateInput
        fills the editor before the editor's buffer is mirrored back over it.
        A provider without this keeps whatever its editor holds. */
     void (*set_text_buffer)(void* self, const char* utf8, uint32_t size);
+
+    /* Tail: clears the latched presses. The runtime calls this once per frame,
+       after that frame's simulation steps have read them. The pump runs per
+       loop iteration, several times per step at high frame rates, so a provider
+       that cleared its latches at pump start dropped every press that arrived
+       between two steps. A provider without this keeps latches until its next
+       pump. */
+    void (*clear_presses)(void* self);
 } ResonateInput;
 
 #ifdef __cplusplus

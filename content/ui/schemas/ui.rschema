@@ -158,13 +158,17 @@
        when the RectTransform leaves a dimension at zero. `advance` is where the
        shaped run ends on its last line (alignment offset included), which is
        where the caret sits; the ink extents cannot answer that (atlas padding
-       and trailing spaces). -->
-  <component name="TextMetrics" version="2" derived="true">
+       and trailing spaces). `ascent` and `descent` describe the line box the
+       caret spans, independent of which glyphs the run happens to contain. -->
+  <component name="TextMetrics" version="3" derived="true">
     <field name="width" type="f32"/>
     <field name="height" type="f32"/>
     <field name="advance" type="f32"/>
+    <field name="ascent" type="f32"/>
+    <field name="descent" type="f32"/>
 
     <migrate from="1" to="2"/>
+    <migrate from="2" to="3"/>
   </component>
 
   <!-- The canvas's single font atlas: RGBA8 coverage pages and the revision

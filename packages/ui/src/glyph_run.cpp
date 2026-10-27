@@ -160,6 +160,24 @@ bool TextAtlasBuilder::grow()
     return true;
 }
 
+bool TextAtlasBuilder::lineMetrics(float size, float weight, float& out_ascent,
+                                   float& out_descent) const
+{
+    text::FontMetrics metrics;
+    if (!fonts_.empty() && fonts_[0]->metrics(size, weight, metrics) &&
+        metrics.ascent - metrics.descent > 0.0F)
+    {
+        out_ascent = metrics.ascent;
+        out_descent = metrics.descent;
+        return true;
+    }
+    /* A face without usable metrics still has a line box, or the caret would
+       collapse to nothing. */
+    out_ascent = size * 0.8F;
+    out_descent = -size * 0.2F;
+    return false;
+}
+
 bool TextAtlasBuilder::updateQuad(GlyphQuad& quad) const
 {
     const auto found = glyphs_.find(quad.key);

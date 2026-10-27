@@ -61,6 +61,13 @@ class TextAtlasBuilder
                   bool wrap, std::vector<GlyphQuad>& out, float& out_advance_x,
                   std::string& out_error);
 
+    /* The line box at this size and weight, in pixels: the baseline sits
+       `ascent` below the box top and `-descent` above the box bottom. A caret
+       spans the box, so it does not change height with the glyphs next to it,
+       and an empty field still knows where its line would be. */
+    [[nodiscard]] bool lineMetrics(float size, float weight, float& out_ascent,
+                                   float& out_descent) const;
+
     /* Refreshes a quad's UV rect after a repack. False when the key is not in
        the atlas. */
     [[nodiscard]] bool updateQuad(GlyphQuad& quad) const;
