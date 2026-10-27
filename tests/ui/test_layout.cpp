@@ -9,6 +9,9 @@
 #include <resonate/core/allocator.h>
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/hierarchy/tree.h>
+#include <resonate/dom/document.h>
+#include <resonate/ui/document.h>
+#include <resonate/ui/document_schema.h>
 #include <resonate/ui/layout.h>
 
 #include "resonate.ui/components.gen.h"
@@ -332,4 +335,45 @@ TEST_CASE("ui layout: space-between spreads the free space over the gaps", "[ui]
     fixture.requireRect(first, 0.0F, 0.0F, 10.0F, 10.0F);
     fixture.requireRect(second, 45.0F, 0.0F, 10.0F, 10.0F);
     fixture.requireRect(third, 90.0F, 0.0F, 10.0F, 10.0F);
+}
+
+TEST_CASE("ui layout: a wrapping row flows onto further lines", "[ui][layout]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Panel key="flow" x="0" y="0" width="120" height="200" direction="Row" wrap="true"
+           align="Start" gap="0">
+      <Box key="a" width="50" height="20" color="1 0 0 1"/>
+      <Box key="b" width="50" height="20" color="0 1 0 1"/>
+      <Box key="c" width="50" height="20" color="0 0 1 1"/>
+    </Panel>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 300.0F));
+    const Entity flow = resonate::hierarchy::children(world, root)[0];
+    const auto boxes = resonate::hierarchy::children(world, flow);
+    REQUIRE(boxes.size() == 3U);
+    const auto rect_of = [&](Entity entity)
+    {
+        const resonate::ui::ComputedRect* rect = world.get<resonate::ui::ComputedRect>(entity);
+        REQUIRE(rect != nullptr);
+        return *rect;
+    };
+    /* Two 50 px boxes share the first line; the third wraps below them. */
+    CHECK(near(rect_of(boxes[0]).x, 0.0F));
+    CHECK(near(rect_of(boxes[1]).x, 50.0F));
+    CHECK(near(rect_of(boxes[2]).x, 0.0F));
+    CHECK(near(rect_of(boxes[0]).y, 0.0F));
+    CHECK(near(rect_of(boxes[1]).y, 0.0F));
+    CHECK(near(rect_of(boxes[2]).y, 20.0F));
 }

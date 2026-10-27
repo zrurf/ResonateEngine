@@ -162,10 +162,15 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
     const float main_extent = row ? content.width : content.height;
     const float cross_extent = row ? content.height : content.width;
 
-    /* The flow consumes neighbours and gap; absolute children are placed from
-       their anchors and take no room in it. */
-    std::uint32_t flow_count = 0;
-    float used = 0.0F;
+    /* Absolute children are placed from their anchors and take no room in the
+       flow. */
+    struct FlowItem
+    {
+        ecs::Entity entity{};
+        float main = 0.0F;
+        float cross = 0.0F;
+    };
+    std::vector<FlowItem> items;
     for (const ecs::Entity child : children)
     {
         const RectTransform* rect = world.get<RectTransform>(child);
@@ -179,98 +184,22 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
         }
         const Vec2 size = effectiveSize(world, child, *rect);
         const float main_size = row ? size.x : size.y;
-        used += main_size > 0.0F ? main_size : 0.0F;
-        ++flow_count;
-    }
-    if (flow_count > 1U)
-    {
-        used += gap * static_cast<float>(flow_count - 1U);
+        const float cross_size = row ? size.y : size.x;
+        items.push_back(FlowItem{child, main_size > 0.0F ? main_size : 0.0F,
+                                 cross_size > 0.0F ? cross_size : 0.0F});
     }
 
-    float free_space = main_extent - used;
-    if (free_space < 0.0F)
-    {
-        free_space = 0.0F;
-    }
-    float cursor = 0.0F;
-    float step = gap;
-    switch (group->justify)
-    {
-    case Justify::Center:
-        cursor = free_space * 0.5F;
-        break;
-    case Justify::End:
-        cursor = free_space;
-        break;
-    case Justify::SpaceBetween:
-        if (flow_count > 1U)
-        {
-            step = gap + free_space / static_cast<float>(flow_count - 1U);
-        }
-        break;
-    case Justify::Start:
-        break;
-    }
-
+    /* Absolute children sit where their anchors put them and take no part in
+       the lines. */
     for (const ecs::Entity child : children)
     {
         const RectTransform* rect = world.get<RectTransform>(child);
-        if (rect == nullptr)
+        if (rect == nullptr || rect->position != PositionMode::Absolute)
         {
-            return reportMissing(world, child, "RectTransform");
-        }
-        if (rect->position == PositionMode::Absolute)
-        {
-            Box box = anchoredBox(world, child, content, *rect);
-            box.y -= scroll;
-            if (!writeRect(world, child, box, scale) ||
-                !placeChildren(world, child, box, scale, depth + 1U))
-            {
-                return false;
-            }
             continue;
         }
-
-        const Vec2 size = effectiveSize(world, child, *rect);
-        float main_size = row ? size.x : size.y;
-        float cross_size = row ? size.y : size.x;
-        if (main_size < 0.0F)
-        {
-            main_size = 0.0F;
-        }
-        if (cross_size < 0.0F)
-        {
-            cross_size = 0.0F;
-        }
-
-        float cross_position = 0.0F;
-        switch (group->align)
-        {
-        case Align::Center:
-            cross_position = (cross_extent - cross_size) * 0.5F;
-            break;
-        case Align::End:
-            cross_position = cross_extent - cross_size;
-            break;
-        case Align::Stretch:
-            cross_size = cross_extent;
-            break;
-        case Align::Start:
-            break;
-        }
-
-        Box box;
-        if (row)
-        {
-            box = Box{content.x + cursor, content.y + cross_position, main_size, cross_size};
-        }
-        else
-        {
-            box = Box{content.x + cross_position, content.y + cursor, cross_size, main_size};
-        }
-        cursor += main_size + step;
+        Box box = anchoredBox(world, child, content, *rect);
         box.y -= scroll;
-
         if (!writeRect(world, child, box, scale) ||
             !placeChildren(world, child, box, scale, depth + 1U))
         {
@@ -278,12 +207,134 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
         }
     }
 
+    /* Lines: a non-wrapping group flows on one; a wrapping one starts a new
+       line wherever the next item would pass the content extent. */
+    struct Line
+    {
+        std::size_t begin = 0U;
+        std::size_t end = 0U;
+        float used = 0.0F;
+        float cross = 0.0F;
+    };
+    std::vector<Line> lines;
+    {
+        std::size_t line_begin = 0U;
+        float cursor = 0.0F;
+        for (std::size_t index = 0; index < items.size(); ++index)
+        {
+            const FlowItem& item = items[index];
+            if (group->wrap && index > line_begin && cursor + item.main > main_extent)
+            {
+                lines.push_back(Line{line_begin, index, 0.0F, 0.0F});
+                line_begin = index;
+                cursor = 0.0F;
+            }
+            cursor += item.main + (index > line_begin ? gap : 0.0F);
+        }
+        lines.push_back(Line{line_begin, items.size(), 0.0F, 0.0F});
+    }
+
+    float cross_used = 0.0F;
+    for (Line& line : lines)
+    {
+        const std::size_t count = line.end - line.begin;
+        for (std::size_t index = line.begin; index < line.end; ++index)
+        {
+            line.used += items[index].main;
+            line.cross = std::fmax(line.cross, items[index].cross);
+        }
+        if (count > 1U)
+        {
+            line.used += gap * static_cast<float>(count - 1U);
+        }
+
+        const float free_space = std::fmax(0.0F, main_extent - line.used);
+        float cursor = 0.0F;
+        float step = gap;
+        switch (group->justify)
+        {
+        case Justify::Center:
+            cursor = free_space * 0.5F;
+            break;
+        case Justify::End:
+            cursor = free_space;
+            break;
+        case Justify::SpaceBetween:
+            if (count > 1U)
+            {
+                step = gap + free_space / static_cast<float>(count - 1U);
+            }
+            break;
+        case Justify::Start:
+            break;
+        }
+
+        /* One unwrapped line stretches across the whole content; each wrapped
+           line uses its own tallest item. */
+        const float line_extent = group->wrap ? line.cross : cross_extent;
+        for (std::size_t index = line.begin; index < line.end; ++index)
+        {
+            const FlowItem& item = items[index];
+            float cross_size = item.cross;
+            float cross_position = 0.0F;
+            switch (group->align)
+            {
+            case Align::Center:
+                cross_position = (line_extent - cross_size) * 0.5F;
+                break;
+            case Align::End:
+                cross_position = line_extent - cross_size;
+                break;
+            case Align::Stretch:
+                cross_size = line_extent;
+                break;
+            case Align::Start:
+                break;
+            }
+
+            Box box;
+            if (row)
+            {
+                box = Box{content.x + cursor, content.y + cross_used + cross_position, item.main,
+                          cross_size};
+            }
+            else
+            {
+                box = Box{content.x + cross_used + cross_position, content.y + cursor, cross_size,
+                          item.main};
+            }
+            cursor += item.main + step;
+            box.y -= scroll;
+
+            if (!writeRect(world, item.entity, box, scale) ||
+                !placeChildren(world, item.entity, box, scale, depth + 1U))
+            {
+                return false;
+            }
+        }
+        cross_used += line_extent + gap;
+    }
+    if (!lines.empty())
+    {
+        cross_used -= gap;
+    }
+
     if (view != nullptr && !row)
     {
         /* In target pixels, like ComputedRect: the wheel handler clamps the
-           scroll range against the viewport it sees there. */
+           scroll range against the viewport it sees there. A wrapping group
+           flows sideways when it wraps, so its height is the lines' extent. */
+        float flowed = 0.0F;
+        for (const Line& line : lines)
+        {
+            flowed += line.used;
+        }
+        if (group->wrap)
+        {
+            flowed = cross_used;
+        }
         ScrollView* measured = world.get<ScrollView>(parent);
-        const float content_height = used * scale;
+        const float content_height = flowed * scale;
         if (measured->content_height != content_height)
         {
             measured->content_height = content_height;

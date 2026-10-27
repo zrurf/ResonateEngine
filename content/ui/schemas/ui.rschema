@@ -80,7 +80,7 @@
 
   <!-- A container's flow: children are visited in the hierarchy's insertion
        order, gap separates neighbours, padding shrinks the content box. -->
-  <component name="LayoutGroup" version="1">
+  <component name="LayoutGroup" version="2">
     <field name="direction" type="FlexDirection" default="Row"/>
     <field name="justify" type="Justify" default="Start"/>
     <field name="align" type="Align" default="Start"/>
@@ -89,6 +89,11 @@
     <field name="padding_top" type="f32" min="0" default="0"/>
     <field name="padding_right" type="f32" min="0" default="0"/>
     <field name="padding_bottom" type="f32" min="0" default="0"/>
+    <!-- Wrap starts a new line when the next child would pass the content
+         extent; each line justifies and aligns on its own. -->
+    <field name="wrap" type="bool" default="false"/>
+
+    <migrate from="1" to="2"/>
   </component>
 
   <!-- Written by the layout pass, in target pixels. Consumers (render, hit
@@ -338,7 +343,7 @@
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color border_color border_width"/>
     <uses component="LayoutGroup"
-          expose="direction justify align gap padding_left padding_top padding_right padding_bottom"/>
+          expose="direction justify align gap wrap padding_left padding_top padding_right padding_bottom"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>
     <field name="bind-width" type="binding"/>
@@ -351,7 +356,7 @@
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color"/>
     <uses component="LayoutGroup"
-          expose="direction justify align gap padding_left padding_top padding_right padding_bottom"/>
+          expose="direction justify align gap wrap padding_left padding_top padding_right padding_bottom"/>
     <uses component="ScrollView" expose="step"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>

@@ -395,6 +395,15 @@ bool applyLayoutGroup(const dom::Document& document, const dom::Component& compo
                 return false;
             }
         }
+        else if (name == "wrap")
+        {
+            if (field.value != "true" && field.value != "false")
+            {
+                error = "LayoutGroup.wrap is not a bool";
+                return false;
+            }
+            layout.wrap = field.value == "true";
+        }
         else
         {
             error = "unknown LayoutGroup field '" + std::string(name) + "'";
