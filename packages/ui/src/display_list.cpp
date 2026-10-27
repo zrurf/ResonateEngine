@@ -302,7 +302,34 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                already applied the alignment span (padding_left shrank it), so
                only the left inset shifts it; vertically the ink extents decide
                middle and bottom. */
-            const float origin_x = rect->x + text->padding_left;
+            /* A focused field whose caret passed the box scrolls its own text
+               so the caret stays visible; the clip keeps the rest cut. */
+            float caret_local = 0.0F;
+            float scroll_x = 0.0F;
+            const TextCaret* caret = focused_ == entity ? world.get<TextCaret>(entity) : nullptr;
+            if (focused_ == entity && count > 0U)
+            {
+                const TextMetrics* metrics = world.get<TextMetrics>(entity);
+                /* Past the last glyph the caret sits where the run ends. */
+                caret_local = metrics != nullptr ? metrics->advance : records[count - 1U].pen_x;
+                if (caret != nullptr)
+                {
+                    for (std::size_t index = 0; index < count; ++index)
+                    {
+                        if (records[index].byte_offset >= caret->offset)
+                        {
+                            caret_local = records[index].pen_x;
+                            break;
+                        }
+                    }
+                }
+                const float visible = rect->width - text->padding_left;
+                if (visible > 0.0F && caret_local > visible)
+                {
+                    scroll_x = caret_local - visible;
+                }
+            }
+            const float origin_x = rect->x + text->padding_left - scroll_x;
             float origin_y = rect->y;
             if (text->v_align != VAlign::Top && count > 0U)
             {
@@ -367,27 +394,8 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                                                                   : rect->height;
                 if (count > 0U)
                 {
-                    const detail::GlyphQuad& last = records[count - 1U];
-                    caret_y = origin_y + last.y;
-                    const TextMetrics* metrics = world.get<TextMetrics>(entity);
-                    float offset_x = metrics != nullptr ? metrics->advance
-                                                        : last.x + last.width + 1.0F;
-                    /* A caret in the middle of the text sits at the pen of the
-                       glyph whose cluster follows it; a field without a caret
-                       component keeps it at the end. */
-                    const TextCaret* caret = world.get<TextCaret>(entity);
-                    if (caret != nullptr)
-                    {
-                        for (std::size_t index = 0; index < count; ++index)
-                        {
-                            if (records[index].byte_offset >= caret->offset)
-                            {
-                                offset_x = records[index].pen_x;
-                                break;
-                            }
-                        }
-                    }
-                    caret_x = origin_x + offset_x;
+                    caret_y = origin_y + records[count - 1U].y;
+                    caret_x = rect->x + text->padding_left - scroll_x + caret_local;
                 }
                 else if (text->align == TextAlign::Center)
                 {

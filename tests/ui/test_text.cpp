@@ -860,3 +860,51 @@ TEST_CASE("ui text: the caret hides while the blink phase is off", "[ui][text]")
     CHECK(carets() == 1U);
     (void)field;
 }
+
+TEST_CASE("ui text: a long field scrolls its own text so the caret stays visible", "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="field" text="ABCDEFGHIJKLMNOP" font_size="16" width="60" height="24"
+           wrap="false" color="0 0 0 0">
+      <Input/>
+    </Label>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+    const Entity field = resonate::hierarchy::children(fixture.world, root)[0];
+    const resonate::ui::ComputedRect* rect = fixture.world.get<resonate::ui::ComputedRect>(field);
+    REQUIRE(rect != nullptr);
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, rect->x + 5.0F, rect->y + 5.0F, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, rect->x + 5.0F, rect->y + 5.0F, false));
+    /* The press placed the caret where it landed; the end is where the text
+       has to scroll under it. */
+    REQUIRE(resonate::ui::moveCaret(fixture.world, root, resonate::ui::CaretMotion::End));
+
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+    REQUIRE_FALSE(list.texts().empty());
+    /* The run starts left of the box: the leading glyphs scrolled out. */
+    CHECK(list.texts()[0].glyphs.front().pen_x < rect->x);
+
+    float caret_x = -1.0F;
+    for (const resonate::ui::Quad& quad : list.quads())
+    {
+        if (quad.texture == resonate::ui::kTextureWhite && quad.width == 1.0F)
+        {
+            caret_x = quad.x;
+        }
+    }
+    REQUIRE(caret_x >= 0.0F);
+    /* The caret sits inside the field, not past its right edge. */
+    CHECK(caret_x >= rect->x);
+    CHECK(caret_x <= rect->x + rect->width);
+}
