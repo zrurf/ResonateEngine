@@ -1005,6 +1005,39 @@ ResonateStatus Context::ensureDevice()
                  (d16_props.optimalTilingFeatures &
                   VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0U);
 
+    /* Which of the scene formats support 2x/4x multisampling here: an MSAA
+       attempt has to pick a sample count the images and the pass agree on, and
+       a tile GPU is narrow about 16-bit HDR formats. One line, once. */
+    {
+        const auto samples_of = [&](VkFormat format, VkImageUsageFlags usage)
+        {
+            VkImageFormatProperties properties{};
+            if (vkGetPhysicalDeviceImageFormatProperties(
+                    physical_, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, 0,
+                    &properties) != VK_SUCCESS)
+            {
+                return VkSampleCountFlags{0};
+            }
+            return properties.sampleCounts;
+        };
+        const VkImageUsageFlags color_usage =
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        const VkImageUsageFlags depth_usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        const auto describe = [](VkSampleCountFlags bits) -> const char*
+        {
+            if ((bits & VK_SAMPLE_COUNT_4_BIT) != 0U)
+            {
+                return (bits & VK_SAMPLE_COUNT_2_BIT) != 0U ? "2,4" : "4";
+            }
+            return (bits & VK_SAMPLE_COUNT_2_BIT) != 0U ? "2" : "-";
+        };
+        std::fprintf(stderr, "render-vulkan: samples b10g11r11=%s rgba16f=%s depth16=%s depth32=%s\n",
+                     describe(samples_of(VK_FORMAT_B10G11R11_UFLOAT_PACK32, color_usage)),
+                     describe(samples_of(VK_FORMAT_R16G16B16A16_SFLOAT, color_usage)),
+                     describe(samples_of(VK_FORMAT_D16_UNORM, depth_usage)),
+                     describe(samples_of(VK_FORMAT_D32_SFLOAT, depth_usage)));
+    }
+
     /* The pipeline cache is per machine, not per run: it is what keeps a
        second launch from recompiling every pipeline. */
     loadPipelineCache();
