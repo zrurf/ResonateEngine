@@ -91,12 +91,22 @@ ComponentIndex World::registerComponent(const char* name, std::uint32_t size,
         {
             if (universe.count == kMaxComponentTypes)
             {
-                impl_->say(Report::Error, "component '%s' exceeds the %u type limit of one mask",
+                impl_->say(Report::Error,
+                           "component '%s' exceeds the %u type limit of the mask; split the "
+                           "vocabulary or widen kComponentMaskWords",
                            name, kMaxComponentTypes);
                 return kInvalidComponent;
             }
             universe.types[universe.count] = ComponentType{name, size, alignment};
             index = static_cast<ComponentIndex>(universe.count++);
+            /* A long way from the ceiling is the time to see it coming. */
+            if (universe.count == (kMaxComponentTypes * 3U) / 4U)
+            {
+                impl_->say(Report::Warning,
+                           "%u of %u component types are in use: the mask is three quarters "
+                           "full",
+                           universe.count, kMaxComponentTypes);
+            }
         }
     }
 

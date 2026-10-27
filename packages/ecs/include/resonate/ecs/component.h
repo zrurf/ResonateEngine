@@ -12,34 +12,56 @@ using ComponentIndex = std::uint16_t;
 
 inline constexpr ComponentIndex kInvalidComponent = 0xFFFF;
 
-/* Archetype and query masks are two u64 words wide, so the component universe
-   holds 128 types; registering past the last bit is refused rather than
-   silently truncating the mask. */
-inline constexpr std::uint32_t kMaxComponentTypes = 128;
+/* Archetype and query masks are a fixed set of u64 words: the component
+   universe holds kMaxComponentTypes types, registering past the last bit is
+   refused rather than silently truncating the mask, and the registration path
+   warns once the universe passes three quarters of it. 512 types is well past
+   any game's vocabulary; a design with no cap at all replaces the mask with
+   sorted component lists and a merge walk, at a per-archetype matching cost the
+   bench would have to clear first. */
+inline constexpr std::uint32_t kComponentMaskWords = 8U;
+inline constexpr std::uint32_t kMaxComponentTypes = kComponentMaskWords * 64U;
 
 /* The set of component types an archetype stores or a query names. */
 struct ComponentMask
 {
-    std::uint64_t words[2] = {0U, 0U};
+    std::uint64_t words[kComponentMaskWords] = {};
+
+    static constexpr std::uint32_t wordOf(ComponentIndex component) noexcept
+    {
+        return component >> 6U;
+    }
+
+    static constexpr std::uint64_t bitOf(ComponentIndex component) noexcept
+    {
+        return std::uint64_t{1} << (component & 63U);
+    }
 
     constexpr void set(ComponentIndex component) noexcept
     {
-        words[component >> 6U] |= std::uint64_t{1} << (component & 63U);
+        words[wordOf(component)] |= bitOf(component);
     }
 
     constexpr void clear(ComponentIndex component) noexcept
     {
-        words[component >> 6U] &= ~(std::uint64_t{1} << (component & 63U));
+        words[wordOf(component)] &= ~bitOf(component);
     }
 
     [[nodiscard]] constexpr bool has(ComponentIndex component) const noexcept
     {
-        return (words[component >> 6U] & (std::uint64_t{1} << (component & 63U))) != 0U;
+        return (words[wordOf(component)] & bitOf(component)) != 0U;
     }
 
     [[nodiscard]] constexpr bool empty() const noexcept
     {
-        return (words[0] | words[1]) == 0U;
+        for (std::uint32_t word = 0U; word < kComponentMaskWords; ++word)
+        {
+            if (words[word] != 0U)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     friend constexpr bool operator==(const ComponentMask&, const ComponentMask&) noexcept =
@@ -49,14 +71,27 @@ struct ComponentMask
 /* True when `mask` contains every bit of `required`. */
 constexpr bool containsAll(const ComponentMask& mask, const ComponentMask& required) noexcept
 {
-    return (mask.words[0] & required.words[0]) == required.words[0] &&
-           (mask.words[1] & required.words[1]) == required.words[1];
+    for (std::uint32_t word = 0U; word < kComponentMaskWords; ++word)
+    {
+        if ((mask.words[word] & required.words[word]) != required.words[word])
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 /* True when the two masks share at least one bit. */
 constexpr bool intersects(const ComponentMask& left, const ComponentMask& right) noexcept
 {
-    return ((left.words[0] & right.words[0]) | (left.words[1] & right.words[1])) != 0U;
+    for (std::uint32_t word = 0U; word < kComponentMaskWords; ++word)
+    {
+        if ((left.words[word] & right.words[word]) != 0U)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 /* True when `mask` contains no bit of `excluded`. */

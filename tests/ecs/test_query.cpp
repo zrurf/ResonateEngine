@@ -629,5 +629,6 @@ TEST_CASE("component masks address types past the first word", "[ecs]")
     CHECK(resonate::ecs::containsNone(mask, resonate::ecs::ComponentMask{}));
     CHECK_FALSE(resonate::ecs::containsAll(other, mask));
 
-    CHECK(resonate::ecs::kMaxComponentTypes == 128U);
+    CHECK(resonate::ecs::kMaxComponentTypes == 512U);
+    CHECK(resonate::ecs::kMaxComponentTypes == resonate::ecs::kComponentMaskWords * 64U);
 }
