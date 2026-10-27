@@ -709,6 +709,21 @@ TEST_CASE("ui editor: the editor document instantiates", "[ui][text]")
     resonate::ui::DisplayList list;
     REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
     CHECK(list.size() > 10U);
+
+    /* The panes follow the target: re-laying out at another size keeps the
+       inspector on the right edge and the status line at the bottom. */
+    REQUIRE(resonate::ui::layout(fixture.world, root, 1920.0F, 1200.0F));
+    const auto check_edge = [&](const char* key, bool along_x, float expected)
+    {
+        const Entity pane = resonate::ui::findByKey(fixture.world, root, key);
+        REQUIRE(pane.valid());
+        const resonate::ui::ComputedRect* rect = fixture.world.get<resonate::ui::ComputedRect>(pane);
+        REQUIRE(rect != nullptr);
+        const float edge = along_x ? rect->x + rect->width : rect->y + rect->height;
+        CHECK(std::fabs(edge - expected) < 0.5F);
+    };
+    check_edge("inspector", true, 1920.0F);
+    check_edge("status", false, 1200.0F);
 }
 
 TEST_CASE("ui gallery: the widget gallery instantiates", "[ui][text]")

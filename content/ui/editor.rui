@@ -7,9 +7,11 @@
   <Screen key="editor" name="Editor">
     <StyleSheet key="theme" src="content/ui/theme.rcss"/>
 
-    <Box key="backdrop" x="0" y="0" width="1600" height="900" color="0.05 0.055 0.075 1"/>
+    <Box key="backdrop" x="0" y="0" width="0" height="0"
+         anchor_min="0 0" anchor_max="1 1" color="0.05 0.055 0.075 1"/>
 
-    <Panel key="toolbar" class="header" x="0" y="0" width="1600" height="36"
+    <Panel key="toolbar" class="header" x="0" y="0" width="0" height="36"
+           anchor_min="0 0" anchor_max="1 0"
            direction="Row" align="Center" gap="4"
            padding_left="10" padding_top="6" padding_right="10" padding_bottom="6">
       <Label key="brand" width="180" height="24" text="Resonate Editor"
@@ -28,7 +30,8 @@
       </Button>
     </Panel>
 
-    <Panel key="scene-pane" class="panel" x="0" y="36" width="280" height="864"
+    <Panel key="scene-pane" class="panel" x="0" y="36" width="280" height="-52"
+           anchor_min="0 0" anchor_max="0 1"
            direction="Column" align="Stretch" gap="0">
       <Label key="scene-header" class="header" height="28" text="场景"
              font_size="13" font_weight="700" text_color="0.85 0.88 0.92 1"/>
@@ -68,11 +71,13 @@
       </Scroll>
     </Panel>
 
-    <Box key="viewport" x="280" y="36" width="1040" height="624" color="0 0 0 0"/>
+    <Box key="viewport" x="280" y="36" width="-560" height="-292"
+         anchor_min="0 0" anchor_max="1 1" color="0 0 0 0"/>
     <Label key="viewport-hint" x="296" y="52" width="220" height="20" text="视口"
            font_size="13" text_color="0.70 0.75 0.82 1"/>
 
-    <Panel key="console" class="panel" x="280" y="660" width="1040" height="240"
+    <Panel key="console" class="panel" x="280" y="-256" width="-560" height="240"
+           anchor_min="0 1" anchor_max="1 1"
            direction="Column" align="Stretch" gap="0">
       <Label key="console-header" class="header" height="28" text="控制台"
              font_size="13" font_weight="700" text_color="0.85 0.88 0.92 1"/>
@@ -80,7 +85,8 @@
              font_size="12" text_color="0.65 0.70 0.78 1"/>
     </Panel>
 
-    <Panel key="inspector" class="panel" x="1320" y="36" width="280" height="864"
+    <Panel key="inspector" class="panel" x="-280" y="36" width="280" height="-52"
+           anchor_min="1 0" anchor_max="1 1"
            direction="Column" align="Stretch" gap="8"
            padding_left="12" padding_top="0" padding_right="12" padding_bottom="12">
       <Label key="inspector-header" class="header" height="28" text="检查器"
@@ -129,7 +135,8 @@
       </Box>
     </Panel>
 
-    <Label key="status" x="0" y="884" width="1600" height="16" text="已选择 箱子 A"
+    <Label key="status" x="0" y="-16" width="0" height="16"
+           anchor_min="0 1" anchor_max="1 1" text="已选择 箱子 A"
            font_size="11" text_color="0.60 0.65 0.72 1"
            color="0.07 0.08 0.11 1"/>
   </Screen>
