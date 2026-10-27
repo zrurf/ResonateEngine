@@ -88,6 +88,10 @@ struct UiFrame
        that takes focus fills the editor once — a direct move between fields
        must not leave the previous field's buffer behind. */
     ecs::Entity editor_entity{};
+    /* The caret's blink phase and the field it belongs to; editing resets
+       both, so the caret never flickers away mid-keystroke. */
+    float blink_time = 0.0F;
+    ecs::Entity blink_focus{};
 
     static void invoke(void* context, ecs::World& world, ecs::CommandBuffer&, float delta_seconds)
     {
@@ -106,6 +110,7 @@ struct UiFrame
         {
             frame->transitions->advance(world, delta_seconds);
         }
+        bool text_activity = false;
         if (frame->input != nullptr)
         {
             ResonateVec2 position{};
@@ -151,6 +156,7 @@ struct UiFrame
                     if (frame->input->key_pressed(frame->input->self, caret_key.key) != 0)
                     {
                         (void)ui::moveCaret(world, frame->canvas, caret_key.motion);
+                        text_activity = true;
                     }
                 }
             }
@@ -214,12 +220,47 @@ struct UiFrame
                     frame->input->key_pressed(frame->input->self, RESONATE_KEY_DELETE) != 0;
                 if (typed_length > 0U || backspace || delete_forward)
                 {
+                    text_activity = true;
                     std::string error;
                     if (!ui::updateTextInput(world, frame->canvas, *frame->text,
                                              std::string_view(typed, typed_length), backspace,
                                              delete_forward, error))
                     {
                         std::fprintf(stderr, "resonate: ui text input: %s\n", error.c_str());
+                    }
+                }
+            }
+        }
+        /* The caret blinks while the field sits still and stays lit while it is
+           being edited; a pointer press also lights it. */
+        {
+            ui::CaretBlink* blink = world.get<ui::CaretBlink>(frame->canvas);
+            if (blink == nullptr)
+            {
+                blink = world.add(frame->canvas, ui::CaretBlink{});
+            }
+            if (blink != nullptr)
+            {
+                const ecs::Entity focused = ui::focusedEntity(world, frame->canvas);
+                bool reset = focused != frame->blink_focus;
+                frame->blink_focus = focused;
+                if (frame->input != nullptr &&
+                    frame->input->mouse_down(frame->input->self, RESONATE_MOUSE_LEFT) != 0)
+                {
+                    reset = true;
+                }
+                if (reset || text_activity)
+                {
+                    frame->blink_time = 0.0F;
+                    blink->visible = true;
+                }
+                else
+                {
+                    frame->blink_time += delta_seconds;
+                    if (frame->blink_time >= 0.53F)
+                    {
+                        frame->blink_time = 0.0F;
+                        blink->visible = !blink->visible;
                     }
                 }
             }

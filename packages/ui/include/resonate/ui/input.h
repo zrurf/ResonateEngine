@@ -28,6 +28,14 @@ struct DragState
     ecs::Entity scrubber{};
 };
 
+/* Whether the caret draws this instant: the UI frame flips it every half
+   second and resets it visible whenever the field changes, so a typing user
+   never sees the caret vanish. Runtime data, never authored. */
+struct CaretBlink
+{
+    bool visible = true;
+};
+
 /* Samples the pointer once per frame against the canvas' retained tree.
    `x` and `y` are in the same space layout works in: the target size divided
    by Canvas::scale, which is window points when the canvas scale is the display
@@ -64,6 +72,8 @@ namespace resonate::ecs
 /* DragState is runtime data (the input system's own bookkeeping), never
    authored, so it has no schema declaration and names itself here. */
 RESONATE_COMPONENT(resonate::ui::DragState, "resonate.ui.DragState");
+
+RESONATE_COMPONENT(resonate::ui::CaretBlink, "resonate.ui.CaretBlink");
 
 } // namespace resonate::ecs
 

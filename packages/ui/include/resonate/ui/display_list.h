@@ -117,6 +117,7 @@ class DisplayList
     std::vector<TextRun> texts_;
     std::vector<OrderEntry> order_;
     ecs::Entity focused_{};
+    ecs::Entity blink_source_{};
 };
 
 /* Fills `out` with the subtree rooted at `root` in paint order. The root may be

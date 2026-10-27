@@ -815,3 +815,48 @@ TEST_CASE("ui document: the selected row and widget text answer by key", "[ui][d
     REQUIRE(resonate::ui::setText(fixture.world, root, title, "已更新", error));
     CHECK(resonate::ui::widgetText(fixture.world, title) == "已更新");
 }
+
+TEST_CASE("ui text: the caret hides while the blink phase is off", "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="field" text="AB" font_size="20" width="120" height="32" color="0 0 0 0">
+      <Input/>
+    </Label>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+    const Entity field = resonate::hierarchy::children(fixture.world, root)[0];
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, 10.0F, 10.0F, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, 10.0F, 10.0F, false));
+
+    const auto carets = [&]
+    {
+        resonate::ui::DisplayList list;
+        REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+        std::size_t count = 0U;
+        for (const resonate::ui::Quad& quad : list.quads())
+        {
+            count += quad.texture == resonate::ui::kTextureWhite && quad.width == 1.0F ? 1U : 0U;
+        }
+        return count;
+    };
+    CHECK(carets() == 1U);
+
+    /* The blink phase hides it; the field itself stays focused. */
+    REQUIRE(fixture.world.add(root, resonate::ui::CaretBlink{false}) != nullptr);
+    CHECK(carets() == 0U);
+    resonate::ui::CaretBlink* blink = fixture.world.get<resonate::ui::CaretBlink>(root);
+    REQUIRE(blink != nullptr);
+    blink->visible = true;
+    CHECK(carets() == 1U);
+    (void)field;
+}

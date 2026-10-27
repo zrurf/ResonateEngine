@@ -8,6 +8,8 @@
 
 #include "glyph_run.h"
 #include "widget_shown.h"
+
+#include <resonate/ui/input.h>
 #include "resonate.ui/components.gen.h"
 
 namespace resonate::ui
@@ -351,7 +353,9 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                                       Vec2{glyph.u0, glyph.v0}, Vec2{glyph.u1, glyph.v1}});
                 quads_.back().clip = text_clip_rect;
             }
-            if (focused_ == entity)
+            const CaretBlink* blink = world.get<CaretBlink>(blink_source_);
+            const bool caret_visible = blink == nullptr || blink->visible;
+            if (focused_ == entity && caret_visible)
             {
                 /* The caret sits where the shaped run ends; an empty field
                    starts it at the alignment edge. The ink extents cannot
@@ -479,6 +483,7 @@ Span<const TextRun> DisplayList::texts() const noexcept
 bool buildDisplayList(ecs::World& world, ecs::Entity root, DisplayList& out)
 {
     out.clear();
+    out.blink_source_ = root;
     const PointerState* pointer = world.get<PointerState>(root);
     if (pointer != nullptr)
     {

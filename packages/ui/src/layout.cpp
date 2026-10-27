@@ -380,6 +380,7 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<Input>() != ecs::kInvalidComponent &&
            world.registerComponent<PointerState>() != ecs::kInvalidComponent &&
            world.registerComponent<DragState>() != ecs::kInvalidComponent &&
+           world.registerComponent<CaretBlink>() != ecs::kInvalidComponent &&
            world.registerComponent<StateStyles>() != ecs::kInvalidComponent &&
            world.registerComponent<StyleRef>() != ecs::kInvalidComponent;
 }
