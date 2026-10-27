@@ -1,0 +1,9 @@
+# The editor's own run configuration. Its document is the three-pane editor;
+# the game configuration stays untouched in resonate.toml.
+
+[resonate.window]
+width = 1600
+height = 900
+
+[resonate.ui]
+document = "content/ui/editor.rui"

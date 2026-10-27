@@ -657,3 +657,27 @@ TEST_CASE("ui text: the caret edits in the middle of the field", "[ui][text]")
     CHECK(content() == "XB");
     CHECK(caret() == 1U);
 }
+
+TEST_CASE("ui editor: the editor document instantiates", "[ui][text]")
+{
+    std::ifstream file(std::string(RESONATE_SOURCE_DIR) + "/content/ui/editor.rui");
+    REQUIRE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(source, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 1600.0F, 900.0F));
+
+    /* The panes, toolbar, tree rows and inspector all paint. */
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+    CHECK(list.size() > 10U);
+}

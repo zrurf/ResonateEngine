@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="utf-8"?>
+<document version="1" schemas="resonate.ui">
+  <!-- The editor's shell: a toolbar over a scene tree, a viewport that shows the
+       3D scene through it, and an inspector. Panes are laid out absolutely;
+       the viewport keeps a transparent background so the renderer's frame
+       shows through. -->
+  <Screen key="editor" name="Editor">
+    <StyleSheet key="styles">
+      <StyleRule selector=".panel">
+        <Background color="0.10 0.12 0.16 1"/>
+      </StyleRule>
+      <StyleRule selector=".header">
+        <Background color="0.14 0.17 0.22 1"/>
+      </StyleRule>
+      <StyleRule selector=".row">
+        <Background color="0.10 0.12 0.16 1"/>
+      </StyleRule>
+      <StyleRule selector=".row:hover">
+        <Background color="0.16 0.20 0.27 1"/>
+      </StyleRule>
+      <StyleRule selector=".row:pressed">
+        <Background color="0.08 0.10 0.14 1"/>
+      </StyleRule>
+      <StyleRule selector=".selected">
+        <Background color="0.20 0.42 0.90 1"/>
+      </StyleRule>
+      <StyleRule selector=".tool">
+        <Background color="0.14 0.17 0.22 1"/>
+      </StyleRule>
+      <StyleRule selector=".tool:hover">
+        <Background color="0.20 0.25 0.33 1"/>
+      </StyleRule>
+      <StyleRule selector=".field">
+        <Background color="0.07 0.08 0.11 1"/>
+      </StyleRule>
+      <StyleRule selector=".field:focus">
+        <Background color="0.16 0.22 0.34 1"/>
+      </StyleRule>
+    </StyleSheet>
+
+    <Box key="backdrop" x="0" y="0" width="1600" height="900" color="0.05 0.055 0.075 1"/>
+
+    <Panel key="toolbar" class="header" x="0" y="0" width="1600" height="36"
+           direction="Row" align="Center" gap="4"
+           padding_left="10" padding_top="6" padding_right="10" padding_bottom="6">
+      <Label key="brand" width="180" height="24" text="Resonate Editor"
+             font_size="15" font_weight="700" text_color="0.90 0.93 0.97 1"/>
+      <Button key="file" class="tool" width="64" height="24">
+        <Label key="file-label" x="10" y="2" width="44" height="20" text="文件"
+               font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+      </Button>
+      <Button key="edit" class="tool" width="64" height="24">
+        <Label key="edit-label" x="10" y="2" width="44" height="20" text="编辑"
+               font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+      </Button>
+      <Button key="view" class="tool" width="64" height="24">
+        <Label key="view-label" x="10" y="2" width="44" height="20" text="视图"
+               font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+      </Button>
+    </Panel>
+
+    <Panel key="scene-pane" class="panel" x="0" y="36" width="280" height="864"
+           direction="Column" align="Stretch" gap="0">
+      <Label key="scene-header" class="header" height="28" text="场景"
+             font_size="13" font_weight="700" text_color="0.85 0.88 0.92 1"/>
+      <Scroll key="scene-list" height="836" step="26"
+              direction="Column" align="Stretch" gap="0"
+              padding_left="0" padding_top="0" padding_right="0" padding_bottom="0">
+        <Button key="camera" class="row" height="26">
+          <Label key="camera-label" x="10" y="4" width="240" height="18" text="主相机"
+                 font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+        </Button>
+        <Button key="sun" class="row" height="26">
+          <Label key="sun-label" x="10" y="4" width="240" height="18" text="平行光"
+                 font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+        </Button>
+        <Button key="ground" class="row" height="26">
+          <Label key="ground-label" x="10" y="4" width="240" height="18" text="地面"
+                 font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+        </Button>
+        <Button key="crate-a" class="row selected" height="26">
+          <Label key="crate-a-label" x="10" y="4" width="240" height="18" text="箱子 A"
+                 font_size="13" text_color="1 1 1 1" color="0 0 0 0"/>
+        </Button>
+        <Button key="crate-b" class="row" height="26">
+          <Label key="crate-b-label" x="10" y="4" width="240" height="18" text="箱子 B"
+                 font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+        </Button>
+        <Button key="crate-c" class="row" height="26">
+          <Label key="crate-c-label" x="10" y="4" width="240" height="18" text="箱子 C"
+                 font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+        </Button>
+      </Scroll>
+    </Panel>
+
+    <Box key="viewport" x="280" y="36" width="1040" height="624" color="0 0 0 0"/>
+    <Label key="viewport-hint" x="296" y="52" width="220" height="20" text="视口"
+           font_size="13" text_color="0.70 0.75 0.82 1"/>
+
+    <Panel key="console" class="panel" x="280" y="660" width="1040" height="240"
+           direction="Column" align="Stretch" gap="0">
+      <Label key="console-header" class="header" height="28" text="控制台"
+             font_size="13" font_weight="700" text_color="0.85 0.88 0.92 1"/>
+      <Label key="console-line" height="22" text="就绪。"
+             font_size="12" text_color="0.65 0.70 0.78 1"/>
+    </Panel>
+
+    <Panel key="inspector" class="panel" x="1320" y="36" width="280" height="864"
+           direction="Column" align="Stretch" gap="8"
+           padding_left="12" padding_top="0" padding_right="12" padding_bottom="12">
+      <Label key="inspector-header" class="header" height="28" text="检查器"
+             font_size="13" font_weight="700" text_color="0.85 0.88 0.92 1"/>
+      <Label key="name-row" height="18" text="名称"
+             font_size="12" text_color="0.65 0.70 0.78 1"/>
+      <Label key="name-field" class="field" text="箱子 A" font_size="14" height="24">
+        <Input/>
+      </Label>
+      <Label key="position-row" height="18" text="位置"
+             font_size="12" text_color="0.65 0.70 0.78 1"/>
+      <Label key="position-x" class="field" text="0.0" font_size="14" height="22">
+        <Input/>
+      </Label>
+      <Label key="position-y" class="field" text="0.0" font_size="14" height="22">
+        <Input/>
+      </Label>
+      <Label key="position-z" class="field" text="0.0" font_size="14" height="22">
+        <Input/>
+      </Label>
+    </Panel>
+
+    <Label key="status" x="0" y="884" width="1600" height="16" text="已选择 箱子 A"
+           font_size="11" text_color="0.60 0.65 0.72 1"
+           color="0.07 0.08 0.11 1"/>
+  </Screen>
+</document>
