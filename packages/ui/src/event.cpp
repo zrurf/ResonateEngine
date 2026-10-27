@@ -156,6 +156,24 @@ bool dispatchEvent(ecs::World& world, ecs::Entity canvas, Event& event)
         }
     }
 
+    if (event.kind == EventKind::Click && count > 0U)
+    {
+        /* The click's default action: the nearest checkbox on the path, the
+           target first, toggles. A handler that consumed the click kept it. */
+        for (std::size_t index = count; index > 0U; --index)
+        {
+            const ecs::Entity entity = path[index - 1U];
+            Checkbox* checkbox = world.get<Checkbox>(entity);
+            if (checkbox == nullptr)
+            {
+                continue;
+            }
+            checkbox->checked = !checkbox->checked;
+            world.markChanged<Checkbox>(entity);
+            event.consumed = true;
+            return true;
+        }
+    }
     if (event.kind == EventKind::Wheel)
     {
         const float detents = event.wheel;

@@ -24,6 +24,7 @@ using resonate::ecs::World;
 using resonate::ui::Background;
 using resonate::ui::Input;
 using resonate::ui::PointerState;
+using resonate::ui::Slider;
 using resonate::ui::StateStyles;
 using resonate::ui::WidgetState;
 
@@ -249,4 +250,52 @@ TEST_CASE("ui input: focus survives leaving the widget", "[ui][input]")
     REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 180.0F, 180.0F, false));
     CHECK(fixture.world.get<Input>(second)->state == WidgetState::Focused);
     CHECK(near(fixture.red(second), 0.7F));
+}
+
+TEST_CASE("ui input: a slider jumps to a press and follows a drag", "[ui][input]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="slider" x="0" y="0" width="200" height="20">
+      <Input/>
+      <Slider min="0" max="100" value="0"/>
+    </Label>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 200.0F));
+    const Entity slider_entity = resonate::hierarchy::children(world, root)[0];
+
+    const auto value = [&]
+    {
+        const resonate::ui::Slider* slider = world.get<resonate::ui::Slider>(slider_entity);
+        REQUIRE(slider != nullptr);
+        return slider->value;
+    };
+
+    /* A press at a quarter of the track jumps the value there. */
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 10.0F, true));
+    CHECK(near(value(), 25.0F));
+
+    /* The gesture owns the drag: the value follows the pointer. */
+    REQUIRE(resonate::ui::updateInput(world, root, 150.0F, 10.0F, true));
+    CHECK(near(value(), 75.0F));
+    REQUIRE(resonate::ui::updateInput(world, root, 200.0F, 10.0F, true));
+    CHECK(near(value(), 100.0F));
+
+    /* The release neither activates the widget nor clicks it. */
+    REQUIRE(resonate::ui::updateInput(world, root, 200.0F, 10.0F, false));
+    const resonate::ui::Input* input = world.get<resonate::ui::Input>(slider_entity);
+    REQUIRE(input != nullptr);
+    CHECK_FALSE(input->activated);
+    CHECK(near(value(), 100.0F));
 }

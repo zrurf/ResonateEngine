@@ -1,0 +1,8 @@
+# The widget gallery's run configuration: a compact window on the shared theme.
+
+[resonate.window]
+width = 1000
+height = 720
+
+[resonate.ui]
+document = "content/ui/gallery.rui"

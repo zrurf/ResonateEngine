@@ -710,3 +710,28 @@ TEST_CASE("ui editor: the editor document instantiates", "[ui][text]")
     REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
     CHECK(list.size() > 10U);
 }
+
+TEST_CASE("ui gallery: the widget gallery instantiates", "[ui][text]")
+{
+    std::ifstream file(std::string(RESONATE_SOURCE_DIR) + "/content/ui/gallery.rui");
+    REQUIRE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(source, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    REQUIRE(loadShippedStylesheets(*document));
+
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 1000.0F, 720.0F));
+
+    /* The toggle glyphs and slider tracks paint on top of the panels. */
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+    CHECK(list.size() > 20U);
+}

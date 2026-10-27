@@ -228,7 +228,7 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
         world.markChanged<TextCaret>(entity);
     }
     const RectTransform* rect = world.get<RectTransform>(entity);
-    const float width = authoredWidth(rect);
+    const float width = std::fmax(0.0F, authoredWidth(rect) - text->padding_left);
     std::vector<detail::GlyphQuad> quads;
     float advance = 0.0F;
     if (!impl_->atlas.buildRun(utf8, text->font_size, static_cast<float>(text->font_weight), width,
@@ -468,10 +468,12 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
 
 bool placeCaretAt(ecs::World& world, ecs::Entity entity, float local_x)
 {
-    if (world.get<Text>(entity) == nullptr)
+    const Text* text = world.get<Text>(entity);
+    if (text == nullptr)
     {
         return false;
     }
+    local_x -= text->padding_left;
     const Glyphs* glyphs = world.get<Glyphs>(entity);
     if (glyphs == nullptr || !world.alive(glyphs->records))
     {

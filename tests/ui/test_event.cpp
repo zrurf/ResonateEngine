@@ -293,3 +293,64 @@ TEST_CASE("ui event: the wheel and a drag scroll over plain content", "[ui][even
     view = world.get<ScrollView>(list);
     CHECK(near(view->scroll, 44.0F));
 }
+
+TEST_CASE("ui event: a click toggles a checkbox and draws its box", "[ui][event]")
+{
+    const char * const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="check" class="check" x="0" y="0" width="160" height="24" text="可见"
+           font_size="13" padding_left="22">
+      <Input/>
+      <Checkbox/>
+    </Label>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 200.0F));
+    const Entity check = resonate::hierarchy::children(world, root)[0];
+
+    const resonate::ui::Checkbox* checkbox = world.get<resonate::ui::Checkbox>(check);
+    REQUIRE(checkbox != nullptr);
+    CHECK_FALSE(checkbox->checked);
+
+    /* An unchecked box is four outline quads. */
+    const auto box_quads = [&]
+    {
+        resonate::ui::DisplayList list;
+        REQUIRE(resonate::ui::buildDisplayList(world, root, list));
+        std::size_t count = 0;
+        for (const resonate::ui::Quad& quad : list.quads())
+        {
+            const bool inside_box = quad.x >= 4.0F && quad.x + quad.width <= 18.0F &&
+                                    quad.width <= 14.0F;
+            if (inside_box)
+            {
+                ++count;
+            }
+        }
+        return count;
+    };
+    CHECK(box_quads() == 4U);
+
+    /* A click toggles the state and the box grows its inner square. */
+    REQUIRE(resonate::ui::updateInput(world, root, 10.0F, 12.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 10.0F, 12.0F, false));
+    checkbox = world.get<resonate::ui::Checkbox>(check);
+    REQUIRE(checkbox != nullptr);
+    CHECK(checkbox->checked);
+    CHECK(box_quads() == 5U);
+
+    /* A second click toggles it back. */
+    REQUIRE(resonate::ui::updateInput(world, root, 10.0F, 12.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 10.0F, 12.0F, false));
+    CHECK_FALSE(world.get<resonate::ui::Checkbox>(check)->checked);
+}

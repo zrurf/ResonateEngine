@@ -40,6 +40,12 @@
     <value name="End"/>
   </enum>
 
+  <enum name="VAlign" width="u8">
+    <value name="Top"/>
+    <value name="Middle"/>
+    <value name="Bottom"/>
+  </enum>
+
   <enum name="WidgetState" width="u8">
     <value name="Normal"/>
     <value name="Hovered"/>
@@ -96,8 +102,14 @@
 
   <!-- A flat fill. The style compiler will resolve it from a class set; until
        then a widget carries its color directly. -->
-  <component name="Background" version="1">
+  <component name="Background" version="2">
     <field name="color" type="vec4" default="1 1 1 1"/>
+    <!-- An outline drawn inside the rect on all four edges; zero width draws
+         none. -->
+    <field name="border_color" type="vec4" default="0 0 0 0"/>
+    <field name="border_width" type="f32" default="0.0"/>
+
+    <migrate from="1" to="2"/>
   </component>
 
   <!-- A textured rectangle. `texture` names an engine texture id (0 = white,
@@ -114,13 +126,19 @@
   <!-- A shaped run: the UTF-8 bytes in a blob, the size in pixels and the
        color the coverage masks. The adapter fills it from the Label's text
        authoring property. -->
-  <component name="Text" version="1">
+  <component name="Text" version="2">
     <field name="content" type="blob"/>
     <field name="font_size" type="f32" default="24"/>
     <field name="font_weight" type="u16" default="400"/>
     <field name="text_color" type="vec4" default="1 1 1 1"/>
     <field name="align" type="TextAlign" default="Start"/>
     <field name="wrap" type="bool" default="true"/>
+    <!-- `v_align` places the shaped ink inside the rect; `padding_left` insets
+         the alignment span from the left edge. -->
+    <field name="v_align" type="VAlign" default="Top"/>
+    <field name="padding_left" type="f32" default="0.0"/>
+
+    <migrate from="1" to="2"/>
   </component>
 
   <!-- Compiled glyph quads in widget-local pixels: x/y/width/height plus the
@@ -201,6 +219,23 @@
     <field name="offset" type="u32"/>
   </component>
 
+  <!-- A checkbox: an Input widget that draws a box on its left and toggles on
+       click. The author reserves the box's room with Text padding_left. -->
+  <component name="Checkbox" version="1">
+    <field name="checked" type="bool" default="false"/>
+    <field name="color" type="vec4" default="1 1 1 1"/>
+  </component>
+
+  <!-- A horizontal slider: an Input widget whose value jumps to a press and
+       follows a drag between min and max. `color` tints the filled part and the
+       knob; the empty track is the same colour dimmed. -->
+  <component name="Slider" version="1">
+    <field name="value" type="f32" default="0.0"/>
+    <field name="min" type="f32" default="0.0"/>
+    <field name="max" type="f32" default="1.0"/>
+    <field name="color" type="vec4" default="1 1 1 1"/>
+  </component>
+
   <!-- State-style overrides, compiled at instantiation; a blob on the canvas. -->
   <component name="StateStyles" version="1" derived="true">
     <field name="records" type="blob"/>
@@ -222,7 +257,7 @@
   <node name="Panel" version="1">
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
-    <uses component="Background" expose="color"/>
+    <uses component="Background" expose="color border_color border_width"/>
     <uses component="LayoutGroup"
           expose="direction justify align gap padding_left padding_top padding_right padding_bottom"/>
     <field name="bind-x" type="binding"/>
@@ -248,8 +283,9 @@
   <node name="Label" version="1">
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
-    <uses component="Background" expose="color"/>
-    <uses component="Text" expose="font_size font_weight text_color align wrap"/>
+    <uses component="Background" expose="color border_color border_width"/>
+    <uses component="Text"
+          expose="font_size font_weight text_color align wrap v_align padding_left"/>
     <field name="text" type="string"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>
@@ -260,7 +296,7 @@
   <node name="Box" version="1">
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
-    <uses component="Background" expose="color"/>
+    <uses component="Background" expose="color border_color border_width"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>
     <field name="bind-width" type="binding"/>
@@ -283,7 +319,7 @@
   <node name="Button" version="1">
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
-    <uses component="Background" expose="color"/>
+    <uses component="Background" expose="color border_color border_width"/>
     <uses component="Input"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>

@@ -1,5 +1,6 @@
 #include <resonate/ui/input.h>
 
+#include <algorithm>
 #include <vector>
 
 #include <resonate/ui/event.h>
@@ -48,6 +49,39 @@ ecs::Entity interactiveAt(ecs::World& world, ecs::Entity canvas, float x, float 
         entity = hierarchy::parentOf(world, entity);
     }
     return ecs::Entity{};
+}
+
+/* The nearest widget on the hit chain that carries a Slider. */
+ecs::Entity sliderAt(ecs::World& world, ecs::Entity entity)
+{
+    for (std::uint32_t depth = 0U; entity.valid() && depth <= hierarchy::kMaxDepth; ++depth)
+    {
+        if (world.get<Slider>(entity) != nullptr)
+        {
+            return entity;
+        }
+        entity = hierarchy::parentOf(world, entity);
+    }
+    return {};
+}
+
+/* A press or drag at `x` sets the slider's value from its position. */
+void applySlider(ecs::World& world, ecs::Entity entity, float x)
+{
+    Slider* slider = world.get<Slider>(entity);
+    const ComputedRect* rect = world.get<ComputedRect>(entity);
+    if (slider == nullptr || rect == nullptr || !(rect->width > 0.0F) ||
+        !(slider->max > slider->min))
+    {
+        return;
+    }
+    const float fraction = std::clamp((x - rect->x) / rect->width, 0.0F, 1.0F);
+    const float value = slider->min + fraction * (slider->max - slider->min);
+    if (value != slider->value)
+    {
+        slider->value = value;
+        world.markChanged<Slider>(entity);
+    }
 }
 
 void collectFocusable(ecs::World& world, ecs::Entity entity, std::vector<ecs::Entity>& out,
@@ -163,6 +197,15 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                 (void)placeCaretAt(world, hover, x - rect->x);
             }
         }
+        /* A press on a slider jumps its value there and owns the gesture; the
+           release then neither activates nor clicks it. */
+        drag->slider = sliderAt(world, hover);
+        if (drag->slider.valid())
+        {
+            applySlider(world, drag->slider, x);
+            pointer->press = ecs::Entity{};
+            world.markChanged<PointerState>(canvas);
+        }
         drag->pressed = true;
         drag->dragging = false;
         drag->press_x = x;
@@ -178,6 +221,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         world.markChanged<PointerState>(canvas);
         drag->pressed = false;
         drag->dragging = false;
+        drag->slider = ecs::Entity{};
         const ecs::Entity press = pointer->press;
         Event released = move;
         released.kind = EventKind::PointerUp;
@@ -219,7 +263,11 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
     /* Once the finger travels past the slop the press becomes a drag: drop the
        pending press so the release neither activates nor clicks, and let the
        viewport chain under the finger follow it. */
-    if (drag->pressed && pointer->down)
+    if (drag->pressed && pointer->down && drag->slider.valid())
+    {
+        applySlider(world, drag->slider, x);
+    }
+    else if (drag->pressed && pointer->down)
     {
         if (!drag->dragging)
         {

@@ -74,6 +74,25 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         {
             quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, background->color});
         }
+        /* The outline is drawn inside the rect: top and bottom strips span the
+           full width, the side strips fill between them so no pixel blends
+           twice. */
+        if (background->border_width > 0.0F && background->border_color.w > 0.0F)
+        {
+            const float width = std::fmin(background->border_width,
+                                          std::fmin(rect->width, rect->height) * 0.5F);
+            if (width > 0.0F)
+            {
+                quads_.push_back(
+                    Quad{rect->x, rect->y, rect->width, width, background->border_color});
+                quads_.push_back(Quad{rect->x, rect->y + rect->height - width, rect->width, width,
+                                      background->border_color});
+                quads_.push_back(Quad{rect->x, rect->y + width, width, rect->height - 2.0F * width,
+                                      background->border_color});
+                quads_.push_back(Quad{rect->x + rect->width - width, rect->y + width, width,
+                                      rect->height - 2.0F * width, background->border_color});
+            }
+        }
     }
     if (const Image* image = world.get<Image>(entity))
     {
@@ -146,6 +165,69 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
             }
         }
     }
+    if (const Slider* slider = world.get<Slider>(entity))
+    {
+        const ComputedRect* rect = world.get<ComputedRect>(entity);
+        if (rect == nullptr)
+        {
+            return report(world, entity, "has Slider but no ComputedRect");
+        }
+        const float track_height = 4.0F;
+        const float track_y = rect->y + (rect->height - track_height) * 0.5F;
+        Vec4 track_color = slider->color;
+        track_color.w *= 0.35F;
+        float fraction = 0.0F;
+        if (slider->max > slider->min)
+        {
+            fraction = (slider->value - slider->min) / (slider->max - slider->min);
+            fraction = std::clamp(fraction, 0.0F, 1.0F);
+        }
+        if (visible(clip, rect->x, track_y, rect->width, track_height))
+        {
+            quads_.push_back(Quad{rect->x, track_y, rect->width, track_height, track_color});
+            if (fraction > 0.0F)
+            {
+                quads_.push_back(
+                    Quad{rect->x, track_y, rect->width * fraction, track_height, slider->color});
+            }
+        }
+        const float knob_width = 10.0F;
+        const float knob_height = 14.0F;
+        const float knob_x = std::clamp(rect->x + rect->width * fraction - knob_width * 0.5F,
+                                        rect->x, rect->x + rect->width - knob_width);
+        if (visible(clip, knob_x, rect->y, knob_width, knob_height))
+        {
+            quads_.push_back(Quad{knob_x, rect->y + (rect->height - knob_height) * 0.5F,
+                                  knob_width, knob_height, slider->color});
+        }
+    }
+    if (const Checkbox* checkbox = world.get<Checkbox>(entity))
+    {
+        const ComputedRect* rect = world.get<ComputedRect>(entity);
+        if (rect == nullptr)
+        {
+            return report(world, entity, "has Checkbox but no ComputedRect");
+        }
+        /* A 14 px box on the left, vertically centred; a checked box fills an
+           inset square. The author leaves room for it with padding_left. */
+        const float box = 14.0F;
+        const float left = rect->x + 4.0F;
+        const float top = rect->y + (rect->height - box) * 0.5F;
+        const float edge = 1.0F;
+        if (visible(clip, left, top, box, box))
+        {
+            quads_.push_back(Quad{left, top, box, edge, checkbox->color});
+            quads_.push_back(Quad{left, top + box - edge, box, edge, checkbox->color});
+            quads_.push_back(Quad{left, top + edge, edge, box - 2.0F * edge, checkbox->color});
+            quads_.push_back(
+                Quad{left + box - edge, top + edge, edge, box - 2.0F * edge, checkbox->color});
+        }
+        if (checkbox->checked && visible(clip, left, top, box, box))
+        {
+            quads_.push_back(Quad{left + 3.0F, top + 3.0F, box - 6.0F, box - 6.0F,
+                                  checkbox->color});
+        }
+    }
     if (const Text* text = world.get<Text>(entity))
     {
         const Glyphs* glyphs = world.get<Glyphs>(entity);
@@ -169,6 +251,26 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
             }
             const bool label_visible =
                 visible(clip, rect->x, rect->y, rect->width, rect->height);
+            /* The ink is placed inside the rect: horizontally the shaping
+               already applied the alignment span (padding_left shrank it), so
+               only the left inset shifts it; vertically the ink extents decide
+               middle and bottom. */
+            const float origin_x = rect->x + text->padding_left;
+            float origin_y = rect->y;
+            if (text->v_align != VAlign::Top && count > 0U)
+            {
+                float minimum_y = records[0].y;
+                float maximum_y = records[0].y + records[0].height;
+                for (std::size_t index = 1U; index < count; ++index)
+                {
+                    minimum_y = std::fmin(minimum_y, records[index].y);
+                    maximum_y = std::fmax(maximum_y, records[index].y + records[index].height);
+                }
+                const float ink_height = maximum_y - minimum_y;
+                origin_y += text->v_align == VAlign::Middle
+                                ? (rect->height - ink_height) * 0.5F - minimum_y
+                                : rect->height - ink_height - minimum_y;
+            }
             if (label_visible && world.alive(text->content) && count > 0U)
             {
                 TextRun run;
@@ -178,7 +280,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                 for (std::size_t index = 0; index < count; ++index)
                 {
                     const detail::GlyphQuad& glyph = records[index];
-                    run.glyphs.push_back(TextGlyph{rect->x + glyph.pen_x, rect->y + glyph.pen_y,
+                    run.glyphs.push_back(TextGlyph{origin_x + glyph.pen_x, origin_y + glyph.pen_y,
                                                    glyph.glyph_id, glyph.font_index});
                 }
                 texts_.push_back(std::move(run));
@@ -186,12 +288,12 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
             for (std::size_t index = 0; index < count; ++index)
             {
                 const detail::GlyphQuad& glyph = records[index];
-                if (!visible(clip, rect->x + glyph.x, rect->y + glyph.y, glyph.width,
+                if (!visible(clip, origin_x + glyph.x, origin_y + glyph.y, glyph.width,
                              glyph.height))
                 {
                     continue;
                 }
-                quads_.push_back(Quad{rect->x + glyph.x, rect->y + glyph.y, glyph.width,
+                quads_.push_back(Quad{origin_x + glyph.x, origin_y + glyph.y, glyph.width,
                                       glyph.height, text->text_color, kTextureFont,
                                       Vec2{glyph.u0, glyph.v0}, Vec2{glyph.u1, glyph.v1}});
             }
@@ -208,7 +310,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                 if (count > 0U)
                 {
                     const detail::GlyphQuad& last = records[count - 1U];
-                    caret_y = rect->y + last.y;
+                    caret_y = origin_y + last.y;
                     const TextMetrics* metrics = world.get<TextMetrics>(entity);
                     float offset_x = metrics != nullptr ? metrics->advance
                                                         : last.x + last.width + 1.0F;
@@ -227,7 +329,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                             }
                         }
                     }
-                    caret_x = rect->x + offset_x;
+                    caret_x = origin_x + offset_x;
                 }
                 else if (text->align == TextAlign::Center)
                 {

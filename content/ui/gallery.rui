@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<document version="1" schemas="resonate.ui">
+  <!-- The widget gallery: every primitive the editor is built from, on the
+       shared theme, so style and interaction changes can be judged visually. -->
+  <Screen key="gallery" name="Gallery">
+    <StyleSheet key="theme" src="content/ui/theme.rcss"/>
+
+    <Box key="backdrop" x="0" y="0" width="1000" height="720" color="0.0106 0.0106 0.0113 1"/>
+
+    <Label key="title" x="24" y="16" width="400" height="28" text="控件画廊"
+           font_size="18" font_weight="700" text_color="0.82 0.84 0.88 1"/>
+
+    <Panel key="buttons" class="panel" x="24" y="56" width="300" height="160"
+           direction="Column" align="Start" gap="10"
+           padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
+           border_color="0.0452 0.0452 0.0500 1" border_width="1">
+      <Label key="buttons-title" height="18" text="按钮" font_size="13"
+             font_weight="700" text_color="0.60 0.63 0.68 1"/>
+      <Button key="primary" class="tool" width="180" height="28">
+        <Label key="primary-label" width="180" height="28" text="主按钮" font_size="13"
+               v_align="Middle" align="Center" text_color="0.90 0.92 0.95 1" color="0 0 0 0"/>
+      </Button>
+      <Button key="secondary" class="row" width="180" height="28"
+              border_color="0.20 0.22 0.26 1" border_width="1">
+        <Label key="secondary-label" width="180" height="28" text="描边按钮" font_size="13"
+               v_align="Middle" align="Center" text_color="0.75 0.78 0.83 1" color="0 0 0 0"/>
+      </Button>
+    </Panel>
+
+    <Panel key="fields" class="panel" x="344" y="56" width="320" height="160"
+           direction="Column" align="Start" gap="10"
+           padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
+           border_color="0.0452 0.0452 0.0500 1" border_width="1">
+      <Label key="fields-title" height="18" text="输入框" font_size="13"
+             font_weight="700" text_color="0.60 0.63 0.68 1"/>
+      <Label key="name-field" class="field" text="箱子 A" font_size="14" width="280"
+             height="26" v_align="Middle" padding_left="8" border_color="0.10 0.11 0.13 1"
+             border_width="1">
+        <Input/>
+      </Label>
+      <Label key="empty-field" class="field" text="" font_size="14" width="280"
+             height="26" v_align="Middle" padding_left="8" border_color="0.10 0.11 0.13 1"
+             border_width="1">
+        <Input/>
+      </Label>
+    </Panel>
+
+    <Panel key="toggles" class="panel" x="684" y="56" width="292" height="160"
+           direction="Column" align="Start" gap="8"
+           padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
+           border_color="0.0452 0.0452 0.0500 1" border_width="1">
+      <Label key="toggles-title" height="18" text="开关" font_size="13"
+             font_weight="700" text_color="0.60 0.63 0.68 1"/>
+      <Label key="check-on" class="check" width="260" height="24" text="可见" font_size="13"
+             v_align="Middle" text_color="0.80 0.83 0.87 1">
+        <Input/>
+        <Checkbox checked="true"/>
+      </Label>
+      <Label key="check-off" class="check" width="260" height="24" text="投射阴影" font_size="13"
+             v_align="Middle" text_color="0.80 0.83 0.87 1">
+        <Input/>
+        <Checkbox/>
+      </Label>
+    </Panel>
+
+    <Panel key="sliders" class="panel" x="24" y="240" width="952" height="180"
+           direction="Column" align="Start" gap="12"
+           padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
+           border_color="0.0452 0.0452 0.0500 1" border_width="1">
+      <Label key="sliders-title" height="18" text="滑条" font_size="13"
+             font_weight="700" text_color="0.60 0.63 0.68 1"/>
+      <Label key="slider-a-row" width="920" height="22" text="不透明度" font_size="12"
+             v_align="Middle" text_color="0.65 0.68 0.73 1"/>
+      <Label key="slider-a" class="slider" width="920" height="20">
+        <Input/>
+        <Slider min="0" max="100" value="65"/>
+      </Label>
+      <Label key="slider-b-row" width="920" height="22" text="阴影强度" font_size="12"
+             v_align="Middle" text_color="0.65 0.68 0.73 1"/>
+      <Label key="slider-b" class="slider" width="920" height="20">
+        <Input/>
+        <Slider min="0" max="100" value="30"/>
+      </Label>
+    </Panel>
+
+    <Panel key="text-sample" class="panel" x="24" y="444" width="952" height="150"
+           direction="Column" align="Start" gap="6"
+           padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
+           border_color="0.0452 0.0452 0.0500 1" border_width="1">
+      <Label key="text-title" height="18" text="文本" font_size="13"
+             font_weight="700" text_color="0.60 0.63 0.68 1"/>
+      <Label key="text-left" width="920" height="22" text="左对齐 · 常规字重 400" font_size="14"
+             v_align="Middle" text_color="0.80 0.83 0.87 1"/>
+      <Label key="text-center" width="920" height="22" text="居中 · 中等字重 500" font_size="14"
+             font_weight="500" v_align="Middle" align="Center" text_color="0.80 0.83 0.87 1"/>
+      <Label key="text-right" width="920" height="22" text="右对齐 · 粗体 700" font_size="14"
+             font_weight="700" v_align="Middle" align="End" text_color="0.80 0.83 0.87 1"/>
+      <Label key="text-dim" width="920" height="22" text="次要文本 · 中英混排 Resonate Engine"
+             font_size="13" v_align="Middle" text_color="0.45 0.48 0.52 1"/>
+    </Panel>
+  </Screen>
+</document>

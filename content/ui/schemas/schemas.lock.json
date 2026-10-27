@@ -6,11 +6,13 @@
     {
       "name": "Background",
       "kind": "component",
-      "version": 1,
+      "version": 2,
       "shape": [
-        "component Background version 1",
-        "  size 16 align 4",
-        "  field color vec4 @0 size 16 default=1 1 1 1"
+        "component Background version 2",
+        "  size 36 align 4",
+        "  field color vec4 @0 size 16 default=1 1 1 1",
+        "  field border_color vec4 @16 size 16 default=0 0 0 0",
+        "  field border_width f32 @32 size 4 default=0"
       ]
     },
     {
@@ -34,7 +36,7 @@
         "  field bind-width binding",
         "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
-        "  uses Background expose color"
+        "  uses Background expose border_color border_width color"
       ]
     },
     {
@@ -48,7 +50,7 @@
         "  field bind-width binding",
         "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
-        "  uses Background expose color",
+        "  uses Background expose border_color border_width color",
         "  uses Input"
       ]
     },
@@ -62,6 +64,17 @@
         "  field mode resonate.ui.UpdateMode @0 size 1 default=Retained",
         "  field scale f32 @4 size 4 default=1",
         "  enum UpdateMode u8 values Retained=0, Immediate=1"
+      ]
+    },
+    {
+      "name": "Checkbox",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Checkbox version 1",
+        "  size 20 align 4",
+        "  field checked bool @0 size 1 default=false",
+        "  field color vec4 @4 size 16 default=1 1 1 1"
       ]
     },
     {
@@ -139,8 +152,8 @@
         "  field bind-width binding",
         "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
-        "  uses Background expose color",
-        "  uses Text expose align font_size font_weight text_color wrap"
+        "  uses Background expose border_color border_width color",
+        "  uses Text expose align font_size font_weight padding_left text_color v_align wrap"
       ]
     },
     {
@@ -174,7 +187,7 @@
         "  field bind-width binding",
         "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
-        "  uses Background expose color",
+        "  uses Background expose border_color border_width color",
         "  uses LayoutGroup expose align direction gap justify padding_bottom padding_left padding_right padding_top"
       ]
     },
@@ -265,6 +278,19 @@
       ]
     },
     {
+      "name": "Slider",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Slider version 1",
+        "  size 28 align 4",
+        "  field value f32 @0 size 4 default=0",
+        "  field min f32 @4 size 4 default=0",
+        "  field max f32 @8 size 4 default=1",
+        "  field color vec4 @12 size 16 default=1 1 1 1"
+      ]
+    },
+    {
       "name": "StateStyles",
       "kind": "component",
       "version": 1,
@@ -305,17 +331,20 @@
     {
       "name": "Text",
       "kind": "component",
-      "version": 1,
+      "version": 2,
       "shape": [
-        "component Text version 1",
-        "  size 36 align 4",
+        "component Text version 2",
+        "  size 40 align 4",
         "  field content blob @0 size 8",
         "  field font_size f32 @8 size 4 default=24",
         "  field font_weight u16 @12 size 2 default=400",
         "  field text_color vec4 @16 size 16 default=1 1 1 1",
         "  field align resonate.ui.TextAlign @32 size 1 default=Start",
         "  field wrap bool @33 size 1 default=true",
-        "  enum TextAlign u8 values Start=0, Center=1, End=2"
+        "  field v_align resonate.ui.VAlign @34 size 1 default=Top",
+        "  field padding_left f32 @36 size 4 default=0",
+        "  enum TextAlign u8 values Start=0, Center=1, End=2",
+        "  enum VAlign u8 values Top=0, Middle=1, Bottom=2"
       ]
     },
     {

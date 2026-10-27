@@ -418,6 +418,22 @@ bool applyBackground(const dom::Document& document, const dom::Component& compon
                 return false;
             }
         }
+        else if (name == "border_color")
+        {
+            if (!parseVec4(field.value, background.border_color))
+            {
+                error = "Background.border_color is not a vec4";
+                return false;
+            }
+        }
+        else if (name == "border_width")
+        {
+            if (!parseFloat(field.value, background.border_width) || background.border_width < 0.0F)
+            {
+                error = "Background.border_width is not a non-negative number";
+                return false;
+            }
+        }
         else
         {
             error = "unknown Background field '" + std::string(name) + "'";
@@ -672,6 +688,34 @@ bool applyText(const dom::Document& document, const dom::Component& component, T
             }
             text.wrap = field.value == "true";
         }
+        else if (name == "v_align")
+        {
+            if (field.value == "Top")
+            {
+                text.v_align = VAlign::Top;
+            }
+            else if (field.value == "Middle")
+            {
+                text.v_align = VAlign::Middle;
+            }
+            else if (field.value == "Bottom")
+            {
+                text.v_align = VAlign::Bottom;
+            }
+            else
+            {
+                error = "Text.v_align is Top, Middle or Bottom";
+                return false;
+            }
+        }
+        else if (name == "padding_left")
+        {
+            if (!parseFloat(field.value, text.padding_left) || text.padding_left < 0.0F)
+            {
+                error = "Text.padding_left is not a non-negative number";
+                return false;
+            }
+        }
         else if (name == "content")
         {
             error = "Text.content is written by the adapter and cannot be authored";
@@ -879,7 +923,10 @@ bool buildTextRun(World& world, const dom::Document& document, dom::NodeHandle n
     }
 
     const RectTransform* rect = world.get<RectTransform>(entity);
-    const float width = rect != nullptr ? rect->width : 0.0F;
+    /* The left padding shrinks the alignment span; the display list shifts the
+       ink by it. */
+    const float width =
+        rect != nullptr ? std::fmax(0.0F, rect->width - text->padding_left) : 0.0F;
     std::vector<detail::GlyphQuad> glyphs;
     std::string error;
     float advance = 0.0F;
