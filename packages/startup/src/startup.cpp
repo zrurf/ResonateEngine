@@ -829,12 +829,12 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
             std::vector<std::shared_ptr<const text::Font>> ui_fonts;
             std::vector<std::string> ui_font_paths;
             /* The chain pairs one face per weight bucket; shaping walks it per
-               code point and prefers the face matching the run's weight. */
+               code point and prefers the face matching the run's weight. One
+               family covers Latin and Chinese, so the design stays coherent. */
             for (const char* name :
-                 {"content/ui/fonts/ResonateSansSC-Regular.ttf",
-                  "content/ui/fonts/ResonateSansSC-Bold.ttf",
-                  "content/ui/fonts/ResonateSansLatin-Regular.ttf",
-                  "content/ui/fonts/ResonateSansLatin-Bold.ttf"})
+                 {"content/ui/fonts/NotoSansSC-Regular.ttf",
+                  "content/ui/fonts/NotoSansSC-Medium.ttf",
+                  "content/ui/fonts/NotoSansSC-Bold.ttf"})
             {
                 const std::string font_path = resolveContentFile(name, "RESONATE_FONT_PATH");
                 if (font_path.empty())

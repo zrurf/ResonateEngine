@@ -236,7 +236,8 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight,
        snaps so both render paths address the same face. Selection keeps the
        first covering face as the fallback and prefers one whose design weight
        matches the bucket. */
-    const std::uint32_t bucket = weight >= 600.0F ? 700U : 400U;
+    const std::uint32_t bucket =
+        weight >= 600.0F ? 700U : (weight >= 450.0F ? 500U : 400U);
     weight = static_cast<float>(bucket);
 
     struct RunGlyph

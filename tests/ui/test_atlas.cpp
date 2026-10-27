@@ -23,7 +23,7 @@ std::shared_ptr<const resonate::text::Font> loadFontFile(const char* name)
 
 std::shared_ptr<const resonate::text::Font> loadFont()
 {
-    return loadFontFile("ResonateSansSC-Regular.ttf");
+    return loadFontFile("NotoSansSC-Regular.ttf");
 }
 
 } // namespace
@@ -55,7 +55,12 @@ TEST_CASE("ui atlas: a full page grows and repacks its glyphs", "[ui][text][atla
 
 TEST_CASE("ui atlas: a missing glyph falls through the font chain", "[ui][text][atlas]")
 {
-    const auto latin = loadFontFile("ResonateSansLatin-Regular.ttf");
+    /* A fixture face that carries ASCII only, so the chain has to reach the
+       full face for the CJK glyph. */
+    std::string error;
+    const auto latin = resonate::text::Font::loadFile(
+        std::string(RESONATE_SOURCE_DIR) + "/tests/data/NotoTestLatin-Regular.ttf", error);
+    REQUIRE(latin != nullptr);
     const auto full = loadFont();
     CHECK(latin->glyphIndex(0x4F60U) == 0U);
     CHECK(full->glyphIndex(0x4F60U) != 0U);
@@ -63,10 +68,31 @@ TEST_CASE("ui atlas: a missing glyph falls through the font chain", "[ui][text][
     resonate::ui::detail::TextAtlasBuilder atlas({latin, full}, 128U);
     std::vector<resonate::ui::detail::GlyphQuad> quads;
     float advance = 0.0F;
-    std::string error;
+    error.clear();
     REQUIRE(atlas.buildRun("A\xE4\xBD\xA0", 24.0F, 400.0F, 0.0F, 0U, false, quads, advance,
                            error));
     REQUIRE(quads.size() == 2U);
     CHECK((quads[0].key >> 56U) == 0U);
     CHECK((quads[1].key >> 56U) == 1U);
+}
+
+TEST_CASE("ui atlas: the medium weight takes its own face", "[ui][text][atlas]")
+{
+    const auto regular = loadFontFile("NotoSansSC-Regular.ttf");
+    const auto medium = loadFontFile("NotoSansSC-Medium.ttf");
+    const auto bold = loadFontFile("NotoSansSC-Bold.ttf");
+    REQUIRE(medium->weight() == 500U);
+
+    resonate::ui::detail::TextAtlasBuilder atlas({regular, medium, bold}, 256U);
+    std::vector<resonate::ui::detail::GlyphQuad> quads;
+    float advance = 0.0F;
+    std::string error;
+    REQUIRE(atlas.buildRun("A", 24.0F, 500.0F, 0.0F, 0U, false, quads, advance, error));
+    REQUIRE(quads.size() == 1U);
+    CHECK(quads[0].font_index == 1U);
+
+    quads.clear();
+    REQUIRE(atlas.buildRun("A", 24.0F, 700.0F, 0.0F, 0U, false, quads, advance, error));
+    REQUIRE(quads.size() == 1U);
+    CHECK(quads[0].font_index == 2U);
 }

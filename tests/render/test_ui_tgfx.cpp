@@ -57,7 +57,7 @@ TEST_CASE("offscreen: the renderer draws the UI through tgfx", "[render][tgfx]")
     REQUIRE(device != nullptr);
 
     const std::string font_path =
-        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Regular.ttf";
+        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/NotoSansSC-Regular.ttf";
     std::string font_error;
     const auto font = resonate::text::Font::loadFile(font_path, font_error);
     REQUIRE(font != nullptr);
@@ -138,7 +138,7 @@ TEST_CASE("offscreen: the renderer draws a registered Picture image", "[render][
     REQUIRE(device != nullptr);
 
     const std::string font_path =
-        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Regular.ttf";
+        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/NotoSansSC-Regular.ttf";
     std::string font_error;
     const auto font = resonate::text::Font::loadFile(font_path, font_error);
     REQUIRE(font != nullptr);

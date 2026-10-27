@@ -51,7 +51,7 @@ bool near(float actual, float expected)
 std::shared_ptr<const resonate::text::Font> loadFont()
 {
     const std::string path =
-        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Regular.ttf";
+        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/NotoSansSC-Regular.ttf";
     std::string error;
     auto font = resonate::text::Font::loadFile(path, error);
     REQUIRE(font != nullptr);

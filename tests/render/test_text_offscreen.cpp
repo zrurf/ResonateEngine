@@ -57,7 +57,7 @@ TEST_CASE("offscreen: a UI Label draws its glyphs from the font atlas",
 
     std::string font_error;
     const auto font = resonate::text::Font::loadFile(
-        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Regular.ttf",
+        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/NotoSansSC-Regular.ttf",
         font_error);
     REQUIRE(font != nullptr);
 

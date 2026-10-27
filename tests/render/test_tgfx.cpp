@@ -39,7 +39,7 @@ TEST_CASE("tgfx shares the render device and draws shaped CJK text", "[render][t
 
     ResonateTgfxUi ui = nullptr;
     const std::string font_path =
-        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/ResonateSansSC-Regular.ttf";
+        std::string(RESONATE_SOURCE_DIR) + "/content/ui/fonts/NotoSansSC-Regular.ttf";
     std::string font_error;
     const auto font = resonate::text::Font::loadFile(font_path, font_error);
     REQUIRE(font != nullptr);
