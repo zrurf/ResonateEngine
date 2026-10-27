@@ -882,6 +882,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
     }
     render_system.setShadowSize(
         schema.readUInt(config.settings, "resonate.render.shadow-size", 0U));
+    render_system.setMsaa(schema.readUInt(config.settings, "resonate.render.msaa", 0U));
 
 #if defined(RESONATE_WITH_CSHARP)
     /* An optional managed assembly: its systems register alongside the C++

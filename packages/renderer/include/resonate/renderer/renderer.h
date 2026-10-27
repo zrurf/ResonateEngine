@@ -98,6 +98,10 @@ class RenderSystem
        (1024 on a mobile GPU, 2048 otherwise). Call before the frame loop. */
     void setShadowSize(std::uint32_t size);
 
+    /* The scene pass's sample count (2/4/8; zero or one renders 1x). Call
+       before the frame loop: the pass and its pipeline are built from it. */
+    void setMsaa(std::uint32_t samples);
+
     /* Registers the render components; idempotent, and a refusal (a name
        collision) answers false. */
     static bool registerComponents(ecs::World& world);

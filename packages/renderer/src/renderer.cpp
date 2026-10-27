@@ -456,6 +456,8 @@ struct RenderSystem::Impl
        and zero keep the tier's choice. */
     std::string hdr_format_name = "auto";
     std::uint32_t shadow_size = 0U;
+    /* The scene pass's sample count; zero renders 1x (no MSAA). */
+    std::uint32_t msaa = 0U;
     float render_scale = 1.0F;
     std::uint32_t render_width = 0U;
     std::uint32_t render_height = 0U;
@@ -1643,6 +1645,9 @@ bool RenderSystem::Impl::ensurePipelines()
         compat_tier ? RESONATE_RENDER_FORMAT_D16_UNORM : RESONATE_RENDER_FORMAT_D32_SFLOAT;
     scene_desc.color_format = hdr_format;
     scene_desc.depth_format = depth_format;
+    /* The scene pipeline rasterizes at the pass's sample count; a samples>1
+       pipeline is only valid inside a samples>1 pass. */
+    scene_desc.samples = msaa;
     scene_desc.depth_test = 1U;
     scene_desc.depth_write = 1U;
     if (device->create_pipeline(device->self, &scene_desc, &scene_pipeline) != RESONATE_OK)
@@ -2436,6 +2441,9 @@ void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
     pass.color = commands.image(hdr_resource);
     pass.clear_color = kClearColor;
     pass.depth = commands.image(depth_resource);
+    /* Above 1 the device renders on its transient MSAA attachments and
+       resolves into the HDR target; the declared depth is ignored there. */
+    pass.samples = msaa;
     /* Dynamic resolution: the scene renders into the scaled sub-rectangle; the
        tonemap reads exactly that window back up. */
     pass.viewport_width = render_width;
@@ -2878,6 +2886,11 @@ bool RenderSystem::setHdrFormat(const std::string& name, std::string& out_error)
 void RenderSystem::setShadowSize(std::uint32_t size)
 {
     impl_->shadow_size = size;
+}
+
+void RenderSystem::setMsaa(std::uint32_t samples)
+{
+    impl_->msaa = samples;
 }
 
 void RenderSystem::setUiImageTexture(std::uint32_t id, std::string path)

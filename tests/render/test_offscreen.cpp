@@ -126,6 +126,13 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
 
     resonate::renderer::RenderSystem render_system;
     render_system.setRegistry(host->capabilities());
+    /* The scene pass renders at 4x and resolves into the HDR target: the whole
+       graph runs on the device's transient MSAA path (R1). */
+    /* RESONATE_MSAA opts a run into the MSAA path for side-by-side runs; the
+       suite stays at 1x until the scene shading under a resolve is settled. */
+    const char* msaa_env = std::getenv("RESONATE_MSAA");
+    render_system.setMsaa(msaa_env != nullptr ? static_cast<std::uint32_t>(std::atoi(msaa_env))
+                                              : 0U);
     for (int frame = 0; frame < 4; ++frame)
     {
         render_system.run(world);
@@ -149,6 +156,43 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
     }
     REQUIRE(width == 320U);
     REQUIRE(height == 240U);
+
+    if (const char* dump = std::getenv("RESONATE_DUMP_OFFSCREEN"); dump != nullptr)
+    {
+        std::FILE* out = std::fopen(dump, "wb");
+        const std::uint32_t stride = (width * 3U + 3U) & ~3U;
+        const std::uint32_t size = 54U + stride * height;
+        unsigned char header[54] = {'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0,
+                                    40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        const auto put32 = [&header](std::size_t at, std::uint32_t value)
+        {
+            for (int byte = 0; byte < 4; ++byte)
+            {
+                header[at + static_cast<std::size_t>(byte)] =
+                    static_cast<unsigned char>((value >> (8U * byte)) & 0xFFU);
+            }
+        };
+        put32(2U, size);
+        put32(18U, width);
+        put32(22U, height);
+        put32(28U, 24U);
+        put32(34U, stride * height);
+        std::fwrite(header, 1, sizeof(header), out);
+        std::vector<unsigned char> row(stride, 0U);
+        for (std::uint32_t y = 0U; y < height; ++y)
+        {
+            const std::uint8_t* source =
+                pixels.data() + static_cast<std::size_t>(height - 1U - y) * width * 4U;
+            for (std::uint32_t x = 0U; x < width; ++x)
+            {
+                row[x * 3U] = source[x * 4U + 2U];
+                row[x * 3U + 1U] = source[x * 4U + 1U];
+                row[x * 3U + 2U] = source[x * 4U];
+            }
+            std::fwrite(row.data(), 1, row.size(), out);
+        }
+        std::fclose(out);
+    }
 
     const std::uint32_t sky = lumaAt(pixels, width, 4U, 4U);
     const std::uint32_t center = lumaAt(pixels, width, width / 2U, height / 2U);

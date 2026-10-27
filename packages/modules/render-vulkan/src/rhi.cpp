@@ -501,7 +501,12 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
        also serves every pass whose actions differ, at 1x (IGL I3). */
     /* A samples>1 pipeline is created against the multisampled shape - the
        device's transient color, its D32F depth and the 1x resolve. */
-    const uint32_t samples = 1U; // BISECT
+    /* A samples>1 pipeline is created against the multisampled shape: the
+       device's transient color, its D32F depth and the 1x resolve. */
+    const uint32_t samples =
+        desc.struct_size >= offsetof(ResonateRenderGraphicsPipelineDesc, samples) + sizeof(uint32_t)
+            ? desc.samples
+            : 1U;
     VkRenderPass pass = VK_NULL_HANDLE;
     if (renderPassFor(desc.color_format, desc.depth_format, samples, 0, &pass) != RESONATE_OK)
     {
