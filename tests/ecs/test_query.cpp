@@ -608,3 +608,26 @@ TEST_CASE("iterating one hundred thousand entities", "[ecs][query][benchmark]")
 
     delete jobs;
 }
+
+TEST_CASE("component masks address types past the first word", "[ecs]")
+{
+    resonate::ecs::ComponentMask mask;
+    mask.set(3);
+    mask.set(70);
+    mask.set(127);
+    CHECK(mask.words[0] == (std::uint64_t{1} << 3));
+    CHECK(mask.words[1] == ((std::uint64_t{1} << 6) | (std::uint64_t{1} << 63)));
+    CHECK(mask.has(3));
+    CHECK(mask.has(70));
+    CHECK(mask.has(127));
+    CHECK_FALSE(mask.has(64));
+
+    resonate::ecs::ComponentMask other;
+    other.set(70);
+    CHECK(resonate::ecs::intersects(mask, other));
+    CHECK(resonate::ecs::containsAll(mask, other));
+    CHECK(resonate::ecs::containsNone(mask, resonate::ecs::ComponentMask{}));
+    CHECK_FALSE(resonate::ecs::containsAll(other, mask));
+
+    CHECK(resonate::ecs::kMaxComponentTypes == 128U);
+}

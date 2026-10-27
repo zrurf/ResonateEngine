@@ -7,7 +7,6 @@ namespace resonate::ecs
 
 /* The storage's internals live in the package-private header. */
 using detail::Archetype;
-using detail::bitOf;
 using detail::Chunk;
 using detail::ComponentType;
 using detail::ComponentUniverse;
@@ -264,7 +263,7 @@ void* World::get(Entity entity, ComponentIndex component) noexcept
     {
         return nullptr;
     }
-    if ((location.chunk->archetype->mask & bitOf(component)) == 0U)
+    if (!location.chunk->archetype->mask.has(component))
     {
         return nullptr;
     }
@@ -287,7 +286,7 @@ bool World::has(Entity entity, ComponentIndex component) const noexcept
     {
         return false;
     }
-    return (location.chunk->archetype->mask & bitOf(component)) != 0U;
+    return location.chunk->archetype->mask.has(component);
 }
 
 void* World::add(Entity entity, ComponentIndex component, const void* value)
@@ -307,7 +306,7 @@ void* World::add(Entity entity, ComponentIndex component, const void* value)
     }
 
     Archetype& source = *record->chunk->archetype;
-    if ((source.mask & bitOf(component)) != 0U)
+    if (source.mask.has(component))
     {
         return impl_->componentPointer(record->chunk, record->row, component);
     }
@@ -347,7 +346,7 @@ bool World::remove(Entity entity, ComponentIndex component)
     }
 
     Archetype& source = *record->chunk->archetype;
-    if ((source.mask & bitOf(component)) == 0U)
+    if (!source.mask.has(component))
     {
         return false;
     }
@@ -511,7 +510,7 @@ void World::markChanged(Entity entity, ComponentIndex component)
     {
         return;
     }
-    if ((location.chunk->archetype->mask & bitOf(component)) == 0U)
+    if (!location.chunk->archetype->mask.has(component))
     {
         impl_->say(Report::Error, "markChanged: entity %u:%u has no component %u", entity.index,
                    entity.generation, component);
@@ -541,7 +540,7 @@ bool World::changedSince(Entity entity, ComponentIndex component, ChangeTick tic
     {
         return false;
     }
-    if ((location.chunk->archetype->mask & bitOf(component)) == 0U)
+    if (!location.chunk->archetype->mask.has(component))
     {
         return false;
     }

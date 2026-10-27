@@ -34,11 +34,6 @@ inline constexpr std::size_t kArchetypeWarnCount = 200U;
 using ArchetypeIndex = std::uint16_t;
 inline constexpr ArchetypeIndex kInvalidArchetype = 0xFFFF;
 
-inline constexpr std::uint64_t bitOf(ComponentIndex component) noexcept
-{
-    return std::uint64_t{1} << component;
-}
-
 inline std::uint32_t alignUp(std::uint32_t value, std::uint32_t alignment) noexcept
 {
     return (value + alignment - 1U) & ~(alignment - 1U);
@@ -121,7 +116,7 @@ struct Archetype
     }
 
     ArchetypeIndex index = kInvalidArchetype;
-    std::uint64_t mask = 0;
+    ComponentMask mask{};
     std::uint32_t componentCount = 0;
     std::uint32_t entityCount = 0;
 
@@ -263,7 +258,7 @@ struct WorldImpl
 
     /* Which process-wide component indices this world registered; a world only
        holds the types it asked for. */
-    std::uint64_t registeredMask = 0;
+    ComponentMask registeredMask{};
     std::uint32_t registeredCount = 0;
 
     /* Serializes the slot table: parallel recording reserves slots from many
@@ -435,7 +430,7 @@ struct WorldImpl
 
     bool registered(ComponentIndex component) const noexcept
     {
-        return component < kMaxComponentTypes && (registeredMask & bitOf(component)) != 0U;
+        return component < kMaxComponentTypes && registeredMask.has(component);
     }
 
     bool hasType(ComponentIndex component) const noexcept
@@ -471,7 +466,7 @@ struct WorldImpl
             return;
         }
         components[component] = ComponentInfo{name, size, alignment};
-        registeredMask |= bitOf(component);
+        registeredMask.set(component);
         ++registeredCount;
     }
 
@@ -496,7 +491,7 @@ struct WorldImpl
 
     /* --- archetypes --- */
 
-    Archetype* archetypeForMask(std::uint64_t mask)
+    Archetype* archetypeForMask(const ComponentMask& mask)
     {
         for (const std::unique_ptr<Archetype>& candidate : archetypes)
         {
@@ -506,11 +501,12 @@ struct WorldImpl
             }
         }
 
-        if ((mask & registeredMask) != mask)
+        if (!containsAll(registeredMask, mask))
         {
             say(World::Report::Error,
-                "archetype mask 0x%llx names a component this world did not register",
-                static_cast<unsigned long long>(mask));
+                "archetype mask 0x%llx%016llx names a component this world did not register",
+                static_cast<unsigned long long>(mask.words[1]),
+                static_cast<unsigned long long>(mask.words[0]));
             return nullptr;
         }
 
@@ -518,7 +514,7 @@ struct WorldImpl
         std::uint32_t count = 0;
         for (ComponentIndex component = 0; component < kMaxComponentTypes; ++component)
         {
-            if ((mask & bitOf(component)) != 0U)
+            if (mask.has(component))
             {
                 maskComponents[count++] = component;
             }
@@ -539,8 +535,9 @@ struct WorldImpl
         if (!computeLayout(sizes, alignments, maskComponents, count, archetype->layout))
         {
             say(World::Report::Error,
-                "component set 0x%llx leaves no room for one entity in a %u byte chunk",
-                static_cast<unsigned long long>(mask), kChunkBytes);
+                "component set 0x%llx%016llx leaves no room for one entity in a %u byte chunk",
+                static_cast<unsigned long long>(mask.words[1]),
+                static_cast<unsigned long long>(mask.words[0]), kChunkBytes);
             return nullptr;
         }
 
@@ -563,7 +560,7 @@ struct WorldImpl
 
     Archetype* emptyArchetype()
     {
-        return archetypeForMask(0);
+        return archetypeForMask(ComponentMask{});
     }
 
     Archetype* edge(Archetype& from, ComponentIndex component, bool adding)
@@ -574,8 +571,15 @@ struct WorldImpl
             return archetypes[cached].get();
         }
 
-        const std::uint64_t mask =
-            adding ? (from.mask | bitOf(component)) : (from.mask & ~bitOf(component));
+        ComponentMask mask = from.mask;
+        if (adding)
+        {
+            mask.set(component);
+        }
+        else
+        {
+            mask.clear(component);
+        }
         Archetype* target = archetypeForMask(mask);
         if (target == nullptr)
         {
@@ -872,7 +876,7 @@ struct WorldImpl
         for (std::uint32_t slot = 0; slot < source.componentCount; ++slot)
         {
             const ComponentIndex component = source.components[slot];
-            if ((target.mask & bitOf(component)) == 0U)
+            if (!target.mask.has(component))
             {
                 continue;
             }

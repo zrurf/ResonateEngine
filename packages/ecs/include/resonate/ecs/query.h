@@ -144,9 +144,9 @@ class Query
     World* world_ = nullptr;
     detail::WorldImpl* impl_ = nullptr;
 
-    std::uint64_t allMask_ = 0;
-    std::uint64_t anyMask_ = 0;
-    std::uint64_t noneMask_ = 0;
+    ComponentMask allMask_{};
+    ComponentMask anyMask_{};
+    ComponentMask noneMask_{};
 
     std::size_t examined_ = 0;
     std::vector<detail::Archetype*> matched_;

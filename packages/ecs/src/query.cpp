@@ -13,18 +13,18 @@ namespace
 using detail::Archetype;
 using detail::Chunk;
 
-bool matches(const Archetype& archetype, std::uint64_t all, std::uint64_t any,
-             std::uint64_t none) noexcept
+bool matches(const Archetype& archetype, const ComponentMask& all, const ComponentMask& any,
+             const ComponentMask& none) noexcept
 {
-    if ((archetype.mask & all) != all)
+    if (!containsAll(archetype.mask, all))
     {
         return false;
     }
-    if (any != 0U && (archetype.mask & any) == 0U)
+    if (!any.empty() && !intersects(archetype.mask, any))
     {
         return false;
     }
-    return (archetype.mask & none) == 0U;
+    return containsNone(archetype.mask, none);
 }
 
 /* The dense view of one chunk, over the caller's column buffer. */
@@ -85,7 +85,7 @@ Query::Query(World& world, const QueryDesc& desc) : world_(&world), impl_(world.
     valid_ = impl_ != nullptr;
 
     const Span<const ComponentIndex> lists[3] = {desc.all, desc.any, desc.none};
-    std::uint64_t* masks[3] = {&allMask_, &anyMask_, &noneMask_};
+    ComponentMask* masks[3] = {&allMask_, &anyMask_, &noneMask_};
     for (std::size_t list = 0; list < 3; ++list)
     {
         for (const ComponentIndex component : lists[list])
@@ -95,11 +95,11 @@ Query::Query(World& world, const QueryDesc& desc) : world_(&world), impl_(world.
                 valid_ = false;
                 continue;
             }
-            *masks[list] |= detail::bitOf(component);
+            masks[list]->set(component);
         }
     }
 
-    if (valid_ && (allMask_ & noneMask_) != 0U)
+    if (valid_ && intersects(allMask_, noneMask_))
     {
         impl_->say(World::Report::Warning,
                    "query asks for a component it also excludes; it can never match");
