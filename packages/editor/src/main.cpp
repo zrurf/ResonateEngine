@@ -7,8 +7,11 @@
 #include <vector>
 
 #include <resonate/ecs/world.h>
+#include <resonate/hierarchy/tree.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/text_runtime.h>
+
+#include "resonate.ui/components.gen.h"
 
 #ifdef RESONATE_PLATFORM_WINDOWS
 #    include <Windows.h>
@@ -39,6 +42,9 @@ struct EditorState
     };
     Scrub opacity{};
     Scrub roughness{};
+
+    /* The name field mirrors the selection; a user edit writes back. */
+    std::string mirrored_name;
 };
 
 /* A scrub value is mirrored into its label only when it changes. */
@@ -68,6 +74,36 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     mirrorScrub(state->canvas, world, state->opacity);
     mirrorScrub(state->canvas, world, state->roughness);
     const Entity selected = resonate::ui::selectedChild(world, state->scene_list);
+
+    /* The name field edits the selected row's caption: what the user typed
+       lands on the row, while a mirror echo is left alone. */
+    if (selected.valid())
+    {
+        const std::string field_text = resonate::ui::widgetText(world, state->name_field);
+        if (field_text != state->mirrored_name)
+        {
+            Entity caption;
+            for (const Entity child : resonate::hierarchy::children(world, selected))
+            {
+                if (world.get<resonate::ui::Text>(child) != nullptr)
+                {
+                    caption = child;
+                    break;
+                }
+            }
+            if (caption.valid())
+            {
+                std::string error;
+                if (resonate::ui::setText(world, state->canvas, caption, field_text, error))
+                {
+                    state->mirrored_name = field_text;
+                    (void)resonate::ui::setText(world, state->canvas, state->status,
+                                                "已选择 " + field_text, error);
+                }
+            }
+        }
+    }
+
     if (selected == state->shown_row)
     {
         return;
@@ -78,11 +114,13 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         const std::string name = resonate::ui::widgetText(world, selected);
         (void)resonate::ui::setText(world, state->canvas, state->name_field, name, error);
+        state->mirrored_name = name;
         (void)resonate::ui::setText(world, state->canvas, state->status, "已选择 " + name, error);
     }
     else
     {
         (void)resonate::ui::setText(world, state->canvas, state->name_field, "", error);
+        state->mirrored_name.clear();
         (void)resonate::ui::setText(world, state->canvas, state->status, "未选择", error);
     }
 }
