@@ -51,6 +51,7 @@ struct EditorState
 
     /* The boxes the opacity scrub dims: one query, built on ready. */
     resonate::ecs::Query boxes{};
+    std::vector<std::pair<resonate::ecs::Entity, resonate::ecs::Entity>> box_rows; /* tree row -> box */
 
     /* The console mirrors the world's report stream: a ring of the latest
        lines, flushed into the label when a new one arrives. */
@@ -99,6 +100,79 @@ void applyOpacity(EditorState& state, resonate::ecs::World& world)
             }
         },
         &context);
+}
+
+/* One scene-tree row cloned from an authored template: the widgets and their
+   compiled styles copy, the caption reshapes through the canvas runtime. */
+resonate::ecs::Entity cloneRow(EditorState& state, resonate::ecs::World& world, resonate::ecs::Entity template_row,
+                     resonate::ecs::Entity list, const std::string& name)
+{
+    resonate::ecs::CommandBuffer commands{world};
+    const resonate::ecs::Entity row = world.create();
+    if (const auto* transform = world.get<resonate::ui::RectTransform>(template_row))
+    {
+        world.add(row, *transform);
+    }
+    if (const auto* background = world.get<resonate::ui::Background>(template_row))
+    {
+        world.add(row, *background);
+    }
+    if (const auto* input = world.get<resonate::ui::Input>(template_row))
+    {
+        world.add(row, *input);
+    }
+    if (const auto* selectable = world.get<resonate::ui::Selectable>(template_row))
+    {
+        world.add(row, resonate::ui::Selectable{false, selectable->color});
+    }
+    if (const auto* styles = world.get<resonate::ui::StyleRef>(template_row))
+    {
+        world.add(row, *styles);
+    }
+    if (const auto* state_styles = world.get<resonate::ui::StateStyles>(template_row))
+    {
+        if (world.alive(state_styles->records))
+        {
+            const void* bytes = world.blobData(state_styles->records);
+            const std::uint64_t size = world.blobSize(state_styles->records);
+            if (bytes != nullptr && size > 0U)
+            {
+                world.createBlob(row, size, bytes);
+            }
+        }
+    }
+    resonate::hierarchy::setParent(commands, row, list);
+
+    /* The caption: the template's first Text descendant, reshaped to `name`. */
+    std::vector<resonate::ecs::Entity> stack{template_row};
+    while (!stack.empty())
+    {
+        const resonate::ecs::Entity current = stack.front();
+        stack.erase(stack.begin());
+        if (resonate::ui::Text* text = world.get<resonate::ui::Text>(current);
+            text != nullptr && current != template_row)
+        {
+            const resonate::ecs::Entity caption = world.create();
+            resonate::ui::Text shaped = *text;
+            shaped.content = {};
+            world.add(caption, shaped);
+            if (const auto* transform = world.get<resonate::ui::RectTransform>(current))
+            {
+                world.add(caption, *transform);
+            }
+            std::string error;
+            (void)resonate::ui::setText(world, state.canvas, caption, name, error);
+            resonate::hierarchy::setParent(commands, caption, row);
+            world.play(commands);
+            return row;
+        }
+        for (const resonate::ecs::Entity child : resonate::hierarchy::children(world, current))
+        {
+            stack.push_back(child);
+        }
+    }
+    world.play(commands);
+    return row;
 }
 
 /* The world's report sink: the console's ring keeps the latest lines. */
@@ -225,6 +299,36 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
         resonate::ecs::ComponentTraits<resonate::render::Material>::index};
     desc.all = resonate::Span<const resonate::ecs::ComponentIndex>(all, 2U);
     state->boxes = world.createQuery(desc);
+
+    /* The scene tree lists the real scene: one cloned row per box. */
+    const resonate::ecs::Entity template_row =
+        resonate::ui::findByKey(world, canvas, "crate-a");
+    const resonate::ecs::Entity scene_list = state->scene_list;
+    if (template_row.valid() && scene_list.valid())
+    {
+        struct ListContext
+        {
+            EditorState* state;
+            resonate::ecs::World* world;
+            resonate::ecs::Entity template_row;
+            resonate::ecs::Entity list;
+            std::uint32_t index = 0U;
+        } list_context{state, &world, template_row, scene_list, 0U};
+        state->boxes.forEachChunk(
+            [](void* context, resonate::ecs::ChunkView view)
+            {
+                auto* list = static_cast<ListContext*>(context);
+                for (std::uint32_t row = 0; row < view.count; ++row)
+                {
+                    ++list->index;
+                    const std::string name = "箱子 " + std::to_string(list->index);
+                    const resonate::ecs::Entity tree_row = cloneRow(
+                        *list->state, *list->world, list->template_row, list->list, name);
+                    list->state->box_rows.emplace_back(tree_row, view.entities[row]);
+                }
+            },
+            &list_context);
+    }
 }
 
 /* The editor runs its own configuration; a command line that names one keeps
