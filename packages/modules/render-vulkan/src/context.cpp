@@ -217,6 +217,7 @@ Context::~Context()
         }
         pass_cache_.clear();
         framebuffer_cache_.clear();
+        discardMsaa();
         if (pipeline_layout_ != VK_NULL_HANDLE)
         {
             vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
@@ -1632,6 +1633,7 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
         views_.push_back(handle);
     }
     swapchain_images_ = images;
+    discardMsaa();
 
     if (renderPassFor(RESONATE_RENDER_FORMAT_UNKNOWN, RESONATE_RENDER_FORMAT_UNKNOWN, 1, 0,
                       &render_pass_) != RESONATE_OK)
@@ -1684,6 +1686,7 @@ ResonateStatus Context::createOffscreen(uint32_t width, uint32_t height)
     extent_ = VkExtent2D{width, height};
     surface_format_.format = VK_FORMAT_R8G8B8A8_SRGB;
     surface_format_.colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    discardMsaa();
 
     /* The image index shares the frame slot: the fence waited at begin_frame
        then guarantees the image is free as well. */
@@ -1856,8 +1859,9 @@ VkFormat Context::formatOf(ResonateRenderFormat format) const
 }
 
 /* The pass's sample count: 0 and 1 read as 1x; anything the format survey
-   never answered falls back to 1x rather than failing the pass. */
-static VkSampleCountFlagBits sampleCountOf(uint32_t samples)
+   never answered falls back to 1x rather than failing the pass. Shared with
+   the pipeline path in rhi.cpp. */
+VkSampleCountFlagBits sampleCountOf(uint32_t samples)
 {
     switch (samples)
     {
@@ -1886,8 +1890,10 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
     }
 
     /* Depth-only: color NONE and a depth format make a pass with no color
-       attachment (shadow maps). */
+       attachment (shadow maps). Shadow passes stay 1x: their depth is an
+       explicit persistent image, not a transient. */
     const bool colorless = color == RESONATE_RENDER_FORMAT_NONE;
+    const bool multisampled = samples > VK_SAMPLE_COUNT_1_BIT && !colorless;
     /* The pass's attachments all render at one sample count; the actions pick
        bits of the ops mask. What an attachment loads and stores is outside
        render-pass compatibility, so pipelines may share a pass whose actions
@@ -1898,15 +1904,59 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
     const bool depth_loads = (ops & 4U) != 0U;
     const bool depth_transient = (ops & 8U) != 0U;
 
-    VkAttachmentDescription attachments[2] = {};
+    /* A multisampled pass is the Filament shape: the device's transient color
+       at `samples` stores nothing; the 1x color target is the resolve and
+       stores; the D32F depth clears and stores nothing. The ops mask does not
+       reach this shape. */
+    VkAttachmentDescription attachments[3] = {};
     VkAttachmentReference color_reference{};
     color_reference.attachment = 0;
     color_reference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     /* Outside the conditional: the subpass points at it until the render pass
        is created. */
     VkAttachmentReference depth_reference{};
+    VkAttachmentReference resolve_reference{};
+    resolve_reference.attachment = 1;
+    resolve_reference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    if (!colorless)
+    if (multisampled)
+    {
+        attachments[0].format = formatOf(color);
+        attachments[0].samples = sample_flags;
+        /* The engine's contract is that a pass clears, so the transient color
+           clears too: a pass that draws nothing still resolves the clear. */
+        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        attachments[1].format = formatOf(color);
+        attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        /* Only a swapchain image ends a pass in the present layout; an
+           offscreen target stays a color attachment, which is where readback
+           picks it up. */
+        attachments[1].finalLayout = color == RESONATE_RENDER_FORMAT_UNKNOWN && !offscreen_
+                                         ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+                                         : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        attachments[2].format = VK_FORMAT_D32_SFLOAT;
+        attachments[2].samples = sample_flags;
+        attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[2].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[2].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+
+    if (!colorless && !multisampled)
     {
         attachments[0].format = formatOf(color);
         attachments[0].samples = sample_flags;
@@ -1932,10 +1982,21 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
     {
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &color_reference;
-        attachment_count = 1;
+        if (multisampled)
+        {
+            subpass.pResolveAttachments = &resolve_reference;
+        }
+        attachment_count = multisampled ? 2U : 1U;
     }
 
-    if (depth != RESONATE_RENDER_FORMAT_UNKNOWN)
+    if (multisampled)
+    {
+        depth_reference.attachment = 2;
+        depth_reference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        subpass.pDepthStencilAttachment = &depth_reference;
+        attachment_count = 3;
+    }
+    else if (depth != RESONATE_RENDER_FORMAT_UNKNOWN)
     {
         depth_reference.attachment = colorless ? 0 : 1;
         depth_reference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -2343,6 +2404,111 @@ ResonateStatus Context::beginFrame()
     return RESONATE_OK;
 }
 
+/* The transient MSAA target for a samples>1 pass: color at the target's
+   format, depth at D32F, both TRANSIENT so the allocator can tile them away. */
+Context::MsaaTarget& Context::ensureMsaa(uint32_t width, uint32_t height,
+                                         ResonateRenderFormat color, uint32_t samples)
+{
+    const uint64_t key = static_cast<uint64_t>(width) | (static_cast<uint64_t>(height) << 16) |
+                         (static_cast<uint64_t>(color) << 32) |
+                         (static_cast<uint64_t>(sampleCountOf(samples)) << 40);
+    const auto found = msaa_cache_.find(key);
+    if (found != msaa_cache_.end())
+    {
+        return found->second;
+    }
+
+    MsaaTarget target;
+    target.width = width;
+    target.height = height;
+
+    VkImageCreateInfo image{};
+    image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image.imageType = VK_IMAGE_TYPE_2D;
+    image.format = formatOf(color);
+    image.extent = VkExtent3D{width, height, 1U};
+    image.mipLevels = 1U;
+    image.arrayLayers = 1U;
+    image.samples = sampleCountOf(samples);
+    image.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+    image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VmaAllocationCreateInfo allocation{};
+    allocation.usage = VMA_MEMORY_USAGE_AUTO;
+    allocation.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+    if (vmaCreateImage(allocator_, &image, &allocation, &target.color, &target.color_allocation,
+                       nullptr) != VK_SUCCESS)
+    {
+        target.color = VK_NULL_HANDLE;
+    }
+    else
+    {
+        VkImageViewCreateInfo view{};
+        view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view.image = target.color;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = image.format;
+        view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        view.subresourceRange.levelCount = 1U;
+        view.subresourceRange.layerCount = 1U;
+        if (vkCreateImageView(device_, &view, nullptr, &target.color_view) != VK_SUCCESS)
+        {
+            target.color_view = VK_NULL_HANDLE;
+        }
+    }
+
+    image.format = VK_FORMAT_D32_SFLOAT;
+    image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                  VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+    if (vmaCreateImage(allocator_, &image, &allocation, &target.depth, &target.depth_allocation,
+                       nullptr) != VK_SUCCESS)
+    {
+        target.depth = VK_NULL_HANDLE;
+    }
+    else
+    {
+        VkImageViewCreateInfo view{};
+        view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view.image = target.depth;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = image.format;
+        view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        view.subresourceRange.levelCount = 1U;
+        view.subresourceRange.layerCount = 1U;
+        if (vkCreateImageView(device_, &view, nullptr, &target.depth_view) != VK_SUCCESS)
+        {
+            target.depth_view = VK_NULL_HANDLE;
+        }
+    }
+
+    return msaa_cache_.emplace(key, target).first->second;
+}
+
+void Context::discardMsaa()
+{
+    for (auto& entry : msaa_cache_)
+    {
+        MsaaTarget& target = entry.second;
+        if (target.color_view != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(device_, target.color_view, nullptr);
+        }
+        if (target.depth_view != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(device_, target.depth_view, nullptr);
+        }
+        if (target.color != VK_NULL_HANDLE)
+        {
+            vmaDestroyImage(allocator_, target.color, target.color_allocation);
+        }
+        if (target.depth != VK_NULL_HANDLE)
+        {
+            vmaDestroyImage(allocator_, target.depth, target.depth_allocation);
+        }
+    }
+    msaa_cache_.clear();
+}
+
 ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
 {
     if (!frame_open_ || pass_open_)
@@ -2353,17 +2519,18 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
     const bool colorless =
         desc.struct_size >= offsetof(ResonateRenderPassDesc, colorless) + sizeof(uint32_t) &&
         desc.colorless != 0U;
-    /* The pass tails: a sample count other than 1 needs a multisampled target,
-       which the renderer creates with R1's image work; the actions are usable
-       now. Zero reads as the 1x clear-and-store default. */
+    /* The pass tails: a sample count above 1 runs the pass on the device's
+       transient MSAA attachments and resolves into the color target; the
+       action bits shape the 1x path. Zero reads as 1x. */
     const uint32_t samples =
         desc.struct_size >= offsetof(ResonateRenderPassDesc, samples) + sizeof(uint32_t)
-            ? desc.samples
-            : 0U;
+            ? static_cast<uint32_t>(sampleCountOf(desc.samples))
+            : 1U;
     const uint32_t ops =
         desc.struct_size >= offsetof(ResonateRenderPassDesc, attachment_ops) + sizeof(uint32_t)
             ? desc.attachment_ops
             : 0U;
+    const bool multisampled = samples > 1U && !colorless;
     /* The framebuffer must be rebuilt when the pass identity changes, because
        a VkFramebuffer is created against one VkRenderPass. */
     const uint64_t pass_identity = static_cast<uint64_t>(samples) | (static_cast<uint64_t>(ops) << 8);
@@ -2379,7 +2546,54 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
         {
             return RESONATE_E_INTERNAL;
         }
-        framebuffer = framebuffers_[image_index_];
+        if (!multisampled)
+        {
+            framebuffer = framebuffers_[image_index_];
+        }
+        else
+        {
+            /* The 1x canvas image is the resolve; the transient attachments
+               come from the device. One framebuffer per swapchain image. */
+            const MsaaTarget& msaa = ensureMsaa(extent_.width, extent_.height,
+                                                RESONATE_RENDER_FORMAT_UNKNOWN, samples);
+            if (msaa.color_view == VK_NULL_HANDLE || msaa.depth_view == VK_NULL_HANDLE)
+            {
+                return RESONATE_E_INTERNAL;
+            }
+            const uint64_t identity = pass_identity |
+                                      (static_cast<uint64_t>(extent_.width) << 16) |
+                                      (static_cast<uint64_t>(extent_.height) << 32) |
+                                      (static_cast<uint64_t>(image_index_) << 48);
+            const std::pair<uint64_t, uint64_t> key{0x01ULL << 62, identity};
+            const auto found = framebuffer_cache_.find(key);
+            if (found != framebuffer_cache_.end())
+            {
+                framebuffer = found->second;
+            }
+            else
+            {
+                /* The render pass reads color-at-samples, the 1x resolve, the
+                   device's depth - in that attachment order. */
+                VkImageView attachments[3] = {msaa.color_view, views_[image_index_],
+                                              msaa.depth_view};
+                VkFramebufferCreateInfo created{};
+                created.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                created.renderPass = pass;
+                created.attachmentCount = 3U;
+                created.pAttachments = attachments;
+                created.width = extent_.width;
+                created.height = extent_.height;
+                created.layers = 1U;
+                VkFramebuffer handle = VK_NULL_HANDLE;
+                if (vkCreateFramebuffer(device_, &created, nullptr, &handle) != VK_SUCCESS)
+                {
+                    note(device_failed_, "framebuffer creation failed");
+                    return RESONATE_E_INTERNAL;
+                }
+                framebuffer_cache_.emplace(key, handle);
+                framebuffer = handle;
+            }
+        }
         pass_extent = extent_;
     }
     else if (colorless)
@@ -2456,11 +2670,31 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
             return RESONATE_E_INTERNAL;
         }
 
-        VkImageView attachments[2] = {image->view, depth != nullptr ? depth->view : VK_NULL_HANDLE};
-        const uint32_t attachment_count = depth != nullptr ? 2U : 1U;
+        /* On a multisampled pass the device's transient attachments render and
+           the 1x image resolves; the explicit depth is ignored. */
+        VkImageView attachments[3] = {image->view,
+                                      depth != nullptr ? depth->view : VK_NULL_HANDLE,
+                                      VK_NULL_HANDLE};
+        uint32_t attachment_count = depth != nullptr ? 2U : 1U;
+        if (multisampled)
+        {
+            const MsaaTarget& msaa =
+                ensureMsaa(image->width, image->height, image->format_id, samples);
+            if (msaa.color_view == VK_NULL_HANDLE || msaa.depth_view == VK_NULL_HANDLE)
+            {
+                return RESONATE_E_INTERNAL;
+            }
+            attachments[0] = msaa.color_view;
+            attachments[1] = image->view;
+            attachments[2] = msaa.depth_view;
+            attachment_count = 3U;
+        }
+        const uint64_t identity =
+            pass_identity | (static_cast<uint64_t>(image->width) << 16) |
+            (static_cast<uint64_t>(image->height) << 32);
         const std::pair<uint64_t, uint64_t> key{
             static_cast<uint64_t>(desc.color.value) | (static_cast<uint64_t>(desc.depth.value) << 32),
-            pass_identity};
+            identity};
         const auto found = framebuffer_cache_.find(key);
         if (found != framebuffer_cache_.end())
         {
@@ -2503,12 +2737,20 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
         }
     }
     /* One clear value per cleared attachment: a depth-only pass's sole
-       attachment is the depth image, a color pass's second is depth. */
-    VkClearValue clears[2] = {};
+       attachment is the depth image, a color pass's second is depth, and a
+       multisampled pass clears only its device-owned depth at attachment 2. */
+    VkClearValue clears[3] = {};
     uint32_t clear_count = 1U;
     if (colorless)
     {
         clears[0].depthStencil = {1.0f, 0U};
+    }
+    else if (multisampled)
+    {
+        clears[0].color = {
+            {desc.clear_color.x, desc.clear_color.y, desc.clear_color.z, desc.clear_color.w}};
+        clears[2].depthStencil = {1.0f, 0U};
+        clear_count = 3U;
     }
     else
     {

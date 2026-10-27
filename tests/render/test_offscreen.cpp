@@ -253,3 +253,61 @@ TEST_CASE("offscreen: a loading pass keeps what the frame before it left",
 
     host->detachAll();
 }
+
+/* The device-owned transient MSAA (R1, the Filament shape): a samples>1 pass
+   renders on the device's 4x attachments and resolves into its 1x color
+   target, so a bare clearing pass still lands its color in the readback -
+   through the resolve, not the clear. */
+TEST_CASE("offscreen: a multisampled pass resolves its clear into the canvas",
+          "[render][offscreen]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    REQUIRE(resonate::render::publishOffscreen(host->capabilities(), 64U, 64U) == RESONATE_OK);
+    REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+    REQUIRE(host->resolve() == RESONATE_OK);
+    REQUIRE(host->attachAll() == RESONATE_OK);
+
+    auto* device = static_cast<ResonateRenderDevice*>(resonate_capability_find(
+        host->capabilities(), resonate::detail::CapabilityTraits<ResonateRenderDevice>::id.value(),
+        1U, nullptr));
+    REQUIRE(device != nullptr);
+    REQUIRE(device->attach_offscreen(device->self, 64U, 64U) == RESONATE_OK);
+
+    const auto frame = [&](float red, std::uint32_t samples)
+    {
+        REQUIRE(device->begin_frame(device->self) == RESONATE_OK);
+        ResonateRenderPassDesc pass = {};
+        pass.struct_size = sizeof(ResonateRenderPassDesc);
+        pass.color.value = 0U; /* the canvas */
+        pass.clear_color = ResonateVec4{red, 0.0F, 0.0F, 1.0F};
+        pass.samples = samples;
+        REQUIRE(device->begin_pass(device->self, &pass) == RESONATE_OK);
+        REQUIRE(device->end_pass(device->self) == RESONATE_OK);
+        REQUIRE(device->present(device->self) == RESONATE_OK);
+        REQUIRE(device->wait_idle(device->self) == RESONATE_OK);
+    };
+    const auto read_red = [&]
+    {
+        std::vector<std::uint8_t> pixels(64U * 64U * 4U);
+        std::uint32_t width = 0U;
+        std::uint32_t height = 0U;
+        REQUIRE(device->readback_canvas(device->self, pixels.data(),
+                                        static_cast<std::uint64_t>(pixels.size()), &width,
+                                        &height) == RESONATE_OK);
+        return pixels[0];
+    };
+
+    frame(1.0F, 4U);
+    frame(1.0F, 4U);
+    CHECK(read_red() > 200U);
+
+    frame(0.0F, 4U);
+    frame(0.0F, 4U);
+    CHECK(read_red() < 40U);
+
+    host->detachAll();
+}

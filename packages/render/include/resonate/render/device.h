@@ -220,13 +220,24 @@ typedef struct ResonateRenderGraphicsPipelineDesc
     /* Tail: 1 enables source-alpha blending over the color target — UI
        overlays; 0, and a struct_size that stops before this, writes opaque. */
     uint32_t blend;
+    /* Tail: the sample count this pipeline rasterizes at (1 = no MSAA; zero
+       reads as 1). Part of pipeline compatibility: a samples>1 pipeline runs
+       in a samples>1 pass. */
+    uint32_t samples;
 } ResonateRenderGraphicsPipelineDesc;
 
 /* The pass's targets. color {0} means the canvas's swapchain (the windowed or
    offscreen canvas the device attached); an explicit image renders into that
    image. depth {0} means none. The pass always clears. `colorless` (a tail
    field, read only when struct_size covers it) drops the color attachment for
-   a depth-only pass; `color` is then ignored. */
+   a depth-only pass; `color` is then ignored.
+
+   `samples` (a tail field) above 1 makes the pass multisampled the Filament
+   way: the device owns transient color and depth attachments at that sample
+   count — the color stores nothing, the depth clears and stores nothing —
+   and the color resolves into this pass's color target, which stays 1x and
+   sampled. The explicit depth is ignored on such a pass; colorless passes
+   stay at 1x. */
 typedef struct ResonateRenderPassDesc
 {
     uint32_t struct_size;
@@ -247,7 +258,9 @@ typedef struct ResonateRenderPassDesc
        color loads what the target holds instead of clearing; bit 1: the color
        stores nothing (a transient target a resolve feeds); bit 2: the depth
        loads; bit 3: the depth stores nothing. These are outside pipeline
-       compatibility, so a pipeline created for the defaults may run here. */
+       compatibility, so a pipeline created for the defaults may run here. On
+       a samples>1 pass the device's transient attachments decide for
+       themselves and these bits are ignored. */
     uint32_t attachment_ops;
 } ResonateRenderPassDesc;
 

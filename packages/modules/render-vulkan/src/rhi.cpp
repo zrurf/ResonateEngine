@@ -499,8 +499,11 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
        ask for the 1x clear-and-store pass over their formats: render-pass
        compatibility covers formats and sample counts only, so this one object
        also serves every pass whose actions differ, at 1x (IGL I3). */
+    /* A samples>1 pipeline is created against the multisampled shape - the
+       device's transient color, its D32F depth and the 1x resolve. */
+    const uint32_t samples = 1U; // BISECT
     VkRenderPass pass = VK_NULL_HANDLE;
-    if (renderPassFor(desc.color_format, desc.depth_format, 1, 0, &pass) != RESONATE_OK)
+    if (renderPassFor(desc.color_format, desc.depth_format, samples, 0, &pass) != RESONATE_OK)
     {
         return RESONATE_E_INTERNAL;
     }
@@ -598,7 +601,7 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
 
     VkPipelineMultisampleStateCreateInfo multisample{};
     multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisample.rasterizationSamples = sampleCountOf(samples);
 
     VkDynamicState dynamics[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamic{};

@@ -290,6 +290,7 @@ class Context
        sample count — Vulkan render-pass compatibility ignores load/store — so
        they ask for the defaults and the pipeline key stays formats+samples
        (IGL I3, the R5 split). */
+    /* The shared 1x-fallback sample-count mapper (pass and pipeline paths). */
     ResonateStatus renderPassFor(ResonateRenderFormat color, ResonateRenderFormat depth,
                                  uint32_t samples, uint32_t ops, VkRenderPass* out);
     VkFormat formatOf(ResonateRenderFormat format) const;
@@ -385,6 +386,27 @@ class Context
     VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE; /* shared, lazy */
     VkPipelineCache pipeline_cache_ = VK_NULL_HANDLE;
     std::map<uint64_t, VkRenderPass> pass_cache_; /* key: color | depth<<8 | samples<<16 | ops<<24 */
+
+    /* The device-owned transient attachments a samples>1 pass renders into:
+       color at the pass target's format (stores nothing, resolves into it)
+       and D32F depth (clears, stores nothing). Keyed by extent, format and
+       sample count; alive until teardown or the next target attach. */
+    struct MsaaTarget
+    {
+        VkImage color = VK_NULL_HANDLE;
+        VmaAllocation_T* color_allocation = nullptr;
+        VkImageView color_view = VK_NULL_HANDLE;
+        VkImage depth = VK_NULL_HANDLE;
+        VmaAllocation_T* depth_allocation = nullptr;
+        VkImageView depth_view = VK_NULL_HANDLE;
+        uint32_t width = 0U;
+        uint32_t height = 0U;
+    };
+    std::map<uint64_t, MsaaTarget> msaa_cache_;
+    [[nodiscard]] MsaaTarget& ensureMsaa(uint32_t width, uint32_t height,
+                                         ResonateRenderFormat color, uint32_t samples);
+    void discardMsaa();
+
     /* Keyed by the full color and depth handles (generations included — a
        recreated image must not find the framebuffer of its predecessor) plus
        the pass identity the framebuffer was built against. */
@@ -462,6 +484,10 @@ class Context
     bool device_failed_ = false;
     bool platform_unsupported_ = false;
 };
+
+/* Defined in context.cpp: the shared 1x-fallback sample-count mapper, used by
+   both the pass and the pipeline paths. */
+VkSampleCountFlagBits sampleCountOf(uint32_t samples);
 
 } // namespace resonate::render_vulkan
 
