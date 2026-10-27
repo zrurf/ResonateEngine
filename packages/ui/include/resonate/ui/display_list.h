@@ -29,6 +29,16 @@ inline constexpr std::uint32_t kTextureWhite = 0U;
 inline constexpr std::uint32_t kTextureChecker = 1U;
 inline constexpr std::uint32_t kTextureFont = 2U;
 
+/* The rectangle a draw is confined to, target pixels. A non-positive width
+   means no clip (the whole target). */
+struct ClipRect
+{
+    float x = 0.0F;
+    float y = 0.0F;
+    float width = 0.0F;
+    float height = 0.0F;
+};
+
 struct Quad
 {
     float x = 0.0F;
@@ -39,6 +49,7 @@ struct Quad
     std::uint32_t texture = kTextureWhite;
     Vec2 uv_min{0.0F, 0.0F};
     Vec2 uv_max{1.0F, 1.0F};
+    ClipRect clip{};
 };
 
 /* One laid-out glyph in target pixels. Shaping, wrapping, alignment and font
@@ -57,6 +68,7 @@ struct TextRun
     float font_size = 16.0F;
     Vec4 color{1.0F, 1.0F, 1.0F, 1.0F};
     std::vector<TextGlyph> glyphs;
+    ClipRect clip{};
 };
 
 class DisplayList

@@ -1233,7 +1233,8 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
                         quad.x + static_cast<float>(column) * half_width,
                         quad.y + static_cast<float>(row) * half_height, half_width, half_height,
                         quad.color.x * shade, quad.color.y * shade, quad.color.z * shade,
-                        quad.color.w});
+                        quad.color.w, quad.clip.x, quad.clip.y, quad.clip.width,
+                        quad.clip.height});
                 }
             }
             continue;
@@ -1242,12 +1243,14 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         {
             ui_draw_images.push_back(ResonateTgfxImageDraw{
                 quad.texture, quad.x, quad.y, quad.width, quad.height, quad.uv_min.x,
-                quad.uv_min.y, quad.uv_max.x, quad.uv_max.y});
+                quad.uv_min.y, quad.uv_max.x, quad.uv_max.y, quad.clip.x, quad.clip.y,
+                quad.clip.width, quad.clip.height});
             continue;
         }
         ui_draw_rects.push_back(ResonateTgfxRect{quad.x, quad.y, quad.width, quad.height,
                                                  quad.color.x, quad.color.y, quad.color.z,
-                                                 quad.color.w});
+                                                 quad.color.w, quad.clip.x, quad.clip.y,
+                                                 quad.clip.width, quad.clip.height});
     }
 
     ui_draw_glyphs.clear();
@@ -1272,6 +1275,10 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         text.a = run.color.w;
         text.glyphs = ui_draw_glyphs.data() + base;
         text.glyph_count = static_cast<std::uint32_t>(run.glyphs.size());
+        text.clip_x = run.clip.x;
+        text.clip_y = run.clip.y;
+        text.clip_width = run.clip.width;
+        text.clip_height = run.clip.height;
         ui_draw_texts.push_back(text);
     }
 

@@ -17,6 +17,8 @@ extern "C"
 
 typedef void* ResonateTgfxUi;
 
+/* Every draw entry carries the rectangle it is confined to (target pixels);
+   a non-positive clip width draws unclipped. */
 typedef struct ResonateTgfxRect
 {
     float x;
@@ -27,6 +29,10 @@ typedef struct ResonateTgfxRect
     float g;
     float b;
     float a;
+    float clip_x;
+    float clip_y;
+    float clip_width;
+    float clip_height;
 } ResonateTgfxRect;
 
 typedef struct ResonateTgfxGlyph
@@ -46,6 +52,10 @@ typedef struct ResonateTgfxText
     float a;
     const ResonateTgfxGlyph* glyphs;
     std::uint32_t glyph_count;
+    float clip_x;
+    float clip_y;
+    float clip_width;
+    float clip_height;
 } ResonateTgfxText;
 
 typedef struct ResonateTgfxImageDraw
@@ -59,6 +69,10 @@ typedef struct ResonateTgfxImageDraw
     float v0;
     float u1;
     float v1; /* the source sub-rect, in image fractions */
+    float clip_x;
+    float clip_y;
+    float clip_width;
+    float clip_height;
 } ResonateTgfxImageDraw;
 
 /* The renderer's color-attachment-capable image the UI layer draws into, so

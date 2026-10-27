@@ -161,6 +161,23 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
     }
     auto* canvas = ui->surface->getCanvas();
     canvas->clear(tgfx::Color::Transparent());
+    /* Each entry draws inside the rectangle it was clipped to; a non-positive
+       clip width means the whole surface. */
+    const auto beginClip = [canvas](float x, float y, float width, float height)
+    {
+        if (width > 0.0F && height > 0.0F)
+        {
+            canvas->save();
+            canvas->clipRect(tgfx::Rect::MakeXYWH(x, y, width, height));
+        }
+    };
+    const auto endClip = [canvas](float width, float height)
+    {
+        if (width > 0.0F && height > 0.0F)
+        {
+            canvas->restore();
+        }
+    };
     for (std::uint32_t index = 0; index < rect_count; ++index)
     {
         const ResonateTgfxRect& rect = rects[index];
@@ -168,13 +185,18 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
         {
             continue;
         }
+        beginClip(rect.clip_x, rect.clip_y, rect.clip_width, rect.clip_height);
         tgfx::Paint paint;
         paint.setColor(tgfx::Color{rect.r, rect.g, rect.b, rect.a});
         canvas->drawRect(tgfx::Rect::MakeXYWH(rect.x, rect.y, rect.width, rect.height), paint);
+        endClip(rect.clip_width, rect.clip_height);
     }
     for (std::uint32_t index = 0; index < text_count; ++index)
     {
-        drawText(canvas, texts[index], ui->typefaces);
+        const ResonateTgfxText& text = texts[index];
+        beginClip(text.clip_x, text.clip_y, text.clip_width, text.clip_height);
+        drawText(canvas, text, ui->typefaces);
+        endClip(text.clip_width, text.clip_height);
     }
     for (std::uint32_t index = 0; index < image_count; ++index)
     {
@@ -186,6 +208,7 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
             continue;
         }
         const std::shared_ptr<tgfx::Image>& image = found->second;
+        beginClip(draw.clip_x, draw.clip_y, draw.clip_width, draw.clip_height);
         const tgfx::Rect source = tgfx::Rect::MakeXYWH(
             draw.u0 * static_cast<float>(image->width()), draw.v0 * static_cast<float>(image->height()),
             (draw.u1 - draw.u0) * static_cast<float>(image->width()),
@@ -195,6 +218,7 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
            would sample nothing. */
         const tgfx::SamplingOptions sampling(tgfx::FilterMode::Linear, tgfx::MipmapMode::None);
         canvas->drawImageRect(image, source, destination, sampling);
+        endClip(draw.clip_width, draw.clip_height);
     }
     /* RESONATE_TGFX_SYNC waits for the layer's own GPU work before returning; a
        device bisect uses it to tell an ordering race from a state problem. */

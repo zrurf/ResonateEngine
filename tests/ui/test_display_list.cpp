@@ -181,3 +181,34 @@ TEST_CASE("ui display list: a repeated build reuses the same order", "[ui][displ
         CHECK(first.quads()[index].color.y == second.quads()[index].color.y);
     }
 }
+
+TEST_CASE("ui display list: draws carry the clip they are confined to", "[ui][display-list]")
+{
+    Fixture fixture;
+    const Entity viewport = fixture.add(fixture.root, 0.0F, 0.0F, 100.0F, 100.0F, 0,
+                                        resonate::Vec4{0.2F, 0.2F, 0.2F, 1.0F});
+    fixture.world.add(viewport, resonate::ui::ScrollView{});
+    const Entity inner = fixture.add(viewport, 10.0F, 10.0F, 20.0F, 20.0F, 0,
+                                     resonate::Vec4{1.0F, 0.0F, 0.0F, 1.0F});
+    (void)inner;
+    fixture.finish();
+
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, fixture.root, list));
+    REQUIRE(list.quads().size() >= 3U);
+    /* The canvas paints unclipped; the viewport and its content carry the
+       viewport's rect. */
+    CHECK(list.quads()[0].clip.width == 0.0F);
+    std::size_t clipped = 0U;
+    for (const resonate::ui::Quad& quad : list.quads())
+    {
+        if (quad.clip.width == 100.0F)
+        {
+            ++clipped;
+            CHECK(quad.clip.x == 0.0F);
+            CHECK(quad.clip.y == 0.0F);
+            CHECK(quad.clip.height == 100.0F);
+        }
+    }
+    CHECK(clipped == 2U);
+}

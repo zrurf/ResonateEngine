@@ -52,6 +52,16 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
     {
         return report(world, entity, "sits below the UI tree's depth limit");
     }
+    /* Clips travel with every draw so a rasterizer can confine it. */
+    const auto clip_of = [](const Clip& clip) -> ClipRect
+    {
+        if (!clip.active)
+        {
+            return ClipRect{};
+        }
+        return ClipRect{clip.left, clip.top, clip.right - clip.left, clip.bottom - clip.top};
+    };
+    const std::size_t quad_begin = quads_.size();
 
     Clip clip = outer;
     if (const ScrollView* view = world.get<ScrollView>(entity))
@@ -305,11 +315,19 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                                 ? (rect->height - ink_height) * 0.5F - minimum_y
                                 : rect->height - ink_height - minimum_y;
             }
+            /* A widget clips its own text: a field's overflow stops at its box,
+               not at the viewport. */
+            const Clip text_clip =
+                rect->width > 0.0F && rect->height > 0.0F
+                    ? intersect(clip, rect->x, rect->y, rect->width, rect->height)
+                    : clip;
+            const ClipRect text_clip_rect = clip_of(text_clip);
             if (label_visible && world.alive(text->content) && count > 0U)
             {
                 TextRun run;
                 run.font_size = text->font_size;
                 run.color = text->text_color;
+                run.clip = text_clip_rect;
                 run.glyphs.reserve(count);
                 for (std::size_t index = 0; index < count; ++index)
                 {
@@ -322,7 +340,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
             for (std::size_t index = 0; index < count; ++index)
             {
                 const detail::GlyphQuad& glyph = records[index];
-                if (!visible(clip, origin_x + glyph.x, origin_y + glyph.y, glyph.width,
+                if (!visible(text_clip, origin_x + glyph.x, origin_y + glyph.y, glyph.width,
                              glyph.height))
                 {
                     continue;
@@ -330,6 +348,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                 quads_.push_back(Quad{origin_x + glyph.x, origin_y + glyph.y, glyph.width,
                                       glyph.height, text->text_color, kTextureFont,
                                       Vec2{glyph.u0, glyph.v0}, Vec2{glyph.u1, glyph.v1}});
+                quads_.back().clip = text_clip_rect;
             }
             if (focused_ == entity)
             {
@@ -379,6 +398,17 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                         Quad{caret_x, caret_y, 1.0F, caret_height, text->text_color});
                 }
             }
+        }
+    }
+
+    /* Everything the entity drew is confined to the clip it inherits; entries
+       that already carry a tighter one keep it. */
+    const ClipRect inherited = clip_of(clip);
+    for (std::size_t index = quad_begin; index < quads_.size(); ++index)
+    {
+        if (quads_[index].clip.width <= 0.0F)
+        {
+            quads_[index].clip = inherited;
         }
     }
 
