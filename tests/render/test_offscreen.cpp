@@ -355,3 +355,180 @@ TEST_CASE("offscreen: a multisampled pass resolves its clear into the canvas",
 
     host->detachAll();
 }
+
+/* The R1 sample anomaly isolated on the raw device path: the same white
+   texture, the same table slot, the same fixed-UV read, rendered by the same
+   probe pipeline into 1x and samples>1 passes. The renderer is not involved;
+   a mismatch here is the device (or the hook stack under it), not the frame. */
+TEST_CASE("offscreen: the probe pipeline reads the same texel at 1x and 4x",
+          "[render][offscreen]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    const std::string shader_directory = resonate::test::findBuildDirectory("shaders");
+    REQUIRE_FALSE(plugin_directory.empty());
+    REQUIRE_FALSE(shader_directory.empty());
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    REQUIRE(resonate::render::publishOffscreen(host->capabilities(), 64U, 64U) == RESONATE_OK);
+    REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+    REQUIRE(host->resolve() == RESONATE_OK);
+    REQUIRE(host->attachAll() == RESONATE_OK);
+
+    auto* device = static_cast<ResonateRenderDevice*>(resonate_capability_find(
+        host->capabilities(), resonate::detail::CapabilityTraits<ResonateRenderDevice>::id.value(),
+        1U, nullptr));
+    REQUIRE(device != nullptr);
+    REQUIRE(device->attach_offscreen(device->self, 64U, 64U) == RESONATE_OK);
+
+    const auto read_file = [](const std::string& path, std::vector<std::uint8_t>& out)
+    {
+        std::FILE* in = std::fopen(path.c_str(), "rb");
+        REQUIRE(in != nullptr);
+        std::fseek(in, 0, SEEK_END);
+        out.resize(static_cast<std::size_t>(std::ftell(in)));
+        std::fseek(in, 0, SEEK_SET);
+        const std::size_t read = std::fread(out.data(), 1, out.size(), in);
+        std::fclose(in);
+        REQUIRE(read == out.size());
+    };
+
+    std::vector<std::uint8_t> vertex_spirv;
+    std::vector<std::uint8_t> fragment_spirv;
+    read_file(shader_directory + "/probe.probeVertex.spv", vertex_spirv);
+    read_file(shader_directory + "/probe.probeFragment.spv", fragment_spirv);
+
+    ResonateRenderShader vertex = {};
+    ResonateRenderShader fragment = {};
+    REQUIRE(device->create_shader(device->self, RESONATE_RENDER_SHADER_VERTEX, vertex_spirv.data(),
+                                  vertex_spirv.size(), &vertex) == RESONATE_OK);
+    REQUIRE(device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT,
+                                  fragment_spirv.data(), fragment_spirv.size(),
+                                  &fragment) == RESONATE_OK);
+
+    /* The white 1x1 texture through the same table path the renderer uses. */
+    ResonateRenderImageDesc image = {};
+    image.struct_size = sizeof(image);
+    image.format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+    image.width = 1U;
+    image.height = 1U;
+    image.usage = RESONATE_RENDER_IMAGE_SAMPLED;
+    ResonateRenderImage texture = {};
+    REQUIRE(device->create_image(device->self, &image, &texture) == RESONATE_OK);
+    const std::uint8_t white[4] = {255U, 255U, 255U, 255U};
+    REQUIRE(device->upload_image(device->self, texture, white, sizeof(white), 4U) == RESONATE_OK);
+    REQUIRE(device->bind_image_slot(device->self, 0U, texture, 0U) == RESONATE_OK);
+    /* A second texture rebound every frame, the way the renderer rebinds the
+       font atlas: its slot sits next to the probe's. */
+    ResonateRenderImageDesc second = {};
+    second.struct_size = sizeof(second);
+    second.format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+    second.width = 1U;
+    second.height = 1U;
+    second.usage = RESONATE_RENDER_IMAGE_SAMPLED;
+    ResonateRenderImage other = {};
+    REQUIRE(device->create_image(device->self, &second, &other) == RESONATE_OK);
+    const std::uint8_t gray[4] = {128U, 128U, 128U, 255U};
+    REQUIRE(device->upload_image(device->self, other, gray, sizeof(gray), 4U) == RESONATE_OK);
+
+    /* One pipeline per sample count: a samples>1 pipeline may only run in a
+       samples>1 pass. */
+    /* The cluster compute runs before the scene pass in the renderer's frame:
+       a compute dispatch over the table's storage slots, same command buffer. */
+    std::vector<std::uint8_t> compute_spirv;
+    read_file(shader_directory + "/probe.probeCompute.spv", compute_spirv);
+    ResonateRenderShader compute = {};
+    REQUIRE(device->create_shader(device->self, RESONATE_RENDER_SHADER_COMPUTE,
+                                  compute_spirv.data(), compute_spirv.size(),
+                                  &compute) == RESONATE_OK);
+    ResonateRenderBufferDesc storage_desc = {};
+    storage_desc.struct_size = sizeof(storage_desc);
+    storage_desc.size_bytes = 256U;
+    storage_desc.usage = RESONATE_RENDER_BUFFER_STORAGE;
+    ResonateRenderBuffer storage = {};
+    REQUIRE(device->create_buffer(device->self, &storage_desc, &storage) == RESONATE_OK);
+    const std::uint32_t storage_slot = device->buffer_slot(device->self, storage);
+
+    ResonateRenderPipeline probes[2] = {}; /* [0] = 1x, [1] = 4x */
+    for (int variant = 0; variant < 2; ++variant)
+    {
+        ResonateRenderGraphicsPipelineDesc pipeline = {};
+        pipeline.struct_size = sizeof(pipeline);
+        pipeline.vertex_shader = vertex;
+        pipeline.fragment_shader = fragment;
+        pipeline.color_format = RESONATE_RENDER_FORMAT_UNKNOWN; /* the canvas */
+        pipeline.samples = variant == 0 ? 1U : 4U;
+        REQUIRE(device->create_pipeline(device->self, &pipeline,
+                                        &probes[variant]) == RESONATE_OK);
+    }
+    /* The table layout comes with the first graphics pipeline; a compute
+       pipeline shares it. */
+    ResonateRenderPipeline probe_compute = {};
+    REQUIRE(device->create_compute_pipeline(device->self, compute, &probe_compute) == RESONATE_OK);
+
+    /* A depth-only pass to run before the probed one: the renderer opens
+       every frame with 1x colorless shadow passes and then draws the scene at
+       the frame's sample count, so the command buffer mixes pass shapes. */
+    ResonateRenderImageDesc shadow_image = {};
+    shadow_image.struct_size = sizeof(shadow_image);
+    shadow_image.format = RESONATE_RENDER_FORMAT_D32_SFLOAT;
+    shadow_image.width = 64U;
+    shadow_image.height = 64U;
+    shadow_image.usage = RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT;
+    ResonateRenderImage shadow = {};
+    REQUIRE(device->create_image(device->self, &shadow_image, &shadow) == RESONATE_OK);
+
+    const auto frame = [&](std::uint32_t samples)
+    {
+        REQUIRE(device->begin_frame(device->self) == RESONATE_OK);
+        ResonateRenderPassDesc shadow_pass = {};
+        shadow_pass.struct_size = sizeof(shadow_pass);
+        shadow_pass.colorless = 1U;
+        shadow_pass.depth = shadow;
+        REQUIRE(device->begin_pass(device->self, &shadow_pass) == RESONATE_OK);
+        REQUIRE(device->end_pass(device->self) == RESONATE_OK);
+        REQUIRE(device->bind_image_slot(device->self, 1U, other, 1U) == RESONATE_OK);
+        REQUIRE(device->bind_pipeline(device->self, probe_compute) == RESONATE_OK);
+        const std::uint32_t compute_constants[5] = {storage_slot, 0U, 0U, 0U, 2U};
+        REQUIRE(device->set_constants(device->self, compute_constants,
+                                      sizeof(compute_constants)) == RESONATE_OK);
+        REQUIRE(device->dispatch(device->self, 2U, 1U, 1U) == RESONATE_OK);
+        ResonateRenderPassDesc pass = {};
+        pass.struct_size = sizeof(pass);
+        pass.color.value = 0U; /* the canvas */
+        pass.clear_color = ResonateVec4{0.0F, 0.0F, 0.0F, 1.0F};
+        pass.samples = samples;
+        REQUIRE(device->begin_pass(device->self, &pass) == RESONATE_OK);
+        REQUIRE(device->bind_pipeline(device->self, probes[samples == 1U ? 0U : 1U]) ==
+                RESONATE_OK);
+        const std::uint32_t constants[5] = {0U, 0U, 0U, 0U, 0U}; /* slots, texture slot 0 */
+        REQUIRE(device->set_constants(device->self, constants, sizeof(constants)) == RESONATE_OK);
+        REQUIRE(device->draw(device->self, 3U, 1U) == RESONATE_OK);
+        REQUIRE(device->end_pass(device->self) == RESONATE_OK);
+        REQUIRE(device->present(device->self) == RESONATE_OK);
+        REQUIRE(device->wait_idle(device->self) == RESONATE_OK);
+    };
+    const auto read_red = [&]
+    {
+        std::vector<std::uint8_t> pixels(64U * 64U * 4U);
+        std::uint32_t width = 0U;
+        std::uint32_t height = 0U;
+        REQUIRE(device->readback_canvas(device->self, pixels.data(),
+                                        static_cast<std::uint64_t>(pixels.size()), &width,
+                                        &height) == RESONATE_OK);
+        return pixels[0];
+    };
+
+    frame(1U);
+    frame(1U);
+    const std::uint8_t at_1x = read_red();
+    CHECK(at_1x > 200U); /* the white texel through the table */
+
+    frame(4U);
+    frame(4U);
+    const std::uint8_t at_4x = read_red();
+    INFO("probe texel at 1x=" << static_cast<int>(at_1x) << " at 4x=" << static_cast<int>(at_4x));
+    CHECK(at_4x == at_1x);
+
+    host->detachAll();
+}
