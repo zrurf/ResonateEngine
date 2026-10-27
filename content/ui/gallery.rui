@@ -63,7 +63,7 @@
       </Label>
     </Panel>
 
-    <Panel key="sliders" class="panel" x="24" y="240" width="952" height="180"
+    <Panel key="sliders" class="panel" x="24" y="232" width="952" height="150"
            direction="Column" align="Start" gap="12"
            padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
            border_color="0.0452 0.0452 0.0500 1" border_width="1">
@@ -83,7 +83,7 @@
       </Label>
     </Panel>
 
-    <Panel key="text-sample" class="panel" x="24" y="444" width="952" height="150"
+    <Panel key="text-sample" class="panel" x="24" y="398" width="952" height="140"
            direction="Column" align="Start" gap="6"
            padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
            border_color="0.0452 0.0452 0.0500 1" border_width="1">
@@ -95,11 +95,10 @@
              font_weight="500" v_align="Middle" align="Center" text_color="0.80 0.83 0.87 1"/>
       <Label key="text-right" width="920" height="22" text="右对齐 · 粗体 700" font_size="14"
              font_weight="700" v_align="Middle" align="End" text_color="0.80 0.83 0.87 1"/>
-      <Label key="text-dim" width="920" height="22" text="次要文本 · 中英混排 Resonate Engine"
-             font_size="13" v_align="Middle" text_color="0.45 0.48 0.52 1"/>
+
     </Panel>
 
-    <Panel key="dropdown-area" class="panel" x="24" y="604" width="440" height="136"
+    <Panel key="dropdown-area" class="panel" x="24" y="554" width="440" height="136"
            direction="Column" align="Start" gap="8"
            padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
            border_color="0.0452 0.0452 0.0500 1" border_width="1">
@@ -135,7 +134,7 @@
       </Label>
     </Panel>
 
-    <Panel key="tabs-area" class="panel" x="484" y="604" width="492" height="136"
+    <Panel key="tabs-area" class="panel" x="484" y="554" width="492" height="136"
            direction="Column" align="Start" gap="8"
            padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
            border_color="0.0452 0.0452 0.0500 1" border_width="1">
@@ -168,7 +167,7 @@
       </Panel>
     </Panel>
 
-    <Panel key="split-area" class="panel" x="24" y="756" width="952" height="136"
+    <Panel key="split-area" class="panel" x="24" y="702" width="952" height="136"
            direction="Column" align="Start" gap="8"
            padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
            border_color="0.0452 0.0452 0.0500 1" border_width="1">
@@ -191,7 +190,7 @@
       </Box>
     </Panel>
 
-    <Panel key="list-area" class="panel" x="24" y="908" width="952" height="150"
+    <Panel key="list-area" class="panel" x="24" y="850" width="952" height="150"
            direction="Column" align="Start" gap="8"
            padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
            border_color="0.0452 0.0452 0.0500 1" border_width="1">
