@@ -58,11 +58,25 @@ struct TextRuntimeAccess
                                   std::string_view utf8, std::string& error);
 };
 
-/* Applies typed UTF-8 to the canvas' focused Input that carries Text. Backspace
-   removes one UTF-8 code point first, then `utf8` is appended. A canvas with no
+/* Where a caret key takes the offset. */
+enum class CaretMotion : std::uint8_t
+{
+    Left,
+    Right,
+    Home,
+    End,
+};
+
+/* Applies typed UTF-8 to the canvas' focused Input that carries Text: the text
+   lands at the caret, and backspace removes the code point before it. A field
+   without a caret component edits at the end of its content. A canvas with no
    focused text field is a no-op. */
 [[nodiscard]] bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
                                    std::string_view utf8, bool backspace, std::string& error);
+
+/* Moves the focused field's caret one code point or to an edge; false when no
+   text field has focus. */
+[[nodiscard]] bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion);
 
 /* Shows an IME preedit in the focused field without committing it: the field
    renders its committed text followed by `utf8`. An empty preedit restores the

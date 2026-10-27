@@ -29,6 +29,9 @@ struct GlyphQuad
     float v1 = 0.0F;
     float pen_x = 0.0F;
     float pen_y = 0.0F;
+    /* Byte offset of the glyph's cluster in the shaped UTF-8: a caret index
+       lands on a glyph by comparing against it. */
+    std::uint32_t byte_offset = 0U;
     std::uint32_t glyph_id = 0U;
     std::uint32_t font_index = 0U;
     /* The atlas key, so a repack can refresh the UV rect before the run is

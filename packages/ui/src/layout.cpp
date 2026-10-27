@@ -305,6 +305,7 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<Text>() != ecs::kInvalidComponent &&
            world.registerComponent<Glyphs>() != ecs::kInvalidComponent &&
            world.registerComponent<TextMetrics>() != ecs::kInvalidComponent &&
+           world.registerComponent<TextCaret>() != ecs::kInvalidComponent &&
            world.registerComponent<TextAtlasPage>() != ecs::kInvalidComponent &&
            world.registerComponent<DataContext>() != ecs::kInvalidComponent &&
            world.registerComponent<Bindings>() != ecs::kInvalidComponent &&

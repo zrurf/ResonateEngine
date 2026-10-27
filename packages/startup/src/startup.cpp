@@ -120,6 +120,27 @@ struct UiFrame
                     frame->input->key_down(frame->input->self, RESONATE_KEY_RSHIFT) != 0;
                 ui::focusNext(world, frame->canvas, backwards);
             }
+            if (frame->text != nullptr)
+            {
+                struct CaretKey
+                {
+                    ResonateKey key;
+                    ui::CaretMotion motion;
+                };
+                static constexpr CaretKey kCaretKeys[] = {
+                    {RESONATE_KEY_LEFT, ui::CaretMotion::Left},
+                    {RESONATE_KEY_RIGHT, ui::CaretMotion::Right},
+                    {RESONATE_KEY_HOME, ui::CaretMotion::Home},
+                    {RESONATE_KEY_END, ui::CaretMotion::End},
+                };
+                for (const CaretKey& caret_key : kCaretKeys)
+                {
+                    if (frame->input->key_pressed(frame->input->self, caret_key.key) != 0)
+                    {
+                        (void)ui::moveCaret(world, frame->canvas, caret_key.motion);
+                    }
+                }
+            }
             if (frame->text != nullptr && frame->input->text_editing != nullptr)
             {
                 char editing[256] = {};

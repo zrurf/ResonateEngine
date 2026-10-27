@@ -210,8 +210,24 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                     const detail::GlyphQuad& last = records[count - 1U];
                     caret_y = rect->y + last.y;
                     const TextMetrics* metrics = world.get<TextMetrics>(entity);
-                    caret_x = rect->x + (metrics != nullptr ? metrics->advance
-                                                            : last.x + last.width + 1.0F);
+                    float offset_x = metrics != nullptr ? metrics->advance
+                                                        : last.x + last.width + 1.0F;
+                    /* A caret in the middle of the text sits at the pen of the
+                       glyph whose cluster follows it; a field without a caret
+                       component keeps it at the end. */
+                    const TextCaret* caret = world.get<TextCaret>(entity);
+                    if (caret != nullptr)
+                    {
+                        for (std::size_t index = 0; index < count; ++index)
+                        {
+                            if (records[index].byte_offset >= caret->offset)
+                            {
+                                offset_x = records[index].pen_x;
+                                break;
+                            }
+                        }
+                    }
+                    caret_x = rect->x + offset_x;
                 }
                 else if (text->align == TextAlign::Center)
                 {

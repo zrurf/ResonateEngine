@@ -374,6 +374,7 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight,
                 quad.pen_x = offset + pen + entry.glyph.x_offset;
                 quad.pen_y = metrics.ascent + static_cast<float>(line_index) * line_height -
                              entry.glyph.y_offset;
+                quad.byte_offset = entry.glyph.cluster;
                 quad.glyph_id = entry.glyph.glyph;
                 quad.font_index = entry.font;
                 out.push_back(quad);

@@ -194,6 +194,13 @@
     <field name="down" type="bool"/>
   </component>
 
+  <!-- The caret of an editable text field: a byte offset into the UTF-8
+       content. Derived by the editor paths; a field without one shows its
+       caret at the end. -->
+  <component name="TextCaret" version="1" derived="true">
+    <field name="offset" type="u32"/>
+  </component>
+
   <!-- State-style overrides, compiled at instantiation; a blob on the canvas. -->
   <component name="StateStyles" version="1" derived="true">
     <field name="records" type="blob"/>

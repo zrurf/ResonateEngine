@@ -31,6 +31,7 @@ using resonate::ui::Glyphs;
 using resonate::ui::PointerState;
 using resonate::ui::Text;
 using resonate::ui::TextAtlasPage;
+using resonate::ui::TextCaret;
 using resonate::ui::TextMetrics;
 
 const char* const kLabel = R"xml(<document version="1" schemas="resonate.ui">
@@ -538,4 +539,93 @@ TEST_CASE("ui text: an IME preedit previews and then commits", "[ui][text]")
     CHECK(content() == "A\xE4\xBD\xA0hao");
     REQUIRE(resonate::ui::updateTextComposition(fixture.world, root, runtime, "", error));
     CHECK(content() == "A\xE4\xBD\xA0");
+}
+
+TEST_CASE("ui text: the caret edits in the middle of the field", "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="field" text="AB" font_size="20" width="120" height="32" color="0 0 0 0">
+      <Input/>
+    </Label>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+    const Entity field = resonate::hierarchy::children(fixture.world, root)[0];
+    const ComputedRect* rect = fixture.world.get<ComputedRect>(field);
+    REQUIRE(rect != nullptr);
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, rect->x + 1.0F, rect->y + 1.0F,
+                                      true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, rect->x + 1.0F, rect->y + 1.0F,
+                                      false));
+    REQUIRE(fixture.world.get<PointerState>(root)->focused == field);
+
+    const auto content = [&]
+    {
+        const Text* component = fixture.world.get<Text>(field);
+        REQUIRE(component != nullptr);
+        if (!fixture.world.alive(component->content))
+        {
+            return std::string{};
+        }
+        return std::string(static_cast<const char*>(fixture.world.blobData(component->content)),
+                           fixture.world.blobSize(component->content));
+    };
+    const auto caret = [&]
+    {
+        const TextCaret* component = fixture.world.get<TextCaret>(field);
+        return component != nullptr ? component->offset : static_cast<std::uint32_t>(-1);
+    };
+    std::string error;
+
+    /* Home puts the caret before the text; typing lands there. */
+    CHECK(resonate::ui::moveCaret(fixture.world, root, resonate::ui::CaretMotion::Home));
+    CHECK(caret() == 0U);
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "X", false, error));
+    CHECK(content() == "XAB");
+    CHECK(caret() == 1U);
+
+    /* Right steps over one code point; backspace removes the one before it. */
+    CHECK(resonate::ui::moveCaret(fixture.world, root, resonate::ui::CaretMotion::Right));
+    CHECK(caret() == 2U);
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, error));
+    CHECK(content() == "XB");
+    CHECK(caret() == 1U);
+
+    /* Typing lands at the caret, not at the end, and a code point outside
+       ASCII is one step. */
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\xE4\xBD\xA0", false,
+                                          error));
+    CHECK(content() == "X\xE4\xBD\xA0" "B");
+    CHECK(resonate::ui::moveCaret(fixture.world, root, resonate::ui::CaretMotion::End));
+    CHECK(caret() == 5U);
+    CHECK(resonate::ui::moveCaret(fixture.world, root, resonate::ui::CaretMotion::Left));
+    CHECK(caret() == 4U);
+    CHECK(resonate::ui::moveCaret(fixture.world, root, resonate::ui::CaretMotion::Left));
+    CHECK(caret() == 1U);
+
+    /* The drawn caret follows the offset: mid-string it precedes the end. */
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+    float mid_caret = -1.0F;
+    for (const resonate::ui::Quad& quad : list.quads())
+    {
+        if (quad.texture == resonate::ui::kTextureWhite && quad.width == 1.0F)
+        {
+            mid_caret = quad.x;
+        }
+    }
+    REQUIRE(mid_caret >= 0.0F);
+    const TextMetrics* metrics = fixture.world.get<TextMetrics>(field);
+    REQUIRE(metrics != nullptr);
+    CHECK(mid_caret < rect->x + metrics->advance);
 }

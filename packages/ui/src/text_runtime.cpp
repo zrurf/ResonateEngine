@@ -36,6 +36,58 @@ std::string readContent(ecs::World& world, ecs::Entity entity)
     return content;
 }
 
+/* The caret's byte offset; the content's end when the field carries none. */
+std::size_t caretOffset(ecs::World& world, ecs::Entity entity, std::size_t content_size)
+{
+    const TextCaret* caret = world.get<TextCaret>(entity);
+    return caret != nullptr && caret->offset < content_size ? caret->offset : content_size;
+}
+
+bool setCaret(ecs::World& world, ecs::Entity entity, std::size_t offset)
+{
+    TextCaret* caret = world.get<TextCaret>(entity);
+    if (caret == nullptr)
+    {
+        return world.add(entity, TextCaret{static_cast<std::uint32_t>(offset)}) != nullptr;
+    }
+    if (caret->offset != offset)
+    {
+        caret->offset = static_cast<std::uint32_t>(offset);
+        world.markChanged<TextCaret>(entity);
+    }
+    return true;
+}
+
+/* One code point left: UTF-8 continuation bytes step back to their lead. */
+std::size_t previousCodepoint(const std::string& content, std::size_t offset)
+{
+    if (offset == 0U)
+    {
+        return 0U;
+    }
+    std::size_t index = offset - 1U;
+    while (index > 0U && (static_cast<unsigned char>(content[index]) & 0xC0U) == 0x80U)
+    {
+        --index;
+    }
+    return index;
+}
+
+/* One code point right; the end when already there. */
+std::size_t nextCodepoint(const std::string& content, std::size_t offset)
+{
+    if (offset >= content.size())
+    {
+        return content.size();
+    }
+    std::size_t index = offset + 1U;
+    while (index < content.size() && (static_cast<unsigned char>(content[index]) & 0xC0U) == 0x80U)
+    {
+        ++index;
+    }
+    return index;
+}
+
 } // namespace
 
 struct TextRuntime::Impl
@@ -143,7 +195,16 @@ bool TextRuntimeAccess::updateComposition(ecs::World& world, ecs::Entity canvas,
     impl.composition_preedit.assign(utf8);
     std::string preview = impl.composition_base;
     preview.append(utf8);
-    return runtime.setText(world, canvas, focused, preview, error);
+    if (!runtime.setText(world, canvas, focused, preview, error))
+    {
+        return false;
+    }
+    if (!setCaret(world, focused, preview.size()))
+    {
+        error = "the caret could not be attached";
+        return false;
+    }
+    return true;
 }
 
 bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity entity,
@@ -159,6 +220,12 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
     {
         error = "the entity has no Text";
         return false;
+    }
+    if (TextCaret* caret = world.get<TextCaret>(entity);
+        caret != nullptr && caret->offset > utf8.size())
+    {
+        caret->offset = static_cast<std::uint32_t>(utf8.size());
+        world.markChanged<TextCaret>(entity);
     }
     const RectTransform* rect = world.get<RectTransform>(entity);
     const float width = authoredWidth(rect);
@@ -361,28 +428,66 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
     }
 
     std::string content = readContent(world, pointer->focused);
-    if (backspace && !content.empty())
+    std::size_t caret = caretOffset(world, pointer->focused, content.size());
+    if (backspace && caret > 0U)
     {
-        std::size_t index = content.size() - 1U;
-        while (index > 0U && (static_cast<unsigned char>(content[index]) & 0xC0U) == 0x80U)
-        {
-            --index;
-        }
-        content.erase(index);
+        const std::size_t start = previousCodepoint(content, caret);
+        content.erase(start, caret - start);
+        caret = start;
     }
     /* Some platforms hand control keys back as text input — Win32 translates
        the backspace key into a WM_CHAR the IME layer forwards. Text is
        printable characters; a stored control byte would be invisible and
        swallow the next deletion. */
+    std::string typed;
     for (const char byte : utf8)
     {
         const auto value = static_cast<unsigned char>(byte);
         if (value >= 0x20U && value != 0x7FU)
         {
-            content.push_back(byte);
+            typed.push_back(byte);
         }
     }
+    if (!typed.empty())
+    {
+        content.insert(caret, typed);
+        caret += typed.size();
+    }
+    if (!setCaret(world, pointer->focused, caret))
+    {
+        error = "the caret could not be attached";
+        return false;
+    }
     return runtime.setText(world, canvas, pointer->focused, content, error);
+}
+
+bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion)
+{
+    const PointerState* pointer = world.get<PointerState>(canvas);
+    if (pointer == nullptr || !pointer->focused.valid() ||
+        world.get<Text>(pointer->focused) == nullptr)
+    {
+        return false;
+    }
+    const std::string content = readContent(world, pointer->focused);
+    const std::size_t caret = caretOffset(world, pointer->focused, content.size());
+    std::size_t moved = caret;
+    switch (motion)
+    {
+        case CaretMotion::Left:
+            moved = previousCodepoint(content, caret);
+            break;
+        case CaretMotion::Right:
+            moved = nextCodepoint(content, caret);
+            break;
+        case CaretMotion::Home:
+            moved = 0U;
+            break;
+        case CaretMotion::End:
+            moved = content.size();
+            break;
+    }
+    return setCaret(world, pointer->focused, moved);
 }
 
 bool updateTextComposition(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
@@ -402,9 +507,13 @@ bool setFocusedText(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
     }
     if (readContent(world, pointer->focused) == utf8)
     {
-        return true;
+        return setCaret(world, pointer->focused, utf8.size());
     }
-    return runtime.setText(world, canvas, pointer->focused, std::string(utf8), error);
+    if (!runtime.setText(world, canvas, pointer->focused, std::string(utf8), error))
+    {
+        return false;
+    }
+    return setCaret(world, pointer->focused, utf8.size());
 }
 
 bool focusedTextEditable(ecs::World& world, ecs::Entity canvas)
