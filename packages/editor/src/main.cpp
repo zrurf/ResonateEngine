@@ -8,6 +8,7 @@
 
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/tree.h>
+#include "resonate.render/components.gen.h"
 #include <resonate/ui/document.h>
 #include <resonate/ui/text_runtime.h>
 
@@ -44,7 +45,10 @@ struct EditorState
     Scrub roughness{};
 
     /* The name field mirrors the selection; a user edit writes back. */
-    std::string mirrored_name;
+    std::string mirrored_name{};
+
+    /* The boxes the opacity scrub dims: one query, built on ready. */
+    resonate::ecs::Query boxes{};
 };
 
 /* A scrub value is mirrored into its label only when it changes. */
@@ -62,6 +66,34 @@ void mirrorScrub(Entity canvas, resonate::ecs::World& world, EditorState::Scrub&
     (void)resonate::ui::setText(world, canvas, scrub.value_label, text, error);
 }
 
+/* The opacity scrub scales every box material's tint: the inspector drives
+   the scene, not just its own labels. */
+void applyOpacity(EditorState& state, resonate::ecs::World& world)
+{
+    const float opacity = std::clamp(state.opacity.shown, 0.0F, 1.0F);
+    struct OpacityContext
+    {
+        resonate::ecs::World* world;
+        float value;
+    } context{&world, opacity};
+    state.boxes.forEachChunk(
+        [](void* context, resonate::ecs::ChunkView view)
+        {
+            auto* state = static_cast<OpacityContext*>(context);
+            resonate::ecs::Column<resonate::render::Material> material =
+                resonate::ecs::column<resonate::render::Material>(view);
+            for (std::uint32_t row = 0; row < view.count; ++row)
+            {
+                material.data[row].tint =
+                    resonate::Vec3{state->value, state->value, state->value};
+                state->world->markChanged(
+                    view.entities[row],
+                    resonate::ecs::ComponentTraits<resonate::render::Material>::index);
+            }
+        },
+        &context);
+}
+
 /* The selected scene row names the inspected object: the name field and the
    status line follow the selection, reshaped only when it changes. */
 void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuffer&, float)
@@ -73,6 +105,10 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     }
     mirrorScrub(state->canvas, world, state->opacity);
     mirrorScrub(state->canvas, world, state->roughness);
+    if (!std::isnan(state->opacity.shown) && state->boxes.valid())
+    {
+        applyOpacity(*state, world);
+    }
     const Entity selected = resonate::ui::selectedChild(world, state->scene_list);
 
     /* The name field edits the selected row's caption: what the user typed
@@ -138,6 +174,13 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->opacity.value_label = resonate::ui::findByKey(world, canvas, "opacity-value");
     state->roughness.handle = resonate::ui::findByKey(world, canvas, "roughness-scrub");
     state->roughness.value_label = resonate::ui::findByKey(world, canvas, "roughness-value");
+
+    resonate::ecs::QueryDesc desc{};
+    const resonate::ecs::ComponentIndex all[] = {
+        resonate::ecs::ComponentTraits<resonate::render::MeshInstance>::index,
+        resonate::ecs::ComponentTraits<resonate::render::Material>::index};
+    desc.all = resonate::Span<const resonate::ecs::ComponentIndex>(all, 2U);
+    state->boxes = world.createQuery(desc);
 }
 
 /* The editor runs its own configuration; a command line that names one keeps
