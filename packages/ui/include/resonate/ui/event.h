@@ -68,8 +68,19 @@ struct Listener
 };
 
 /* Routes one event. Returns true when a handler consumed it, including the
-   built-in wheel scroll. */
-[[nodiscard]] bool dispatchEvent(ecs::World& world, ecs::Entity canvas, Event& event);
+   built-in wheel scroll. `forced_target`, when valid, replaces the widget under
+   the pointer — how a captured gesture keeps receiving its events. */
+[[nodiscard]] bool dispatchEvent(ecs::World& world, ecs::Entity canvas, Event& event,
+                                 ecs::Entity forced_target = {});
+
+/* Takes the pointer for `entity` until the release: moves and the release are
+   routed to it wherever the pointer goes, and the built-in gestures (scroll,
+   slider, splitter, scrub) stand aside. An application handler calls this from
+   a PointerDown. */
+[[nodiscard]] bool capturePointer(ecs::World& world, ecs::Entity canvas, ecs::Entity entity);
+
+/* Drops the capture early; the release does it too. */
+void releasePointer(ecs::World& world, ecs::Entity canvas);
 
 /* Touch-style scrolling: the first viewport on the chain from the widget under
    the point upward that can still move follows the finger. `pixels` is the

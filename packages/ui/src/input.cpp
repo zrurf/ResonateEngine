@@ -287,11 +287,15 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         }
     }
 
+    /* A captured gesture keeps every move and the release; the pointer's own
+       position no longer picks the target. */
+    const bool captured = pointer->capture.valid() && world.alive(pointer->capture);
+    const ecs::Entity routing = captured ? pointer->capture : ecs::Entity{};
     Event move{};
     move.kind = EventKind::PointerMove;
     move.x = x;
     move.y = y;
-    dispatchEvent(world, canvas, move);
+    dispatchEvent(world, canvas, move, routing);
 
     bool pressed_this_sample = false;
     if (down && !pointer->down)
@@ -321,22 +325,25 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         /* A press on a slider jumps its value there and owns the gesture; the
            release then neither activates nor clicks it. */
         /* Gesture widgets need not be Input widgets themselves (a divider is a
-           plain box), so the lookup starts at the raw hit. */
+           plain box), so the lookup starts at the raw hit. A handler that
+           captured the pointer owns the gesture instead. */
+        const bool captured_now = pointer->capture.valid();
         const ecs::Entity hit = hitTest(world, canvas, x, y);
-        drag->slider = sliderAt(world, hit);
+        drag->slider = captured_now ? ecs::Entity{} : sliderAt(world, hit);
         if (drag->slider.valid())
         {
             applySlider(world, drag->slider, x);
             pointer->press = ecs::Entity{};
             world.markChanged<PointerState>(canvas);
         }
-        drag->splitter = drag->slider.valid() ? ecs::Entity{} : splitterAt(world, hit);
+        drag->splitter =
+            captured_now || drag->slider.valid() ? ecs::Entity{} : splitterAt(world, hit);
         if (drag->splitter.valid())
         {
             pointer->press = ecs::Entity{};
             world.markChanged<PointerState>(canvas);
         }
-        if (!drag->slider.valid() && !drag->splitter.valid())
+        if (!captured_now && !drag->slider.valid() && !drag->splitter.valid())
         {
             drag->scrubber = scrubberAt(world, hit);
             if (drag->scrubber.valid())
@@ -366,7 +373,12 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         const ecs::Entity press = pointer->press;
         Event released = move;
         released.kind = EventKind::PointerUp;
-        dispatchEvent(world, canvas, released);
+        dispatchEvent(world, canvas, released, routing);
+        if (pointer->capture.valid())
+        {
+            pointer->capture = ecs::Entity{};
+            world.markChanged<PointerState>(canvas);
+        }
         if (press.valid() && world.alive(press))
         {
             if (press == hover)
@@ -381,7 +393,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                 }
                 Event clicked = move;
                 clicked.kind = EventKind::Click;
-                dispatchEvent(world, canvas, clicked);
+                dispatchEvent(world, canvas, clicked, routing);
             }
             setState(world, press, press == hover
                                       ? WidgetState::Hovered
@@ -404,7 +416,12 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
     /* Once the finger travels past the slop the press becomes a drag: drop the
        pending press so the release neither activates nor clicks, and let the
        viewport chain under the finger follow it. */
-    if (drag->pressed && pointer->down && drag->slider.valid())
+    if (captured)
+    {
+        /* The handler that captured the pointer drives the gesture; the
+           built-in scroll, slider, splitter and scrub stay out of it. */
+    }
+    else if (drag->pressed && pointer->down && drag->slider.valid())
     {
         if (!pressed_this_sample)
         {

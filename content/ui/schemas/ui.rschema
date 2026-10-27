@@ -207,13 +207,18 @@
     <migrate from="1" to="2"/>
   </component>
 
-  <!-- The pointer's current target, derived by the input system. -->
-  <component name="PointerState" version="1" derived="true">
+  <!-- The pointer's current target, derived by the input system. `capture` is
+       the widget an application handler took the pointer for on press: moves
+       and the release route to it and the built-in gestures stand aside. -->
+  <component name="PointerState" version="2" derived="true">
     <field name="hover" type="entity"/>
     <field name="press" type="entity"/>
     <field name="activated" type="entity"/>
     <field name="focused" type="entity"/>
+    <field name="capture" type="entity"/>
     <field name="down" type="bool"/>
+
+    <migrate from="1" to="2"/>
   </component>
 
   <!-- The caret of an editable text field: a byte offset into the UTF-8

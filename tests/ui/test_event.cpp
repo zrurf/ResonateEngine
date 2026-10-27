@@ -307,6 +307,44 @@ resonate::ui::ComputedRect rect_of(World& world, Entity entity)
 
 } // namespace
 
+namespace
+{
+
+/* Captures the pointer on the press and records where its events went. */
+struct CaptureGrabber
+{
+    std::vector<std::string> calls;
+    bool grab = false;
+};
+
+bool grab_on_press(void* context, resonate::ecs::World& world, Entity widget,
+                   resonate::ui::EventPhase phase, resonate::ui::Event& event)
+{
+    auto* grabber = static_cast<CaptureGrabber*>(context);
+    const char kinds[] = {'d', 'u', 'm', 'k', 'w'};
+    if (phase == resonate::ui::EventPhase::Target)
+    {
+        grabber->calls.emplace_back(std::string(1, kinds[static_cast<int>(event.kind)]));
+        if (event.kind == resonate::ui::EventKind::PointerDown)
+        {
+            Entity canvas = widget;
+            while (true)
+            {
+                const Entity parent = resonate::hierarchy::parentOf(world, canvas);
+                if (!parent.valid())
+                {
+                    break;
+                }
+                canvas = parent;
+            }
+            grabber->grab = resonate::ui::capturePointer(world, canvas, widget);
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 TEST_CASE("ui event: a click toggles a checkbox and draws its box", "[ui][event]")
 {
     const char * const text = R"xml(<document version="1" schemas="resonate.ui">
@@ -583,4 +621,37 @@ TEST_CASE("ui event: a selectable row is one choice among its siblings", "[ui][e
     REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 70.0F, true));
     REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 70.0F, false));
     CHECK(world.get<resonate::ui::Selectable>(rows[2])->selected);
+}
+
+TEST_CASE("ui event: a captured pointer keeps routing to its handler", "[ui][event]")
+{
+    Fixture fixture;
+    CaptureGrabber grabber;
+    REQUIRE(fixture.world.add(fixture.rows[0], Listener{grab_on_press, &grabber, 0xFFFFU}) !=
+            nullptr);
+
+    /* The press captures; from then on the row sees the moves wherever the
+       pointer goes, and the viewport does not scroll under it. */
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 10.0F, true));
+    const resonate::ui::PointerState* pointer =
+        fixture.world.get<resonate::ui::PointerState>(fixture.root);
+    REQUIRE(pointer != nullptr);
+    CHECK(pointer->capture == fixture.rows[0]);
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 80.0F, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 150.0F, true));
+    const ScrollView* view = fixture.world.get<ScrollView>(fixture.list);
+    REQUIRE(view != nullptr);
+    CHECK(near(view->scroll, 0.0F));
+    const std::size_t moves = static_cast<std::size_t>(
+        std::count(grabber.calls.begin(), grabber.calls.end(), std::string("m")));
+    CHECK(moves >= 3U);
+
+    /* The release ends the capture and the row was never clicked. */
+    REQUIRE(resonate::ui::updateInput(fixture.world, fixture.root, 10.0F, 150.0F, false));
+    pointer = fixture.world.get<resonate::ui::PointerState>(fixture.root);
+    REQUIRE(pointer != nullptr);
+    CHECK_FALSE(pointer->capture.valid());
+    const Input* input = fixture.world.get<Input>(fixture.rows[0]);
+    REQUIRE(input != nullptr);
+    CHECK_FALSE(input->activated);
 }

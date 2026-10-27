@@ -116,13 +116,38 @@ bool scrollWalk(ecs::World& world, ecs::Entity canvas, float x, float y, Wanted 
 
 } // namespace
 
+bool capturePointer(ecs::World& world, ecs::Entity canvas, ecs::Entity entity)
+{
+    PointerState* pointer = world.get<PointerState>(canvas);
+    if (pointer == nullptr)
+    {
+        return false;
+    }
+    if (pointer->capture != entity)
+    {
+        pointer->capture = entity;
+        world.markChanged<PointerState>(canvas);
+    }
+    return true;
+}
+
+void releasePointer(ecs::World& world, ecs::Entity canvas)
+{
+    PointerState* pointer = world.get<PointerState>(canvas);
+    if (pointer != nullptr && pointer->capture.valid())
+    {
+        pointer->capture = ecs::Entity{};
+        world.markChanged<PointerState>(canvas);
+    }
+}
+
 bool dragScroll(ecs::World& world, ecs::Entity canvas, float x, float y, float pixels)
 {
     return scrollWalk(world, canvas, x, y,
                       [pixels](const ScrollView& view) { return view.scroll - pixels; });
 }
 
-bool dispatchEvent(ecs::World& world, ecs::Entity canvas, Event& event)
+bool dispatchEvent(ecs::World& world, ecs::Entity canvas, Event& event, ecs::Entity forced_target)
 {
     if (!world.alive(canvas))
     {
@@ -130,7 +155,8 @@ bool dispatchEvent(ecs::World& world, ecs::Entity canvas, Event& event)
     }
     std::vector<ecs::Entity>& path = scratch();
     std::size_t count = 0U;
-    const ecs::Entity target = eventTarget(world, canvas, event.x, event.y);
+    const ecs::Entity target = forced_target.valid() ? forced_target
+                                                     : eventTarget(world, canvas, event.x, event.y);
     if (target.valid())
     {
         collectPath(world, canvas, target, path);
