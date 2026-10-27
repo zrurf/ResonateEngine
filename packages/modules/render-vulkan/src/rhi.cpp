@@ -192,8 +192,9 @@ void Context::destroyBuffer(ResonateRenderBuffer handle)
         Retired{kRetiredBuffer, static_cast<void*>(slot->buffer), slot->allocation});
     if (slot->in_table)
     {
-        /* The slot is reused by the next storage buffer, which writes its own
-           binding; nothing samples a retired one. */
+        /* A frame in flight may still read this slot: point it at the dummy
+           buffer before the slot is handed to the next resource. */
+        writeBufferSlot(slot->table_slot, table_dummy_, 256U);
         releaseTableSlot(free_storage_slots_, slot->table_slot);
         slot->in_table = false;
     }
@@ -328,7 +329,9 @@ void Context::destroyImage(ResonateRenderImage handle)
         Retired{kRetiredImage, static_cast<void*>(slot->image), slot->allocation});
     if (slot->in_table)
     {
-        /* Reused by the next sampled image, which writes its own binding. */
+        /* A frame in flight may still name this slot in a draw: point it at the
+           dummy view before the slot is handed to the next image. */
+        writeImageSlot(slot->table_slot, table_dummy_view_, false);
         releaseTableSlot(free_image_slots_, slot->table_slot);
         slot->in_table = false;
     }

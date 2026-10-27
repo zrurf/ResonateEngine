@@ -839,6 +839,16 @@ ResonateStatus Context::ensureDevice()
 
     bool partially_bound = false;
     bool non_uniform = false;
+    const bool uab_sampled =
+        core_indexing
+            ? vulkan12.descriptorBindingSampledImageUpdateAfterBind != 0U
+            : (extension_indexing ? indexing.descriptorBindingSampledImageUpdateAfterBind != 0U
+                                  : false);
+    const bool uab_storage =
+        core_indexing
+            ? vulkan12.descriptorBindingStorageBufferUpdateAfterBind != 0U
+            : (extension_indexing ? indexing.descriptorBindingStorageBufferUpdateAfterBind != 0U
+                                  : false);
     if (core_indexing)
     {
         partially_bound = vulkan12.descriptorBindingPartiallyBound;
@@ -852,6 +862,9 @@ ResonateStatus Context::ensureDevice()
     /* RESONATE_FORCE_COMPAT exercises the compat shaders on a capable device. */
     bindless_ = partially_bound && non_uniform &&
                 std::getenv("RESONATE_FORCE_COMPAT") == nullptr;
+    /* A table slot is rewritten while frames may still sample the set; only a
+       device with update-after-bind lets the write skip the idle wait. */
+    update_after_bind_ = bindless_ && uab_sampled && uab_storage;
 
     const bool dynamic_buffers = features.features.shaderStorageBufferArrayDynamicIndexing;
     const bool dynamic_images = features.features.shaderSampledImageArrayDynamicIndexing;
@@ -883,6 +896,11 @@ ResonateStatus Context::ensureDevice()
     {
         enabled12.descriptorBindingPartiallyBound = VK_TRUE;
         enabled12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        if (update_after_bind_)
+        {
+            enabled12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+            enabled12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+        }
         enabled12.pNext = &enabled11;
         interface_chain = &enabled12;
     }
@@ -890,6 +908,11 @@ ResonateStatus Context::ensureDevice()
     {
         enabled_indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
         enabled_indexing.descriptorBindingPartiallyBound = VK_TRUE;
+        if (update_after_bind_)
+        {
+            enabled_indexing.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+            enabled_indexing.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+        }
         enabled_indexing.pNext = &enabled11;
         interface_chain = &enabled_indexing;
     }
@@ -1039,10 +1062,22 @@ ResonateStatus Context::ensureDevice()
     table_bindings[kFrameBinding].stageFlags =
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
-    VkDescriptorBindingFlags binding_flags[kTableBindingCount] = {};
-    for (VkDescriptorBindingFlags& flags : binding_flags)
+    VkDescriptorBindingFlags table_flags = 0U;
+    if (bindless_)
     {
-        flags = bindless_ ? VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT : 0U;
+        table_flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+        if (update_after_bind_)
+        {
+            table_flags |= VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+                           VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
+        }
+    }
+    VkDescriptorBindingFlags binding_flags[kTableBindingCount] = {};
+    for (uint32_t binding = 0; binding < kTableBindingCount; ++binding)
+    {
+        /* The frame block is written once at setup; only the tables are
+           rewritten while frames are in flight. */
+        binding_flags[binding] = binding == kFrameBinding ? 0U : table_flags;
     }
     VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{};
     binding_flags_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
@@ -1069,6 +1104,8 @@ ResonateStatus Context::ensureDevice()
     table_pool_sizes[2].descriptorCount = 1;
     VkDescriptorPoolCreateInfo table_pool{};
     table_pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    table_pool.flags =
+        update_after_bind_ ? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT : 0U;
     table_pool.maxSets = 1;
     table_pool.poolSizeCount = 3;
     table_pool.pPoolSizes = table_pool_sizes;
@@ -1985,6 +2022,22 @@ ResonateStatus Context::nativeImage(ResonateRenderImage handle,
     return RESONATE_OK;
 }
 
+void Context::updateTable(const VkWriteDescriptorSet* writes, uint32_t count)
+{
+    if (device_ == VK_NULL_HANDLE || writes == nullptr || count == 0U)
+    {
+        return;
+    }
+    if (!update_after_bind_)
+    {
+        /* Without update-after-bind the set must not be written while any frame
+           may read it; table writes are rare, so the idle wait is the honest
+           price. */
+        vkDeviceWaitIdle(device_);
+    }
+    vkUpdateDescriptorSets(device_, count, writes, 0, nullptr);
+}
+
 void Context::writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size)
 {
     VkDescriptorBufferInfo buffer_info{};
@@ -2002,7 +2055,7 @@ void Context::writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size)
         writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[binding].pBufferInfo = &buffer_info;
     }
-    vkUpdateDescriptorSets(device_, kStorageTableBindings, writes, 0, nullptr);
+    updateTable(writes, kStorageTableBindings);
 }
 
 void Context::writeImageSlot(uint32_t slot, VkImageView view, bool nearest)
@@ -2019,7 +2072,7 @@ void Context::writeImageSlot(uint32_t slot, VkImageView view, bool nearest)
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &image_info;
-    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    updateTable(&write, 1);
 }
 
 void Context::drainGraveyard(std::vector<Retired>& graveyard)
@@ -2097,7 +2150,17 @@ ResonateStatus Context::beginFrame()
     const std::size_t slot = frame_ % kFramesInFlight;
     if (frame.fence_pending)
     {
-        vkWaitForFences(device_, 1, &frame.in_flight, VK_TRUE, UINT64_MAX);
+        /* A submission that never signals its fence must not hang the render
+           thread forever: five seconds and the device is written off, the same
+           way a failed submit is. */
+        const VkResult waited = vkWaitForFences(device_, 1, &frame.in_flight, VK_TRUE,
+                                                5ULL * 1000ULL * 1000ULL * 1000ULL);
+        if (waited == VK_TIMEOUT)
+        {
+            frame.fence_pending = false;
+            note(device_failed_, "the GPU did not finish the previous frame within five seconds");
+            return RESONATE_E_STATE;
+        }
     }
     if (trace_submit_ns_[slot] != 0U)
     {

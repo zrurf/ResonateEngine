@@ -400,6 +400,10 @@ class Context
        cannot run without the view projection. */
     static constexpr uint32_t kFrameBinding = 6;
     static constexpr uint32_t kTableBindingCount = kFrameBinding + 1;
+    /* The table is written while earlier frames may still read it; with
+       UPDATE_AFTER_BIND devices that is legal, without it the write waits for
+       idle first (table writes are rare: creation, destruction, rebinding). */
+    void updateTable(const VkWriteDescriptorSet* writes, uint32_t count);
     void writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size);
     void writeImageSlot(uint32_t slot, VkImageView view, bool nearest);
     bool acquireTableSlot(std::vector<uint32_t>& free_slots, uint32_t& out_slot);
@@ -439,6 +443,9 @@ class Context
     /* Whether the swapchain should prefer an sRGB surface format; a linear
        surface leaves the transfer function to the final pass. */
     bool prefer_srgb_ = true;
+    /* True when the sampled and storage table bindings carry UPDATE_AFTER_BIND,
+       so a slot may be rewritten while frames are in flight. */
+    bool update_after_bind_ = false;
     bool recreate_pending_ = false;
     ResonateRenderCanvas* canvas_ = nullptr; /* frame sizes come from here */
     uint32_t canvas_width_ = 0;
