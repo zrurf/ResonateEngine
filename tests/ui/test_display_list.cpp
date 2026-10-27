@@ -212,3 +212,26 @@ TEST_CASE("ui display list: draws carry the clip they are confined to", "[ui][di
     }
     CHECK(clipped == 2U);
 }
+
+TEST_CASE("ui display list: a slider narrower than its knob paints safely", "[ui][display-list]")
+{
+    /* A zero or narrow track used to clamp to inverted bounds and trip the
+       debug STL; the knob just parks at the track's left edge now. */
+    Fixture fixture;
+    const Entity track = fixture.add(fixture.root, 0.0F, 0.0F, 6.0F, 20.0F, 0,
+                                     resonate::Vec4{0.2F, 0.2F, 0.2F, 1.0F});
+    resonate::ui::Slider slider;
+    slider.value = 0.5F;
+    slider.min = 0.0F;
+    slider.max = 1.0F;
+    REQUIRE(fixture.world.add(track, slider) != nullptr);
+
+    const Entity zero = fixture.add(fixture.root, 0.0F, 40.0F, 0.0F, 0.0F, 0,
+                                    resonate::Vec4{0.2F, 0.2F, 0.2F, 1.0F});
+    REQUIRE(fixture.world.add(zero, slider) != nullptr);
+    fixture.finish();
+
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, fixture.root, list));
+    CHECK_FALSE(list.quads().empty());
+}

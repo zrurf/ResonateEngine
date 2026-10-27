@@ -227,8 +227,10 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         }
         const float knob_width = 10.0F;
         const float knob_height = 14.0F;
-        const float knob_x = std::clamp(rect->x + rect->width * fraction - knob_width * 0.5F,
-                                        rect->x, rect->x + rect->width - knob_width);
+        /* The knob travels within the track; a track narrower than the knob has
+           no travel at all (clamping to width - knob would invert the bounds). */
+        const float knob_travel = std::fmax(0.0F, rect->width - knob_width);
+        const float knob_x = rect->x + knob_travel * fraction;
         if (visible(clip, knob_x, rect->y, knob_width, knob_height))
         {
             quads_.push_back(Quad{knob_x, rect->y + (rect->height - knob_height) * 0.5F,

@@ -13,7 +13,7 @@ namespace
 
 int32_t keyDown(void* self, ResonateKey key)
 {
-    const auto* state = static_cast<const WindowState*>(self);
+    auto* state = static_cast<WindowState*>(self);
     if (state == nullptr || key >= RESONATE_KEY_COUNT)
     {
         return 0;
@@ -23,7 +23,7 @@ int32_t keyDown(void* self, ResonateKey key)
 
 int32_t keyPressed(void* self, ResonateKey key)
 {
-    const auto* state = static_cast<const WindowState*>(self);
+    auto* state = static_cast<WindowState*>(self);
     if (state == nullptr || key >= RESONATE_KEY_COUNT)
     {
         return 0;

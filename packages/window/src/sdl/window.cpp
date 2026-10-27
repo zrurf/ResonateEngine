@@ -143,12 +143,14 @@ void closeGamepad(WindowState& state, SDL_JoystickID id)
 
 void refreshInput(InputState& input)
 {
+    /* Only the held state is sampled here. A press is latched by the key-down
+       event and consumed by the read: sampling it from the keyboard state lost
+       every tap that went down and up between two frames, which read as
+       "backspace sometimes does nothing". */
     const bool* keyboard = SDL_GetKeyboardState(nullptr);
     for (int key = 0; key < RESONATE_KEY_COUNT; ++key)
     {
-        const bool down = keyboard != nullptr && keyboard[key];
-        input.pressed[key] = down && !input.held[key];
-        input.held[key] = down;
+        input.held[key] = keyboard != nullptr && keyboard[key];
     }
 
     float x = 0.0F;
@@ -181,6 +183,15 @@ void pumpEvents(void* self)
         return;
     }
 
+    /* Presses are latched by this pump's key-down events and read by every
+       consumer of the frame; the previous frame's latches clear here. Sampling
+       them from the keyboard state instead lost every tap that went down and up
+       between two frames. */
+    for (int key = 0; key < RESONATE_KEY_COUNT; ++key)
+    {
+        state->input.pressed[key] = false;
+    }
+
     SDL_Event event = {};
     while (SDL_PollEvent(&event))
     {
@@ -198,6 +209,17 @@ void pumpEvents(void* self)
                 SDL_GetWindowSizeInPixels(state->handle, &pixels_w, &pixels_h);
                 state->width = static_cast<uint32_t>(pixels_w);
                 state->height = static_cast<uint32_t>(pixels_h);
+                break;
+            }
+            case SDL_EVENT_KEY_DOWN:
+            {
+                /* Latched, repeats included: a held key keeps the latch set so
+                   one read per frame deletes one character per frame. */
+                const int key = static_cast<int>(event.key.scancode);
+                if (key >= 0 && key < RESONATE_KEY_COUNT)
+                {
+                    state->input.pressed[key] = true;
+                }
                 break;
             }
             case SDL_EVENT_MOUSE_WHEEL:
