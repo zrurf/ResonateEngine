@@ -478,9 +478,28 @@ TEST_CASE("offscreen: the probe pipeline reads the same texel at 1x and 4x",
     ResonateRenderImage shadow = {};
     REQUIRE(device->create_image(device->self, &shadow_image, &shadow) == RESONATE_OK);
 
+    /* The frame-data storage the probe's fragment reads: the sun term at the
+       scene's offset. */
+    ResonateRenderBufferDesc frame_desc = {};
+    frame_desc.struct_size = sizeof(frame_desc);
+    frame_desc.size_bytes = 1024U;
+    frame_desc.usage = RESONATE_RENDER_BUFFER_STORAGE;
+    ResonateRenderBuffer frame_buffer = {};
+    REQUIRE(device->create_buffer(device->self, &frame_desc, &frame_buffer) == RESONATE_OK);
+    std::vector<std::uint8_t> frame_bytes(1024U, 0U);
+    const float sun[4] = {1.0F, 1.0F, 1.0F, 2.0F};
+    /* view_proj 64 + camera_world 64 + camera_and_near 16 + direction_and_far 16 */
+    std::memcpy(frame_bytes.data() + 160U, sun, sizeof(sun));
+    const std::uint32_t frame_slot = device->buffer_slot(device->self, frame_buffer);
+
     const auto frame = [&](std::uint32_t samples)
     {
         REQUIRE(device->begin_frame(device->self) == RESONATE_OK);
+        /* The renderer uploads the frame data inside the open frame; the
+           update lands with the frame's own command stream. */
+        REQUIRE(device->update_buffer(device->self, frame_buffer, 0U, frame_bytes.data(),
+                                      static_cast<std::uint64_t>(frame_bytes.size())) ==
+                RESONATE_OK);
         ResonateRenderPassDesc shadow_pass = {};
         shadow_pass.struct_size = sizeof(shadow_pass);
         shadow_pass.colorless = 1U;
@@ -501,7 +520,12 @@ TEST_CASE("offscreen: the probe pipeline reads the same texel at 1x and 4x",
         REQUIRE(device->begin_pass(device->self, &pass) == RESONATE_OK);
         REQUIRE(device->bind_pipeline(device->self, probes[samples == 1U ? 0U : 1U]) ==
                 RESONATE_OK);
-        const std::uint32_t constants[5] = {0U, 0U, 0U, 0U, 0U}; /* slots, texture slot 0 */
+        /* The scene push's shape: model (64 B), tint (16 B), slots (16 B),
+           slots2 (16 B), texture_slot (4 B). The fragment reads the frame
+           slot and the texture slot. */
+        std::uint32_t constants[29] = {};
+        constants[20] = frame_slot;
+        constants[28] = 0U; /* texture slot 0 */
         REQUIRE(device->set_constants(device->self, constants, sizeof(constants)) == RESONATE_OK);
         REQUIRE(device->draw(device->self, 3U, 1U) == RESONATE_OK);
         REQUIRE(device->end_pass(device->self) == RESONATE_OK);
@@ -518,14 +542,107 @@ TEST_CASE("offscreen: the probe pipeline reads the same texel at 1x and 4x",
                                         &height) == RESONATE_OK);
         return pixels[0];
     };
+    std::uint32_t frame_runs = 0U;
 
-    frame(1U);
-    frame(1U);
+    /* The renderer's structure: the scene pass renders into an explicit HDR
+       image (the 4x resolve target), then a 1x post pass samples that image
+       and writes the canvas. */
+    ResonateRenderImageDesc hdr_desc = {};
+    hdr_desc.struct_size = sizeof(hdr_desc);
+    hdr_desc.format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+    hdr_desc.width = 64U;
+    hdr_desc.height = 64U;
+    hdr_desc.usage = RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED;
+    ResonateRenderImage hdr = {};
+    REQUIRE(device->create_image(device->self, &hdr_desc, &hdr) == RESONATE_OK);
+
+    std::vector<std::uint8_t> copy_spirv;
+    read_file(shader_directory + "/probe.probeCopy.spv", copy_spirv);
+    ResonateRenderShader copy_shader = {};
+    REQUIRE(device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT,
+                                  copy_spirv.data(), copy_spirv.size(),
+                                  &copy_shader) == RESONATE_OK);
+    ResonateRenderGraphicsPipelineDesc copy_desc = {};
+    copy_desc.struct_size = sizeof(copy_desc);
+    copy_desc.vertex_shader = vertex;
+    copy_desc.fragment_shader = copy_shader;
+    copy_desc.color_format = RESONATE_RENDER_FORMAT_UNKNOWN; /* the canvas */
+    ResonateRenderPipeline copy_pipeline = {};
+    REQUIRE(device->create_pipeline(device->self, &copy_desc, &copy_pipeline) == RESONATE_OK);
+    REQUIRE(device->bind_image_slot(device->self, 1U, hdr, 0U) == RESONATE_OK);
+
+    const auto hdr_frame = [&](std::uint32_t samples)
+    {
+        REQUIRE(device->begin_frame(device->self) == RESONATE_OK);
+        /* The previous frame left the HDR as a shader read; the scene pass
+           needs it back as an attachment. */
+        ResonateRenderBarrierDesc to_write = {};
+        to_write.struct_size = sizeof(to_write);
+        to_write.image = hdr;
+        to_write.before_stages = RESONATE_RENDER_STAGE_FRAGMENT;
+        to_write.after_stages = RESONATE_RENDER_STAGE_COLOR_OUTPUT;
+        to_write.before_access = RESONATE_RENDER_ACCESS_SHADER_READ;
+        to_write.after_access = RESONATE_RENDER_ACCESS_COLOR_WRITE;
+        to_write.before_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
+        to_write.after_layout = RESONATE_RENDER_LAYOUT_COLOR_ATTACHMENT;
+        if (frame_runs != 0U)
+        {
+            REQUIRE(device->barrier(device->self, &to_write) == RESONATE_OK);
+        }
+        ++frame_runs;
+        REQUIRE(device->update_buffer(device->self, frame_buffer, 0U, frame_bytes.data(),
+                                      static_cast<std::uint64_t>(frame_bytes.size())) ==
+                RESONATE_OK);
+        ResonateRenderPassDesc pass = {};
+        pass.struct_size = sizeof(pass);
+        pass.color = hdr;
+        pass.clear_color = ResonateVec4{0.0F, 0.0F, 0.0F, 1.0F};
+        pass.samples = samples;
+        REQUIRE(device->begin_pass(device->self, &pass) == RESONATE_OK);
+        REQUIRE(device->bind_pipeline(device->self, probes[samples == 1U ? 0U : 1U]) ==
+                RESONATE_OK);
+        std::uint32_t constants[29] = {};
+        constants[20] = frame_slot;
+        constants[28] = 0U;
+        REQUIRE(device->set_constants(device->self, constants, sizeof(constants)) == RESONATE_OK);
+        REQUIRE(device->draw(device->self, 3U, 1U) == RESONATE_OK);
+        REQUIRE(device->end_pass(device->self) == RESONATE_OK);
+        /* The graph would emit this between the passes: the resolved target
+           leaves the attachment layout and becomes a shader read. */
+        ResonateRenderBarrierDesc to_read = {};
+        to_read.struct_size = sizeof(to_read);
+        to_read.image = hdr;
+        to_read.before_stages = RESONATE_RENDER_STAGE_COLOR_OUTPUT;
+        to_read.after_stages = RESONATE_RENDER_STAGE_FRAGMENT;
+        to_read.before_access = RESONATE_RENDER_ACCESS_COLOR_WRITE;
+        to_read.after_access = RESONATE_RENDER_ACCESS_SHADER_READ;
+        to_read.before_layout = RESONATE_RENDER_LAYOUT_COLOR_ATTACHMENT;
+        to_read.after_layout = RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY;
+        REQUIRE(device->barrier(device->self, &to_read) == RESONATE_OK);
+        /* The post stand-in: the canvas samples the resolved target. */
+        ResonateRenderPassDesc post = {};
+        post.struct_size = sizeof(post);
+        post.color.value = 0U;
+        post.clear_color = ResonateVec4{0.0F, 0.0F, 0.0F, 1.0F};
+        REQUIRE(device->begin_pass(device->self, &post) == RESONATE_OK);
+        REQUIRE(device->bind_pipeline(device->self, copy_pipeline) == RESONATE_OK);
+        std::uint32_t post_constants[29] = {};
+        post_constants[28] = 1U; /* the resolved HDR sits at table slot 1 */
+        REQUIRE(device->set_constants(device->self, post_constants,
+                                      sizeof(post_constants)) == RESONATE_OK);
+        REQUIRE(device->draw(device->self, 3U, 1U) == RESONATE_OK);
+        REQUIRE(device->end_pass(device->self) == RESONATE_OK);
+        REQUIRE(device->present(device->self) == RESONATE_OK);
+        REQUIRE(device->wait_idle(device->self) == RESONATE_OK);
+    };
+
+    hdr_frame(1U);
+    hdr_frame(1U);
     const std::uint8_t at_1x = read_red();
-    CHECK(at_1x > 200U); /* the white texel through the table */
+    CHECK(at_1x > 200U); /* the white texel through the table and the copy */
 
-    frame(4U);
-    frame(4U);
+    hdr_frame(4U);
+    hdr_frame(4U);
     const std::uint8_t at_4x = read_red();
     INFO("probe texel at 1x=" << static_cast<int>(at_1x) << " at 4x=" << static_cast<int>(at_4x));
     CHECK(at_4x == at_1x);
