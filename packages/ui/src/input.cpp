@@ -143,6 +143,32 @@ void applySplitter(ecs::World& world, ecs::Entity entity, float dx, float dy)
     }
 }
 
+/* The nearest widget on the hit chain that carries a Scrubber. */
+ecs::Entity scrubberAt(ecs::World& world, ecs::Entity entity)
+{
+    for (std::uint32_t depth = 0U; entity.valid() && depth <= hierarchy::kMaxDepth; ++depth)
+    {
+        if (world.get<Scrubber>(entity) != nullptr)
+        {
+            return entity;
+        }
+        entity = hierarchy::parentOf(world, entity);
+    }
+    return {};
+}
+
+/* Horizontal motion changes the value; the application owns the range. */
+void applyScrubber(ecs::World& world, ecs::Entity entity, float dx)
+{
+    Scrubber* scrubber = world.get<Scrubber>(entity);
+    if (scrubber == nullptr || dx == 0.0F)
+    {
+        return;
+    }
+    scrubber->value += dx * scrubber->step;
+    world.markChanged<Scrubber>(entity);
+}
+
 /* The nearest widget on the hit chain that carries a Slider. */
 ecs::Entity sliderAt(ecs::World& world, ecs::Entity entity)
 {
@@ -310,6 +336,15 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
             pointer->press = ecs::Entity{};
             world.markChanged<PointerState>(canvas);
         }
+        if (!drag->slider.valid() && !drag->splitter.valid())
+        {
+            drag->scrubber = scrubberAt(world, hit);
+            if (drag->scrubber.valid())
+            {
+                pointer->press = ecs::Entity{};
+                world.markChanged<PointerState>(canvas);
+            }
+        }
         drag->pressed = true;
         drag->dragging = false;
         drag->press_x = x;
@@ -327,6 +362,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         drag->dragging = false;
         drag->slider = ecs::Entity{};
         drag->splitter = ecs::Entity{};
+        drag->scrubber = ecs::Entity{};
         const ecs::Entity press = pointer->press;
         Event released = move;
         released.kind = EventKind::PointerUp;
@@ -380,6 +416,13 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         if (!pressed_this_sample)
         {
             applySplitter(world, drag->splitter, x - last_x, y - last_y);
+        }
+    }
+    else if (drag->pressed && pointer->down && drag->scrubber.valid())
+    {
+        if (!pressed_this_sample)
+        {
+            applyScrubber(world, drag->scrubber, x - last_x);
         }
     }
     else if (drag->pressed && pointer->down)

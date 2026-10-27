@@ -24,6 +24,8 @@ struct DragState
     ecs::Entity slider{};
     /* The divider this gesture drags, invalid for any other drag. */
     ecs::Entity splitter{};
+    /* The property label this gesture scrubs, invalid for any other drag. */
+    ecs::Entity scrubber{};
 };
 
 /* Samples the pointer once per frame against the canvas' retained tree.

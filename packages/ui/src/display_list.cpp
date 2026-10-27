@@ -185,6 +185,20 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
             }
         }
     }
+    if (const Selectable* selectable = world.get<Selectable>(entity))
+    {
+        const ComputedRect* rect = world.get<ComputedRect>(entity);
+        if (rect == nullptr)
+        {
+            return report(world, entity, "has Selectable but no ComputedRect");
+        }
+        if (selectable->selected && selectable->color.w > 0.0F &&
+            visible(clip, rect->x, rect->y, rect->width, rect->height))
+        {
+            quads_.push_back(
+                Quad{rect->x, rect->y, rect->width, rect->height, selectable->color});
+        }
+    }
     if (const Slider* slider = world.get<Slider>(entity))
     {
         const ComputedRect* rect = world.get<ComputedRect>(entity);

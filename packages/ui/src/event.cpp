@@ -219,6 +219,31 @@ bool dispatchEvent(ecs::World& world, ecs::Entity canvas, Event& event)
                 event.consumed = true;
                 return true;
             }
+            if (Selectable* selectable = world.get<Selectable>(entity))
+            {
+                /* Rows are one choice within their parent: selecting one
+                   clears the rest. */
+                const ecs::Entity parent = hierarchy::parentOf(world, entity);
+                if (parent.valid())
+                {
+                    for (const ecs::Entity sibling : hierarchy::children(world, parent))
+                    {
+                        Selectable* other = world.get<Selectable>(sibling);
+                        if (other != nullptr && other->selected)
+                        {
+                            other->selected = false;
+                            world.markChanged<Selectable>(sibling);
+                        }
+                    }
+                }
+                if (!selectable->selected)
+                {
+                    selectable->selected = true;
+                    world.markChanged<Selectable>(entity);
+                }
+                event.consumed = true;
+                return true;
+            }
         }
     }
     if (event.kind == EventKind::Wheel)

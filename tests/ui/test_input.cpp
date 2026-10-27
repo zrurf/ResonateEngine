@@ -357,3 +357,51 @@ TEST_CASE("ui input: dragging a splitter resizes the panes beside it", "[ui][inp
     REQUIRE(resonate::ui::updateInput(world, root, 323.0F, 50.0F, false));
     CHECK(near(width_of(left), 320.0F));
 }
+
+TEST_CASE("ui input: dragging a property label scrubs its value", "[ui][input]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="scrub" x="0" y="0" width="160" height="22" text="不透明度"
+           font_size="12">
+      <Input/>
+      <Scrubber step="0.5" value="10"/>
+    </Label>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 200.0F));
+    const Entity scrub = resonate::hierarchy::children(world, root)[0];
+
+    const auto value = [&]
+    {
+        const resonate::ui::Scrubber* scrubber = world.get<resonate::ui::Scrubber>(scrub);
+        REQUIRE(scrubber != nullptr);
+        return scrubber->value;
+    };
+    CHECK(near(value(), 10.0F));
+
+    /* The press itself changes nothing; the drag moves by step per pixel. */
+    REQUIRE(resonate::ui::updateInput(world, root, 40.0F, 10.0F, true));
+    CHECK(near(value(), 10.0F));
+    REQUIRE(resonate::ui::updateInput(world, root, 80.0F, 10.0F, true));
+    CHECK(near(value(), 30.0F));
+    REQUIRE(resonate::ui::updateInput(world, root, 60.0F, 10.0F, true));
+    CHECK(near(value(), 20.0F));
+
+    /* The release neither activates nor clicks the label. */
+    REQUIRE(resonate::ui::updateInput(world, root, 60.0F, 10.0F, false));
+    const resonate::ui::Input* input = world.get<resonate::ui::Input>(scrub);
+    REQUIRE(input != nullptr);
+    CHECK_FALSE(input->activated);
+    CHECK(near(value(), 20.0F));
+}

@@ -275,6 +275,20 @@
     <field name="axis" type="u32" default="0"/>
   </component>
 
+  <!-- A list row that highlights while selected: a click selects it and clears
+       its siblings, so a list behaves like one choice. -->
+  <component name="Selectable" version="1">
+    <field name="selected" type="bool" default="false"/>
+    <field name="color" type="vec4" default="0.0257 0.0684 0.1559 1"/>
+  </component>
+
+  <!-- A property label: dragging horizontally changes `value` by `step` per
+       pixel. The application reads the value and clamps it to its own range. -->
+  <component name="Scrubber" version="1">
+    <field name="step" type="f32" default="1.0"/>
+    <field name="value" type="f32" default="0.0"/>
+  </component>
+
   <!-- State-style overrides, compiled at instantiation; a blob on the canvas. -->
   <component name="StateStyles" version="1" derived="true">
     <field name="records" type="blob"/>

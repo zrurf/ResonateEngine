@@ -522,3 +522,65 @@ TEST_CASE("ui event: a tab click switches the visible page", "[ui][event]")
     CHECK(tabs->active == 1U);
     CHECK(resonate::ui::hitTest(world, root, 100.0F, 100.0F) == page_1);
 }
+
+TEST_CASE("ui event: a selectable row is one choice among its siblings", "[ui][event]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Panel key="list" x="0" y="0" width="200" height="90" direction="Column" align="Stretch">
+      <Button key="row-0" height="30" color="0.1 0.1 0.1 1">
+        <Selectable/>
+      </Button>
+      <Button key="row-1" height="30" color="0.1 0.1 0.1 1">
+        <Selectable/>
+      </Button>
+      <Button key="row-2" height="30" color="0.1 0.1 0.1 1">
+        <Selectable/>
+      </Button>
+    </Panel>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 200.0F));
+    const Entity list = resonate::hierarchy::children(world, root)[0];
+    const auto rows = resonate::hierarchy::children(world, list);
+    REQUIRE(rows.size() == 3U);
+
+    /* The first click selects row 0 and the highlight paints. */
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 10.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 10.0F, false));
+    const resonate::ui::Selectable* first = world.get<resonate::ui::Selectable>(rows[0]);
+    REQUIRE(first != nullptr);
+    CHECK(first->selected);
+    resonate::ui::DisplayList list_before;
+    REQUIRE(resonate::ui::buildDisplayList(world, root, list_before));
+    std::size_t highlight = 0U;
+    for (const resonate::ui::Quad& quad : list_before.quads())
+    {
+        if (quad.width == 200.0F && quad.height == 30.0F && quad.y == rect_of(world, rows[0]).y)
+        {
+            ++highlight;
+        }
+    }
+    CHECK(highlight >= 2U);
+
+    /* Selecting row 2 clears row 0. */
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 70.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 70.0F, false));
+    CHECK_FALSE(world.get<resonate::ui::Selectable>(rows[0])->selected);
+    CHECK(world.get<resonate::ui::Selectable>(rows[2])->selected);
+
+    /* Clicking the already selected row leaves it selected. */
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 70.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 70.0F, false));
+    CHECK(world.get<resonate::ui::Selectable>(rows[2])->selected);
+}
