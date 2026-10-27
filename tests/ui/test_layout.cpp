@@ -484,3 +484,63 @@ TEST_CASE("ui layout: align_self overrides the container's cross alignment", "[u
        grows the item. */
     fixture.requireRect(floored, 120.0F, 80.0F, 50.0F, 20.0F);
 }
+
+TEST_CASE("ui layout: shrink gives an overflowing line back in proportion", "[ui][layout]")
+{
+    Fixture fixture;
+    LayoutGroup group;
+    group.direction = FlexDirection::Row;
+    fixture.world.add(fixture.canvas, group);
+
+    const Entity first = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 200.0F, 20.0F));
+    fixture.world.add(first, LayoutItem{0.0F, 1.0F});
+    const Entity second = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 100.0F, 20.0F));
+    fixture.world.add(second, LayoutItem{0.0F, 1.0F});
+    fixture.finish();
+
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.canvas, 150.0F, 100.0F));
+
+    /* The overflow is 150 and the shrink weight is each item's own size, so
+       the wide one yields twice as much. */
+    fixture.requireRect(first, 0.0F, 0.0F, 100.0F, 20.0F);
+    fixture.requireRect(second, 100.0F, 0.0F, 50.0F, 20.0F);
+}
+
+TEST_CASE("ui layout: shrink freezes at a min and the rest redistributes", "[ui][layout]")
+{
+    Fixture fixture;
+    LayoutGroup group;
+    group.direction = FlexDirection::Row;
+    fixture.world.add(fixture.canvas, group);
+
+    const Entity floored = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 200.0F, 20.0F));
+    fixture.world.add(floored,
+                      LayoutItem{0.0F, 1.0F, SelfAlign::Auto, 0, 0, 0, 0, 180.0F});
+    const Entity free_item = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 200.0F, 20.0F));
+    fixture.world.add(free_item, LayoutItem{0.0F, 1.0F});
+    fixture.finish();
+
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.canvas, 300.0F, 100.0F));
+
+    /* An even share would put both at 150; the floor freezes at 180 and the
+       overflow it did not give flows to the other. */
+    fixture.requireRect(floored, 0.0F, 0.0F, 180.0F, 20.0F);
+    fixture.requireRect(free_item, 180.0F, 0.0F, 120.0F, 20.0F);
+}
+
+TEST_CASE("ui layout: an item that does not shrink keeps the line overflowing", "[ui][layout]")
+{
+    Fixture fixture;
+    LayoutGroup group;
+    group.direction = FlexDirection::Row;
+    fixture.world.add(fixture.canvas, group);
+
+    const Entity rigid = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 200.0F, 20.0F));
+    fixture.finish();
+
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.canvas, 100.0F, 100.0F));
+
+    /* Shrink is opt-in: without it the line overflows exactly as it always
+       did, which is what a flow column under a Scroll relies on. */
+    fixture.requireRect(rigid, 0.0F, 0.0F, 200.0F, 20.0F);
+}

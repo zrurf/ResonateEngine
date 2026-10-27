@@ -190,6 +190,7 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
         float cross_before = 0.0F;
         float cross_after = 0.0F;
         float grow = 0.0F;
+        float shrink = 0.0F;
         float min_main = 0.0F;
         float max_main = 0.0F;
         float min_cross = 0.0F;
@@ -225,6 +226,7 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
             item.cross_before = row ? config->margin_top : config->margin_left;
             item.cross_after = row ? config->margin_bottom : config->margin_right;
             item.grow = config->grow;
+            item.shrink = config->shrink;
             item.min_main = row ? config->min_width : config->min_height;
             item.max_main = row ? config->max_width : config->max_height;
             item.min_cross = row ? config->min_height : config->min_width;
@@ -295,6 +297,89 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
         if (count > 1U)
         {
             line.used += gap * static_cast<float>(count - 1U);
+        }
+
+        /* Shrink is grow's mirror on an overflowing line: each item gives back
+           its scaled share (shrink times its own base, so wide items yield
+           more), frozen at a min and the rest of the overflow redistributes
+           over the still-free bases. Max cannot bind here — shrink only goes
+           down, and the base already respected it. */
+        float overflow = line.used - main_extent;
+        if (overflow > 0.01F)
+        {
+            std::vector<float> base(count);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                base[index] = items[line.begin + index].main;
+            }
+            std::vector<bool> frozen(count, false);
+            for (bool again = true; again && overflow > 0.01F;)
+            {
+                again = false;
+                float scale_total = 0.0F;
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    const FlowItem& item = items[line.begin + index];
+                    if (!frozen[index] && base[index] > 0.0F)
+                    {
+                        scale_total += item.shrink * base[index];
+                    }
+                }
+                if (scale_total <= 0.0F)
+                {
+                    break;
+                }
+                bool froze_any = false;
+                float freed = 0.0F;
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    FlowItem& item = items[line.begin + index];
+                    if (frozen[index] || base[index] <= 0.0F || item.shrink <= 0.0F)
+                    {
+                        continue;
+                    }
+                    const float wanted =
+                        base[index] - overflow * (item.shrink * base[index]) / scale_total;
+                    const float shrunk = clamp_extent(wanted, item.min_main, 0.0F);
+                    if (shrunk > wanted + 0.01F)
+                    {
+                        item.main = shrunk;
+                        frozen[index] = true;
+                        froze_any = true;
+                        freed += base[index] - shrunk;
+                    }
+                }
+                if (froze_any)
+                {
+                    overflow -= freed;
+                    again = true;
+                }
+                else
+                {
+                    for (std::size_t index = 0; index < count; ++index)
+                    {
+                        FlowItem& item = items[line.begin + index];
+                        if (!frozen[index] && base[index] > 0.0F && item.shrink > 0.0F)
+                        {
+                            item.main = clamp_extent(
+                                base[index] - overflow * (item.shrink * base[index]) /
+                                                  scale_total,
+                                item.min_main, 0.0F);
+                        }
+                    }
+                    overflow = 0.0F;
+                }
+            }
+        }
+
+        /* Shrink changed the sizes, so the line's extent — and with it the
+           scroll content height and the space grow may hand out — comes from
+           the shrunk ones. */
+        line.used = count > 1U ? gap * static_cast<float>(count - 1U) : 0.0F;
+        for (std::size_t index = line.begin; index < line.end; ++index)
+        {
+            const FlowItem& item = items[index];
+            line.used += item.main + item.main_before + item.main_after;
         }
 
         /* Grow hands the free space out in proportion; an item that hits its
