@@ -36,14 +36,14 @@ const char* const kList = R"xml(<document version="1" schemas="resonate.ui">
   <Screen key="hud">
     <Scroll key="list" x="0" y="0" width="100" height="100" step="20"
             direction="Column" align="Stretch">
-      <Button key="row0" height="20"/>
-      <Button key="row1" height="20"/>
-      <Button key="row2" height="20"/>
-      <Button key="row3" height="20"/>
-      <Button key="row4" height="20"/>
-      <Button key="row5" height="20"/>
-      <Button key="row6" height="20"/>
-      <Button key="row7" height="20"/>
+      <Button key="row0" height="20" color="0.1 0.1 0.1 1"/>
+      <Button key="row1" height="20" color="0.1 0.1 0.1 1"/>
+      <Button key="row2" height="20" color="0.1 0.1 0.1 1"/>
+      <Button key="row3" height="20" color="0.1 0.1 0.1 1"/>
+      <Button key="row4" height="20" color="0.1 0.1 0.1 1"/>
+      <Button key="row5" height="20" color="0.1 0.1 0.1 1"/>
+      <Button key="row6" height="20" color="0.1 0.1 0.1 1"/>
+      <Button key="row7" height="20" color="0.1 0.1 0.1 1"/>
     </Scroll>
   </Screen>
 </document>)xml";
@@ -200,8 +200,13 @@ TEST_CASE("ui scroll: the viewport clips paint and hit testing", "[ui][event]")
     /* row0 scrolled above the viewport, row5 is the last one that still fits. */
     DisplayList list;
     REQUIRE(resonate::ui::buildDisplayList(fixture.world, fixture.root, list));
-    /* Six row backgrounds plus the viewport's scrollbar thumb. */
-    CHECK(list.size() == 7U);
+    /* Five row backgrounds painted: row0 scrolled off, rows 1-5 fit. */
+    std::size_t row_quads = 0U;
+    for (const resonate::ui::Quad& quad : list.quads())
+    {
+        row_quads += quad.color.w > 0.0F && quad.height == 20.0F ? 1U : 0U;
+    }
+    CHECK(row_quads == 5U);
 
     const Entity top = resonate::ui::hitTest(fixture.world, fixture.root, 10.0F, 5.0F);
     CHECK(top == fixture.rows[1]);

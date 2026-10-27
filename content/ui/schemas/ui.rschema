@@ -108,7 +108,9 @@
   <!-- A flat fill. The style compiler will resolve it from a class set; until
        then a widget carries its color directly. -->
   <component name="Background" version="2">
-    <field name="color" type="vec4" default="1 1 1 1"/>
+    <!-- Transparent by default: a label carries text, and a fill is something a
+         style or an attribute asks for. -->
+    <field name="color" type="vec4" default="0 0 0 0"/>
     <!-- An outline drawn inside the rect on all four edges; zero width draws
          none. -->
     <field name="border_color" type="vec4" default="0 0 0 0"/>

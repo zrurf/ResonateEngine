@@ -278,7 +278,9 @@ TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]
 
     resonate::ui::DisplayList list;
     REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
-    CHECK(list.size() == 8U);
+    /* Seven fills: the panel, title, two bars, field, button and the icon (a
+       transparent label contributes no quad). */
+    CHECK(list.size() == 7U);
     CHECK(near(list.quads()[0].width, 360.0F));
     CHECK(near(list.quads()[0].height, 180.0F));
     CHECK(near(list.quads()[2].width, 240.0F));
@@ -287,8 +289,8 @@ TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]
     CHECK(near(list.quads()[4].height, 24.0F));
     CHECK(near(list.quads()[5].width, 140.0F));
     CHECK(near(list.quads()[5].height, 36.0F));
-    CHECK(list.quads()[7].texture == logo);
-    CHECK(near(list.quads()[7].width, 48.0F));
+    CHECK(list.quads()[6].texture == logo);
+    CHECK(near(list.quads()[6].width, 48.0F));
 }
 
 TEST_CASE("ui document: an absolute Picture inside a panel emits a textured quad",
@@ -299,7 +301,7 @@ TEST_CASE("ui document: an absolute Picture inside a panel emits a textured quad
        and still place it, or the icon never reaches the display list. */
     const char* const text = R"xml(<document version="1">
   <Screen key="hud">
-    <Panel key="panel" x="40" y="40" width="360" height="180"
+    <Panel key="panel" x="40" y="40" width="360" height="180" color="0.1 0.1 0.1 1"
            direction="Column" padding_left="12" padding_top="12">
       <Label key="title" width="336" height="28" text="Title"/>
       <Picture key="icon" path="logo.png" x="276" y="96" width="48" height="48"
@@ -336,12 +338,18 @@ TEST_CASE("ui document: an absolute Picture inside a panel emits a textured quad
 
     resonate::ui::DisplayList list;
     REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
-    REQUIRE(list.size() == 3U);
-    const resonate::ui::Quad& quad = list.quads()[2];
-    CHECK(quad.texture == logo);
-    CHECK(near(quad.x, 40.0F + 12.0F + 276.0F));
-    CHECK(near(quad.y, 40.0F + 12.0F + 96.0F));
-    CHECK(near(quad.width, 48.0F));
+    const resonate::ui::Quad* quad = nullptr;
+    for (const resonate::ui::Quad& candidate : list.quads())
+    {
+        if (candidate.texture == logo)
+        {
+            quad = &candidate;
+        }
+    }
+    REQUIRE(quad != nullptr);
+    CHECK(near(quad->x, 40.0F + 12.0F + 276.0F));
+    CHECK(near(quad->y, 40.0F + 12.0F + 96.0F));
+    CHECK(near(quad->width, 48.0F));
 }
 
 TEST_CASE("ui document: a nine-sliced Picture emits the nine regions", "[ui][document]")

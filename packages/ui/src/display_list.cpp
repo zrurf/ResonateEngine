@@ -100,7 +100,8 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         {
             return report(world, entity, "has Background but no ComputedRect");
         }
-        if (visible(clip, rect->x, rect->y, rect->width, rect->height))
+        if (background->color.w > 0.0F &&
+            visible(clip, rect->x, rect->y, rect->width, rect->height))
         {
             quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, background->color});
         }
