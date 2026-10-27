@@ -2480,7 +2480,7 @@ void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
 
         constants.model = instance.model;
         constants.tint = Vec4{instance.color.x, instance.color.y, instance.color.z, 1.0F};
-        constants.texture_slot = white_texture_slot; // PROBE white albedo
+        constants.texture_slot = instance.texture == 1U ? checker_texture_slot : white_texture_slot;
         constants.roughness = instance.roughness;
         constants.metallic = instance.metallic;
         device.set_constants(device.self, &constants, sizeof(constants));
