@@ -19,6 +19,7 @@
 #include <resonate/ui/layout.h>
 #include <resonate/ui/text_runtime.h>
 
+#include "../../packages/ui/src/glyph_run.h"
 #include "resonate.ui/components.gen.h"
 
 namespace
@@ -421,7 +422,7 @@ TEST_CASE("ui text: typing edits the focused field", "[ui][text]")
     std::uint32_t revision = page->revision;
 
     std::string error;
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "B", false, error));
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "B", false, false, error));
     CHECK(error.empty());
     CHECK(content() == "AB");
     page = fixture.world.get<TextAtlasPage>(root);
@@ -448,20 +449,20 @@ TEST_CASE("ui text: typing edits the focused field", "[ui][text]")
     CHECK(caret_found);
 
     /* A control byte from a platform's key translation is not text. */
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\b", false, error));
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\b", false, false, error));
     CHECK(content() == "AB");
 
     /* Backspace erases a whole code point, not one byte. */
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\xE4\xBD\xA0", false,
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\xE4\xBD\xA0", false, false,
                                           error));
     CHECK(content() == "AB\xE4\xBD\xA0");
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, error));
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, false, error));
     CHECK(content() == "AB");
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, error));
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, false, error));
     CHECK(content() == "A");
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, error));
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, false, error));
     CHECK(content().empty());
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, error));
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, false, error));
     CHECK(content().empty());
 
     /* A press outside the field drops focus and typing becomes a no-op. */
@@ -471,7 +472,7 @@ TEST_CASE("ui text: typing edits the focused field", "[ui][text]")
     REQUIRE(pointer != nullptr);
     CHECK_FALSE(pointer->focused.valid());
     CHECK(carets() == 0U);
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "Z", false, error));
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "Z", false, false, error));
     CHECK(content().empty());
 }
 
@@ -531,7 +532,7 @@ TEST_CASE("ui text: an IME preedit previews and then commits", "[ui][text]")
     CHECK(fixture.world.get<TextAtlasPage>(root)->revision == revision);
 
     /* The commit replaces the preview rather than appending to it. */
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\xE4\xBD\xA0", false,
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\xE4\xBD\xA0", false, false,
                                           error));
     CHECK(content() == "A\xE4\xBD\xA0");
 
@@ -590,20 +591,20 @@ TEST_CASE("ui text: the caret edits in the middle of the field", "[ui][text]")
     /* Home puts the caret before the text; typing lands there. */
     CHECK(resonate::ui::moveCaret(fixture.world, root, resonate::ui::CaretMotion::Home));
     CHECK(caret() == 0U);
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "X", false, error));
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "X", false, false, error));
     CHECK(content() == "XAB");
     CHECK(caret() == 1U);
 
     /* Right steps over one code point; backspace removes the one before it. */
     CHECK(resonate::ui::moveCaret(fixture.world, root, resonate::ui::CaretMotion::Right));
     CHECK(caret() == 2U);
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, error));
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, false, error));
     CHECK(content() == "XB");
     CHECK(caret() == 1U);
 
     /* Typing lands at the caret, not at the end, and a code point outside
        ASCII is one step. */
-    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\xE4\xBD\xA0", false,
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\xE4\xBD\xA0", false, false,
                                           error));
     CHECK(content() == "X\xE4\xBD\xA0" "B");
     CHECK(resonate::ui::moveCaret(fixture.world, root, resonate::ui::CaretMotion::End));
@@ -628,4 +629,31 @@ TEST_CASE("ui text: the caret edits in the middle of the field", "[ui][text]")
     const TextMetrics* metrics = fixture.world.get<TextMetrics>(field);
     REQUIRE(metrics != nullptr);
     CHECK(mid_caret < rect->x + metrics->advance);
+
+    /* A press in the text drops the caret before the glyph whose cell it lands
+       in, split at the cell's middle. */
+    const Glyphs* glyphs = fixture.world.get<Glyphs>(field);
+    REQUIRE(glyphs != nullptr);
+    const auto* records = static_cast<const resonate::ui::detail::GlyphQuad*>(
+        fixture.world.blobData(glyphs->records));
+    REQUIRE(fixture.world.blobSize(glyphs->records) >= 3U * sizeof(*records));
+    const float pen = records[1].pen_x;
+    const float width = records[2].pen_x - pen;
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, rect->x + pen + width * 0.25F,
+                                      rect->y + 1.0F, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, rect->x + pen + width * 0.25F,
+                                      rect->y + 1.0F, false));
+    CHECK(caret() == 1U);
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, rect->x + pen + width * 0.75F,
+                                      rect->y + 1.0F, true));
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, rect->x + pen + width * 0.75F,
+                                      rect->y + 1.0F, false));
+    CHECK(caret() == 4U);
+
+    /* Delete removes the code point after the caret and leaves it in place. */
+    CHECK(resonate::ui::moveCaret(fixture.world, root, resonate::ui::CaretMotion::Left));
+    CHECK(caret() == 1U);
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", false, true, error));
+    CHECK(content() == "XB");
+    CHECK(caret() == 1U);
 }

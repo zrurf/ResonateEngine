@@ -411,7 +411,8 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
 }
 
 bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
-                     std::string_view utf8, bool backspace, std::string& error)
+                     std::string_view utf8, bool backspace, bool delete_forward,
+                     std::string& error)
 {
     if (!TextRuntimeAccess::restoreComposition(world, ecs::Entity{}, runtime, error))
     {
@@ -434,6 +435,10 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
         const std::size_t start = previousCodepoint(content, caret);
         content.erase(start, caret - start);
         caret = start;
+    }
+    else if (delete_forward && caret < content.size())
+    {
+        content.erase(caret, nextCodepoint(content, caret) - caret);
     }
     /* Some platforms hand control keys back as text input — Win32 translates
        the backspace key into a WM_CHAR the IME layer forwards. Text is
@@ -459,6 +464,39 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
         return false;
     }
     return runtime.setText(world, canvas, pointer->focused, content, error);
+}
+
+bool placeCaretAt(ecs::World& world, ecs::Entity entity, float local_x)
+{
+    if (world.get<Text>(entity) == nullptr)
+    {
+        return false;
+    }
+    const Glyphs* glyphs = world.get<Glyphs>(entity);
+    if (glyphs == nullptr || !world.alive(glyphs->records))
+    {
+        /* An empty field takes the caret at the only place it can be. */
+        return setCaret(world, entity, 0U);
+    }
+    const auto* records = static_cast<const detail::GlyphQuad*>(world.blobData(glyphs->records));
+    const std::size_t count = world.blobSize(glyphs->records) / sizeof(detail::GlyphQuad);
+    const TextMetrics* metrics = world.get<TextMetrics>(entity);
+    /* A click lands before the glyph whose cell it is in, split at the cell's
+       middle; the cell ends where the next glyph starts. */
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const float start = records[index].pen_x;
+        const float end = index + 1U < count
+                              ? records[index + 1U].pen_x
+                              : (metrics != nullptr && metrics->advance > start
+                                     ? metrics->advance
+                                     : start + 1.0F);
+        if (local_x < (start + end) * 0.5F)
+        {
+            return setCaret(world, entity, records[index].byte_offset);
+        }
+    }
+    return setCaret(world, entity, readContent(world, entity).size());
 }
 
 bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion)

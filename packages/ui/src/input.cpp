@@ -4,6 +4,7 @@
 
 #include <resonate/ui/event.h>
 #include <resonate/ui/hit_test.h>
+#include <resonate/ui/text_runtime.h>
 
 #include <resonate/hierarchy/tree.h>
 
@@ -153,6 +154,15 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         pointer->down = true;
         pointer->press = hover;
         world.markChanged<PointerState>(canvas);
+        if (hover.valid())
+        {
+            /* A press inside a text field drops the caret where it landed. */
+            const ComputedRect* rect = world.get<ComputedRect>(hover);
+            if (rect != nullptr)
+            {
+                (void)placeCaretAt(world, hover, x - rect->x);
+            }
+        }
         drag->pressed = true;
         drag->dragging = false;
         drag->press_x = x;

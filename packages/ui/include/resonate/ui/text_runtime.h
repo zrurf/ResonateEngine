@@ -68,11 +68,18 @@ enum class CaretMotion : std::uint8_t
 };
 
 /* Applies typed UTF-8 to the canvas' focused Input that carries Text: the text
-   lands at the caret, and backspace removes the code point before it. A field
+   lands at the caret, backspace removes the code point before it and
+   delete_forward the one after (backspace wins when both are set). A field
    without a caret component edits at the end of its content. A canvas with no
    focused text field is a no-op. */
 [[nodiscard]] bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
-                                   std::string_view utf8, bool backspace, std::string& error);
+                                   std::string_view utf8, bool backspace, bool delete_forward,
+                                   std::string& error);
+
+/* Points a text widget's caret at the widget-local `x`, before the glyph that
+   starts at or past it: a click in the text places the caret. False when the
+   widget carries no Text. */
+[[nodiscard]] bool placeCaretAt(ecs::World& world, ecs::Entity entity, float local_x);
 
 /* Moves the focused field's caret one code point or to an edge; false when no
    text field has focus. */

@@ -197,12 +197,14 @@ struct UiFrame
                 }
                 const bool backspace =
                     frame->input->key_pressed(frame->input->self, RESONATE_KEY_BACKSPACE) != 0;
-                if (typed_length > 0U || backspace)
+                const bool delete_forward =
+                    frame->input->key_pressed(frame->input->self, RESONATE_KEY_DELETE) != 0;
+                if (typed_length > 0U || backspace || delete_forward)
                 {
                     std::string error;
                     if (!ui::updateTextInput(world, frame->canvas, *frame->text,
                                              std::string_view(typed, typed_length), backspace,
-                                             error))
+                                             delete_forward, error))
                     {
                         std::fprintf(stderr, "resonate: ui text input: %s\n", error.c_str());
                     }
