@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <deque>
 #include <limits>
 #include <string>
 #include <vector>
@@ -31,6 +32,7 @@ struct EditorState
     Entity scene_list{};
     Entity name_field{};
     Entity status{};
+    Entity console{};
     Entity shown_row{};
 
     /* The scrubbable properties: the label the drag moves and the text that
@@ -49,6 +51,11 @@ struct EditorState
 
     /* The boxes the opacity scrub dims: one query, built on ready. */
     resonate::ecs::Query boxes{};
+
+    /* The console mirrors the world's report stream: a ring of the latest
+       lines, flushed into the label when a new one arrives. */
+    std::deque<std::string> console_lines;
+    bool console_dirty = false;
 };
 
 /* A scrub value is mirrored into its label only when it changes. */
@@ -94,6 +101,40 @@ void applyOpacity(EditorState& state, resonate::ecs::World& world)
         &context);
 }
 
+/* The world's report sink: the console's ring keeps the latest lines. */
+void reportSink(void* context, resonate::ecs::World::Report, const char* message)
+{
+    auto* state = static_cast<EditorState*>(context);
+    state->console_lines.emplace_back(message != nullptr ? message : "");
+    while (state->console_lines.size() > 8U)
+    {
+        state->console_lines.pop_front();
+    }
+    state->console_dirty = true;
+}
+
+/* Flushes the console ring into its label: one line of text, reshaped only
+   when a report arrived. */
+void mirrorConsole(EditorState& state, resonate::ecs::World& world)
+{
+    if (!state.console_dirty)
+    {
+        return;
+    }
+    state.console_dirty = false;
+    std::string joined;
+    for (const std::string& line : state.console_lines)
+    {
+        if (!joined.empty())
+        {
+            joined += "  |  ";
+        }
+        joined += line;
+    }
+    std::string error;
+    (void)resonate::ui::setText(world, state.canvas, state.console, joined, error);
+}
+
 /* The selected scene row names the inspected object: the name field and the
    status line follow the selection, reshaped only when it changes. */
 void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuffer&, float)
@@ -103,6 +144,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         return;
     }
+    mirrorConsole(*state, world);
     mirrorScrub(state->canvas, world, state->opacity);
     mirrorScrub(state->canvas, world, state->roughness);
     if (!std::isnan(state->opacity.shown) && state->boxes.valid())
@@ -174,6 +216,8 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->opacity.value_label = resonate::ui::findByKey(world, canvas, "opacity-value");
     state->roughness.handle = resonate::ui::findByKey(world, canvas, "roughness-scrub");
     state->roughness.value_label = resonate::ui::findByKey(world, canvas, "roughness-value");
+    state->console = resonate::ui::findByKey(world, canvas, "console-line");
+    world.setReportSink(state, &reportSink);
 
     resonate::ecs::QueryDesc desc{};
     const resonate::ecs::ComponentIndex all[] = {
