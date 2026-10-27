@@ -104,6 +104,27 @@
       ]
     },
     {
+      "name": "Dropdown",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Dropdown version 1",
+        "  size 8 align 4",
+        "  field open bool @0 size 1 default=false",
+        "  field selected u32 @4 size 4 default=0"
+      ]
+    },
+    {
+      "name": "DropdownList",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component DropdownList version 1",
+        "  size 1 align 1",
+        "  field enabled bool @0 size 1 default=true"
+      ]
+    },
+    {
       "name": "Glyphs",
       "kind": "component",
       "version": 1,
@@ -292,6 +313,16 @@
       ]
     },
     {
+      "name": "Splitter",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Splitter version 1",
+        "  size 4 align 4",
+        "  field axis u32 @0 size 4 default=0"
+      ]
+    },
+    {
       "name": "StateStyles",
       "kind": "component",
       "version": 1,
@@ -327,6 +358,36 @@
       "shape": [
         "node StyleSheet version 1",
         "  field src string"
+      ]
+    },
+    {
+      "name": "Tab",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Tab version 1",
+        "  size 4 align 4",
+        "  field index u32 @0 size 4 default=0"
+      ]
+    },
+    {
+      "name": "TabPage",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component TabPage version 1",
+        "  size 4 align 4",
+        "  field index u32 @0 size 4 default=0"
+      ]
+    },
+    {
+      "name": "Tabs",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Tabs version 1",
+        "  size 4 align 4",
+        "  field active u32 @0 size 4 default=0"
       ]
     },
     {

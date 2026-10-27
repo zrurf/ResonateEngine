@@ -8,6 +8,7 @@
 #include <resonate/hierarchy/tree.h>
 
 #include "resonate.ui/components.gen.h"
+#include "widget_shown.h"
 
 namespace resonate::ui
 {
@@ -54,6 +55,10 @@ ecs::Entity hit(ecs::World& world, ecs::Entity entity, float x, float y, std::ui
     const std::size_t start = order.size();
     for (const ecs::Entity child : children)
     {
+        if (!detail::childShown(world, entity, child))
+        {
+            continue;
+        }
         const RectTransform* transform = world.get<RectTransform>(child);
         order.push_back(OrderEntry{child, transform != nullptr ? transform->z : 0});
     }

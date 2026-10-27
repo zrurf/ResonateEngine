@@ -158,20 +158,67 @@ bool dispatchEvent(ecs::World& world, ecs::Entity canvas, Event& event)
 
     if (event.kind == EventKind::Click && count > 0U)
     {
-        /* The click's default action: the nearest checkbox on the path, the
-           target first, toggles. A handler that consumed the click kept it. */
+        /* The click's default actions, nearest widget first: a click inside an
+           open dropdown popup selects that item row and closes the box, any
+           other click on the box toggles it; a tab sets its container's page;
+           a checkbox toggles. A handler that consumed the click kept it all. */
+        const ecs::Entity target = path[count - 1U];
         for (std::size_t index = count; index > 0U; --index)
         {
             const ecs::Entity entity = path[index - 1U];
-            Checkbox* checkbox = world.get<Checkbox>(entity);
-            if (checkbox == nullptr)
+            if (Dropdown* dropdown = world.get<Dropdown>(entity))
             {
+                for (const ecs::Entity child : hierarchy::children(world, entity))
+                {
+                    if (world.get<DropdownList>(child) == nullptr ||
+                        !hierarchy::isAncestorOf(world, child, target))
+                    {
+                        continue;
+                    }
+                    std::uint32_t item = 0U;
+                    for (const ecs::Entity row : hierarchy::children(world, child))
+                    {
+                        if (hierarchy::isAncestorOf(world, row, target))
+                        {
+                            dropdown->selected = item;
+                            break;
+                        }
+                        ++item;
+                    }
+                    dropdown->open = false;
+                    world.markChanged<Dropdown>(entity);
+                    event.consumed = true;
+                    return true;
+                }
+                dropdown->open = !dropdown->open;
+                world.markChanged<Dropdown>(entity);
+                event.consumed = true;
+                return true;
+            }
+            if (const Tab* tab = world.get<Tab>(entity))
+            {
+                ecs::Entity parent = hierarchy::parentOf(world, entity);
+                for (std::uint32_t depth = 0U; parent.valid() && depth <= hierarchy::kMaxDepth;
+                     ++depth)
+                {
+                    if (Tabs* tabs = world.get<Tabs>(parent))
+                    {
+                        tabs->active = tab->index;
+                        world.markChanged<Tabs>(parent);
+                        event.consumed = true;
+                        return true;
+                    }
+                    parent = hierarchy::parentOf(world, parent);
+                }
                 continue;
             }
-            checkbox->checked = !checkbox->checked;
-            world.markChanged<Checkbox>(entity);
-            event.consumed = true;
-            return true;
+            if (Checkbox* checkbox = world.get<Checkbox>(entity))
+            {
+                checkbox->checked = !checkbox->checked;
+                world.markChanged<Checkbox>(entity);
+                event.consumed = true;
+                return true;
+            }
         }
     }
     if (event.kind == EventKind::Wheel)

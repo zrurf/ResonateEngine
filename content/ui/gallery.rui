@@ -98,5 +98,97 @@
       <Label key="text-dim" width="920" height="22" text="次要文本 · 中英混排 Resonate Engine"
              font_size="13" v_align="Middle" text_color="0.45 0.48 0.52 1"/>
     </Panel>
+
+    <Panel key="dropdown-area" class="panel" x="24" y="604" width="440" height="136"
+           direction="Column" align="Start" gap="8"
+           padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
+           border_color="0.0452 0.0452 0.0500 1" border_width="1">
+      <Label key="dropdown-title" height="18" text="下拉框" font_size="13"
+             font_weight="700" text_color="0.60 0.63 0.68 1"/>
+      <Label key="dropdown" class="field" width="220" height="26" text="选项 A" font_size="13"
+             v_align="Middle" padding_left="8" border_color="0.10 0.11 0.13 1"
+             border_width="1">
+        <Input/>
+        <Dropdown/>
+        <Panel key="dropdown-popup" x="0" y="28" width="220" height="96" position="Absolute"
+               z="50" color="0.0246 0.0273 0.0331 1"
+               border_color="0.10 0.11 0.13 1" border_width="1"
+               direction="Column" align="Stretch" gap="0"
+               padding_left="1" padding_top="1" padding_right="1" padding_bottom="1">
+          <DropdownList/>
+          <Button key="dd-item-0" class="row" height="30">
+            <Label key="dd-item-0-label" width="218" height="30" text="选项 A" font_size="13"
+                   v_align="Middle" padding_left="10" text_color="0.80 0.83 0.87 1"
+                   color="0 0 0 0"/>
+          </Button>
+          <Button key="dd-item-1" class="row" height="30">
+            <Label key="dd-item-1-label" width="218" height="30" text="选项 B" font_size="13"
+                   v_align="Middle" padding_left="10" text_color="0.80 0.83 0.87 1"
+                   color="0 0 0 0"/>
+          </Button>
+          <Button key="dd-item-2" class="row" height="30">
+            <Label key="dd-item-2-label" width="218" height="30" text="选项 C" font_size="13"
+                   v_align="Middle" padding_left="10" text_color="0.80 0.83 0.87 1"
+                   color="0 0 0 0"/>
+          </Button>
+        </Panel>
+      </Label>
+    </Panel>
+
+    <Panel key="tabs-area" class="panel" x="484" y="604" width="492" height="136"
+           direction="Column" align="Start" gap="8"
+           padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
+           border_color="0.0452 0.0452 0.0500 1" border_width="1">
+      <Label key="tabs-title" height="18" text="标签页" font_size="13"
+             font_weight="700" text_color="0.60 0.63 0.68 1"/>
+      <Panel key="tabs" x="0" y="0" width="460" height="88">
+        <Tabs/>
+        <Button key="tab-0" class="tool" x="0" y="0" width="96" height="26">
+          <Tab index="0"/>
+          <Label key="tab-0-label" width="96" height="26" text="常规" font_size="12"
+                 v_align="Middle" align="Center" text_color="0.80 0.83 0.87 1" color="0 0 0 0"/>
+        </Button>
+        <Button key="tab-1" class="tool" x="100" y="0" width="96" height="26">
+          <Tab index="1"/>
+          <Label key="tab-1-label" width="96" height="26" text="高级" font_size="12"
+                 v_align="Middle" align="Center" text_color="0.80 0.83 0.87 1" color="0 0 0 0"/>
+        </Button>
+        <Panel key="page-0" class="row" x="0" y="30" width="460" height="58" position="Absolute">
+          <TabPage index="0"/>
+          <Label key="page-0-label" width="460" height="58" text="常规设置内容" font_size="13"
+                 v_align="Middle" padding_left="10" text_color="0.70 0.73 0.78 1"
+                 color="0 0 0 0"/>
+        </Panel>
+        <Panel key="page-1" class="row" x="0" y="30" width="460" height="58" position="Absolute">
+          <TabPage index="1"/>
+          <Label key="page-1-label" width="460" height="58" text="高级设置内容" font_size="13"
+                 v_align="Middle" padding_left="10" text_color="0.70 0.73 0.78 1"
+                 color="0 0 0 0"/>
+        </Panel>
+      </Panel>
+    </Panel>
+
+    <Panel key="split-area" class="panel" x="24" y="756" width="952" height="136"
+           direction="Column" align="Start" gap="8"
+           padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
+           border_color="0.0452 0.0452 0.0500 1" border_width="1">
+      <Label key="split-title" height="18" text="分隔条(拖动调整左右宽度)" font_size="13"
+             font_weight="700" text_color="0.60 0.63 0.68 1"/>
+      <Box key="split-row" width="928" height="80">
+        <Panel key="split-left" class="row" x="0" y="0" width="320" height="80">
+          <Label key="split-left-label" width="320" height="80" text="左面板" font_size="13"
+                 v_align="Middle" align="Center" text_color="0.70 0.73 0.78 1"
+                 color="0 0 0 0"/>
+        </Panel>
+        <Box key="split-handle" class="splitter" x="320" y="0" width="6" height="80">
+          <Splitter axis="0"/>
+        </Box>
+        <Panel key="split-right" class="row" x="326" y="0" width="602" height="80">
+          <Label key="split-right-label" width="602" height="80" text="右面板" font_size="13"
+                 v_align="Middle" align="Center" text_color="0.70 0.73 0.78 1"
+                 color="0 0 0 0"/>
+        </Panel>
+      </Box>
+    </Panel>
   </Screen>
 </document>

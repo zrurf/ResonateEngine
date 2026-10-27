@@ -22,6 +22,8 @@ struct DragState
     float press_y = 0.0F;
     /* The slider this gesture drives, invalid for any other drag. */
     ecs::Entity slider{};
+    /* The divider this gesture drags, invalid for any other drag. */
+    ecs::Entity splitter{};
 };
 
 /* Samples the pointer once per frame against the canvas' retained tree.

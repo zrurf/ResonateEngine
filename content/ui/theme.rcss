@@ -73,5 +73,11 @@
     <StyleRule selector="Scroll">
       <ScrollView color="var(--text-muted)"/>
     </StyleRule>
+    <StyleRule selector=".splitter">
+      <Background color="var(--header)"/>
+    </StyleRule>
+    <StyleRule selector=".splitter:hover">
+      <Background color="var(--hover)"/>
+    </StyleRule>
   </StyleSheet>
 </document>

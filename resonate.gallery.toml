@@ -2,7 +2,7 @@
 
 [resonate.window]
 width = 1000
-height = 720
+height = 940
 
 [resonate.ui]
 document = "content/ui/gallery.rui"

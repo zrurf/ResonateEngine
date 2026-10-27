@@ -295,6 +295,18 @@ TEST_CASE("ui event: the wheel and a drag scroll over plain content", "[ui][even
     CHECK(near(view->scroll, 44.0F));
 }
 
+namespace
+{
+
+resonate::ui::ComputedRect rect_of(World& world, Entity entity)
+{
+    const resonate::ui::ComputedRect* rect = world.get<resonate::ui::ComputedRect>(entity);
+    REQUIRE(rect != nullptr);
+    return *rect;
+}
+
+} // namespace
+
 TEST_CASE("ui event: a click toggles a checkbox and draws its box", "[ui][event]")
 {
     const char * const text = R"xml(<document version="1" schemas="resonate.ui">
@@ -392,4 +404,121 @@ TEST_CASE("ui scroll: the viewport draws a scrollbar thumb", "[ui][event]")
         }
     }
     CHECK(thumb_y > 2.0F);
+}
+
+TEST_CASE("ui event: a dropdown opens, selects an item row and closes", "[ui][event]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="dropdown" x="0" y="0" width="200" height="24" text="A" font_size="13">
+      <Input/>
+      <Dropdown/>
+      <Panel key="popup" x="0" y="26" width="200" height="90" position="Absolute" z="50"
+             direction="Column" align="Stretch" color="0.2 0.2 0.2 1">
+        <DropdownList/>
+        <Button key="item-0" height="30" color="0.1 0.1 0.1 1"/>
+        <Button key="item-1" height="30" color="0.1 0.1 0.1 1"/>
+        <Button key="item-2" height="30" color="0.1 0.1 0.1 1"/>
+      </Panel>
+    </Label>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 400.0F, 400.0F));
+    const Entity dropdown_entity = resonate::hierarchy::children(world, root)[0];
+    /* Input and Dropdown are component elements, so the popup is the only
+       child node. */
+    const auto children = resonate::hierarchy::children(world, dropdown_entity);
+    REQUIRE(children.size() == 1U);
+    const Entity popup = children[0];
+    const auto items = resonate::hierarchy::children(world, popup);
+    REQUIRE(items.size() == 3U);
+
+    /* Closed: the popup neither paints nor takes hits. */
+    resonate::ui::DisplayList closed;
+    REQUIRE(resonate::ui::buildDisplayList(world, root, closed));
+    CHECK(resonate::ui::hitTest(world, root, 100.0F, rect_of(world, popup).y + 10.0F) !=
+          items[0]);
+
+    /* A click on the header opens it; the item rows take hits then. */
+    REQUIRE(resonate::ui::updateInput(world, root, 20.0F, 10.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 20.0F, 10.0F, false));
+    const resonate::ui::Dropdown* dropdown = world.get<resonate::ui::Dropdown>(dropdown_entity);
+    REQUIRE(dropdown != nullptr);
+    CHECK(dropdown->open);
+    resonate::ui::DisplayList open;
+    REQUIRE(resonate::ui::buildDisplayList(world, root, open));
+    CHECK(open.size() > closed.size());
+    CHECK(resonate::ui::hitTest(world, root, 100.0F, rect_of(world, popup).y + 10.0F) ==
+          items[0]);
+
+    /* A click on the second row selects it and closes the box. */
+    CHECK(resonate::ui::hitTest(world, root, 100.0F, rect_of(world, popup).y + 40.0F) ==
+          items[1]);
+    REQUIRE(resonate::ui::updateInput(world, root, 100.0F, rect_of(world, popup).y + 40.0F,
+                                      true));
+    REQUIRE(resonate::ui::updateInput(world, root, 100.0F, rect_of(world, popup).y + 40.0F,
+                                      false));
+    dropdown = world.get<resonate::ui::Dropdown>(dropdown_entity);
+    REQUIRE(dropdown != nullptr);
+    CHECK_FALSE(dropdown->open);
+    CHECK(dropdown->selected == 1U);
+}
+
+TEST_CASE("ui event: a tab click switches the visible page", "[ui][event]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Panel key="tabs" x="0" y="0" width="300" height="200">
+      <Tabs/>
+      <Button key="tab-0" x="0" y="0" width="80" height="24" color="0.1 0.1 0.1 1">
+        <Tab index="0"/>
+      </Button>
+      <Button key="tab-1" x="84" y="0" width="80" height="24" color="0.1 0.1 0.1 1">
+        <Tab index="1"/>
+      </Button>
+      <Panel key="page-0" x="0" y="30" width="300" height="100" position="Absolute"
+             color="0.2 0.1 0.1 1">
+        <TabPage index="0"/>
+      </Panel>
+      <Panel key="page-1" x="0" y="30" width="300" height="100" position="Absolute"
+             color="0.1 0.2 0.1 1">
+        <TabPage index="1"/>
+      </Panel>
+    </Panel>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 400.0F, 400.0F));
+    const Entity tabs_entity = resonate::hierarchy::children(world, root)[0];
+    const auto children = resonate::hierarchy::children(world, tabs_entity);
+    REQUIRE(children.size() == 4U);
+    const Entity page_0 = children[2];
+    const Entity page_1 = children[3];
+
+    /* Only the active page paints and takes hits. */
+    CHECK(resonate::ui::hitTest(world, root, 100.0F, 100.0F) == page_0);
+    REQUIRE(resonate::ui::updateInput(world, root, 120.0F, 10.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 120.0F, 10.0F, false));
+    const resonate::ui::Tabs* tabs = world.get<resonate::ui::Tabs>(tabs_entity);
+    REQUIRE(tabs != nullptr);
+    CHECK(tabs->active == 1U);
+    CHECK(resonate::ui::hitTest(world, root, 100.0F, 100.0F) == page_1);
 }

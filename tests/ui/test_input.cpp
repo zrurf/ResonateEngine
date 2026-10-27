@@ -299,3 +299,61 @@ TEST_CASE("ui input: a slider jumps to a press and follows a drag", "[ui][input]
     CHECK_FALSE(input->activated);
     CHECK(near(value(), 100.0F));
 }
+
+TEST_CASE("ui input: dragging a splitter resizes the panes beside it", "[ui][input]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Box key="row" x="0" y="0" width="1000" height="100">
+      <Panel key="left" x="0" y="0" width="300" height="100" color="0.1 0.1 0.1 1"/>
+      <Box key="handle" x="300" y="0" width="6" height="100" color="0.2 0.2 0.2 1">
+        <Splitter axis="0"/>
+      </Box>
+      <Panel key="right" x="306" y="0" width="694" height="100" color="0.1 0.1 0.1 1"/>
+    </Box>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 1000.0F, 200.0F));
+    const auto children = resonate::hierarchy::children(world, resonate::hierarchy::children(world, root)[0]);
+    REQUIRE(children.size() == 3U);
+    const Entity left = children[0];
+    const Entity handle = children[1];
+    const Entity right = children[2];
+
+    const auto width_of = [&](Entity entity)
+    {
+        const resonate::ui::RectTransform* rect =
+            world.get<resonate::ui::RectTransform>(entity);
+        REQUIRE(rect != nullptr);
+        return rect->width;
+    };
+
+    /* A press on the divider owns the drag; moving right grows the left pane,
+       moves the right one and the divider travels with the edge. */
+    REQUIRE(resonate::ui::updateInput(world, root, 303.0F, 50.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 343.0F, 50.0F, true));
+    CHECK(near(width_of(left), 340.0F));
+    CHECK(near(width_of(right), 654.0F));
+    const resonate::ui::RectTransform* handle_rect = world.get<resonate::ui::RectTransform>(handle);
+    REQUIRE(handle_rect != nullptr);
+    CHECK(near(handle_rect->x, 340.0F));
+    const resonate::ui::RectTransform* right_rect = world.get<resonate::ui::RectTransform>(right);
+    REQUIRE(right_rect != nullptr);
+    CHECK(near(right_rect->x, 346.0F));
+
+    /* The drag follows each sample; the release ends it and holds the size. */
+    REQUIRE(resonate::ui::updateInput(world, root, 323.0F, 50.0F, true));
+    CHECK(near(width_of(left), 320.0F));
+    REQUIRE(resonate::ui::updateInput(world, root, 323.0F, 50.0F, false));
+    CHECK(near(width_of(left), 320.0F));
+}

@@ -51,6 +51,98 @@ ecs::Entity interactiveAt(ecs::World& world, ecs::Entity canvas, float x, float 
     return ecs::Entity{};
 }
 
+/* The nearest widget on the hit chain that carries a Splitter. */
+ecs::Entity splitterAt(ecs::World& world, ecs::Entity entity)
+{
+    for (std::uint32_t depth = 0U; entity.valid() && depth <= hierarchy::kMaxDepth; ++depth)
+    {
+        if (world.get<Splitter>(entity) != nullptr)
+        {
+            return entity;
+        }
+        entity = hierarchy::parentOf(world, entity);
+    }
+    return {};
+}
+
+/* The divider follows the pointer: the previous sibling grows by the motion,
+   the next one moves and shrinks, and the divider travels with the edge. */
+void applySplitter(ecs::World& world, ecs::Entity entity, float dx, float dy)
+{
+    const Splitter* splitter = world.get<Splitter>(entity);
+    if (splitter == nullptr)
+    {
+        return;
+    }
+    const bool horizontal = splitter->axis == 0U;
+    const float move = horizontal ? dx : dy;
+    if (move == 0.0F)
+    {
+        return;
+    }
+    const ecs::Entity parent = hierarchy::parentOf(world, entity);
+    if (!parent.valid())
+    {
+        return;
+    }
+    ecs::Entity previous{};
+    ecs::Entity next{};
+    bool passed = false;
+    for (const ecs::Entity sibling : hierarchy::children(world, parent))
+    {
+        if (sibling == entity)
+        {
+            passed = true;
+            continue;
+        }
+        if (!passed)
+        {
+            previous = sibling;
+            continue;
+        }
+        next = sibling;
+        break;
+    }
+    if (RectTransform* before = previous.valid() ? world.get<RectTransform>(previous) : nullptr)
+    {
+        if (horizontal)
+        {
+            before->width += move;
+        }
+        else
+        {
+            before->height += move;
+        }
+        world.markChanged<RectTransform>(previous);
+    }
+    if (RectTransform* after = next.valid() ? world.get<RectTransform>(next) : nullptr)
+    {
+        if (horizontal)
+        {
+            after->x += move;
+            after->width -= move;
+        }
+        else
+        {
+            after->y += move;
+            after->height -= move;
+        }
+        world.markChanged<RectTransform>(next);
+    }
+    if (RectTransform* own = world.get<RectTransform>(entity))
+    {
+        if (horizontal)
+        {
+            own->x += move;
+        }
+        else
+        {
+            own->y += move;
+        }
+        world.markChanged<RectTransform>(entity);
+    }
+}
+
 /* The nearest widget on the hit chain that carries a Slider. */
 ecs::Entity sliderAt(ecs::World& world, ecs::Entity entity)
 {
@@ -129,6 +221,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                      canvas.generation);
         return false;
     }
+    const float last_x = drag->x;
     const float last_y = drag->y;
     drag->x = x;
     drag->y = y;
@@ -174,8 +267,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
     move.y = y;
     dispatchEvent(world, canvas, move);
 
+    bool pressed_this_sample = false;
     if (down && !pointer->down)
     {
+        pressed_this_sample = true;
         Event pressed = move;
         pressed.kind = EventKind::PointerDown;
         dispatchEvent(world, canvas, pressed);
@@ -199,10 +294,19 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         }
         /* A press on a slider jumps its value there and owns the gesture; the
            release then neither activates nor clicks it. */
-        drag->slider = sliderAt(world, hover);
+        /* Gesture widgets need not be Input widgets themselves (a divider is a
+           plain box), so the lookup starts at the raw hit. */
+        const ecs::Entity hit = hitTest(world, canvas, x, y);
+        drag->slider = sliderAt(world, hit);
         if (drag->slider.valid())
         {
             applySlider(world, drag->slider, x);
+            pointer->press = ecs::Entity{};
+            world.markChanged<PointerState>(canvas);
+        }
+        drag->splitter = drag->slider.valid() ? ecs::Entity{} : splitterAt(world, hit);
+        if (drag->splitter.valid())
+        {
             pointer->press = ecs::Entity{};
             world.markChanged<PointerState>(canvas);
         }
@@ -222,6 +326,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         drag->pressed = false;
         drag->dragging = false;
         drag->slider = ecs::Entity{};
+        drag->splitter = ecs::Entity{};
         const ecs::Entity press = pointer->press;
         Event released = move;
         released.kind = EventKind::PointerUp;
@@ -265,7 +370,17 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
        viewport chain under the finger follow it. */
     if (drag->pressed && pointer->down && drag->slider.valid())
     {
-        applySlider(world, drag->slider, x);
+        if (!pressed_this_sample)
+        {
+            applySlider(world, drag->slider, x);
+        }
+    }
+    else if (drag->pressed && pointer->down && drag->splitter.valid())
+    {
+        if (!pressed_this_sample)
+        {
+            applySplitter(world, drag->splitter, x - last_x, y - last_y);
+        }
     }
     else if (drag->pressed && pointer->down)
     {

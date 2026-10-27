@@ -240,6 +240,41 @@
     <field name="color" type="vec4" default="1 1 1 1"/>
   </component>
 
+  <!-- A combo box: an Input widget whose click toggles `open`. The one child
+       carrying DropdownList is the popup: it paints and takes hits only while
+       open, and a click on one of its item rows sets `selected` to that row's
+       index and closes the box. -->
+  <component name="Dropdown" version="1">
+    <field name="open" type="bool" default="false"/>
+    <field name="selected" type="u32" default="0"/>
+  </component>
+
+  <!-- Marks the popup panel of a Dropdown. -->
+  <component name="DropdownList" version="1">
+    <field name="enabled" type="bool" default="true"/>
+  </component>
+
+  <!-- A tab container: children carrying TabPage paint one at a time, the one
+       whose index equals `active`. A click on a widget carrying Tab sets it. -->
+  <component name="Tabs" version="1">
+    <field name="active" type="u32" default="0"/>
+  </component>
+
+  <component name="TabPage" version="1">
+    <field name="index" type="u32" default="0"/>
+  </component>
+
+  <component name="Tab" version="1">
+    <field name="index" type="u32" default="0"/>
+  </component>
+
+  <!-- A draggable divider for absolutely positioned panes: a horizontal drag
+       grows the previous sibling and moves the next one, the divider travelling
+       with the edge. `axis` 0 splits horizontally, 1 vertically. -->
+  <component name="Splitter" version="1">
+    <field name="axis" type="u32" default="0"/>
+  </component>
+
   <!-- State-style overrides, compiled at instantiation; a blob on the canvas. -->
   <component name="StateStyles" version="1" derived="true">
     <field name="records" type="blob"/>

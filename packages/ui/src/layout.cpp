@@ -308,6 +308,12 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<TextCaret>() != ecs::kInvalidComponent &&
            world.registerComponent<Checkbox>() != ecs::kInvalidComponent &&
            world.registerComponent<Slider>() != ecs::kInvalidComponent &&
+           world.registerComponent<Dropdown>() != ecs::kInvalidComponent &&
+           world.registerComponent<DropdownList>() != ecs::kInvalidComponent &&
+           world.registerComponent<Tabs>() != ecs::kInvalidComponent &&
+           world.registerComponent<TabPage>() != ecs::kInvalidComponent &&
+           world.registerComponent<Tab>() != ecs::kInvalidComponent &&
+           world.registerComponent<Splitter>() != ecs::kInvalidComponent &&
            world.registerComponent<TextAtlasPage>() != ecs::kInvalidComponent &&
            world.registerComponent<DataContext>() != ecs::kInvalidComponent &&
            world.registerComponent<Bindings>() != ecs::kInvalidComponent &&

@@ -7,6 +7,7 @@
 #include <resonate/hierarchy/tree.h>
 
 #include "glyph_run.h"
+#include "widget_shown.h"
 #include "resonate.ui/components.gen.h"
 
 namespace resonate::ui
@@ -371,6 +372,10 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
     const std::size_t start = order_.size();
     for (const ecs::Entity child : children)
     {
+        if (!detail::childShown(world, entity, child))
+        {
+            continue;
+        }
         const RectTransform* transform = world.get<RectTransform>(child);
         order_.push_back(OrderEntry{child, transform != nullptr ? transform->z : 0});
     }
