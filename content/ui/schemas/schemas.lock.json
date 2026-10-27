@@ -268,13 +268,14 @@
     {
       "name": "ScrollView",
       "kind": "component",
-      "version": 1,
+      "version": 2,
       "shape": [
-        "component ScrollView version 1",
-        "  size 12 align 4",
+        "component ScrollView version 2",
+        "  size 28 align 4",
         "  field scroll f32 @0 size 4 default=0",
         "  field step f32 @4 size 4 default=0",
-        "  field content_height f32 @8 size 4 default=0"
+        "  field content_height f32 @8 size 4 default=0",
+        "  field color vec4 @12 size 16 default=0.35 0.37 0.4 0.85"
       ]
     },
     {

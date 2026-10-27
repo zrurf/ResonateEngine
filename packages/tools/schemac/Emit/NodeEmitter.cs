@@ -22,7 +22,8 @@ internal static class NodeEmitter
         text.Append("#define ").Append(guard).Append("\n\n");
         text.Append("#include <cstddef>\n");
         text.Append("#include <iterator>\n");
-        text.Append("#include <resonate/dom/schema.h>\n\n");
+        text.Append("#include <resonate/dom/schema.h>\n");
+        text.Append("\n#include \"").Append(module.Id).Append("/components.gen.h\"\n\n");
         text.Append("namespace ").Append(Namespace(module.Id)).Append("::generated\n{\n");
 
         List<TypeDecl> nodes = [];
@@ -190,7 +191,8 @@ internal static class NodeEmitter
                         .Append(component.Name).Append("Fields, std::size(k")
                         .Append(component.Name).Append("Fields))");
                 }
-                text.Append("},\n");
+                text.Append(", static_cast<const void*>(&k").Append(component.Name)
+                    .Append("Defaults)},\n");
             }
             text.Append("};\n");
             text.Append("inline constexpr std::size_t kComponentDescCount = ")

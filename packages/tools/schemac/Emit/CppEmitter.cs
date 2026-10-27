@@ -175,6 +175,10 @@ internal static class CppEmitter
 
         if (type.Kind == TypeKind.Component)
         {
+            /* The descriptor table points at this instance, so an authored
+               component starts from the schema defaults, not zero bytes. */
+            text.Append("\ninline const ").Append(type.QualifiedName.Replace(".", "::"))
+                .Append(" k").Append(type.Name).Append("Defaults{};\n");
             text.Append("\ninline constexpr std::uint32_t k").Append(type.Name)
                 .Append("Version = ").Append(type.Version).Append(";\n");
 

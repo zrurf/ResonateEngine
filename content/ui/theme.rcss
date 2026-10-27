@@ -70,5 +70,8 @@
     <StyleRule selector=".slider">
       <Slider color="var(--accent)"/>
     </StyleRule>
+    <StyleRule selector="Scroll">
+      <ScrollView color="var(--text-muted)"/>
+    </StyleRule>
   </StyleSheet>
 </document>

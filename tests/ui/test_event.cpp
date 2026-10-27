@@ -200,7 +200,8 @@ TEST_CASE("ui scroll: the viewport clips paint and hit testing", "[ui][event]")
     /* row0 scrolled above the viewport, row5 is the last one that still fits. */
     DisplayList list;
     REQUIRE(resonate::ui::buildDisplayList(fixture.world, fixture.root, list));
-    CHECK(list.size() == 6U);
+    /* Six row backgrounds plus the viewport's scrollbar thumb. */
+    CHECK(list.size() == 7U);
 
     const Entity top = resonate::ui::hitTest(fixture.world, fixture.root, 10.0F, 5.0F);
     CHECK(top == fixture.rows[1]);
@@ -353,4 +354,42 @@ TEST_CASE("ui event: a click toggles a checkbox and draws its box", "[ui][event]
     REQUIRE(resonate::ui::updateInput(world, root, 10.0F, 12.0F, true));
     REQUIRE(resonate::ui::updateInput(world, root, 10.0F, 12.0F, false));
     CHECK_FALSE(world.get<resonate::ui::Checkbox>(check)->checked);
+}
+
+TEST_CASE("ui scroll: the viewport draws a scrollbar thumb", "[ui][event]")
+{
+    Fixture fixture;
+    const resonate::ui::ComputedRect* rect =
+        fixture.world.get<resonate::ui::ComputedRect>(fixture.list);
+    REQUIRE(rect != nullptr);
+    const auto thumbs = [&]
+    {
+        resonate::ui::DisplayList list;
+        REQUIRE(resonate::ui::buildDisplayList(fixture.world, fixture.root, list));
+        std::size_t count = 0;
+        for (const resonate::ui::Quad& quad : list.quads())
+        {
+            if (quad.x + quad.width <= rect->x + rect->width &&
+                quad.x >= rect->x + rect->width - 9.0F && quad.width == 6.0F)
+            {
+                ++count;
+            }
+        }
+        return count;
+    };
+    CHECK(thumbs() == 1U);
+
+    /* Scrolling moves the thumb down without changing its length. */
+    REQUIRE(resonate::ui::scrollInput(fixture.world, fixture.root, 10.0F, 50.0F, 1.0F));
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, fixture.root, list));
+    float thumb_y = -1.0F;
+    for (const resonate::ui::Quad& quad : list.quads())
+    {
+        if (quad.width == 6.0F && quad.x >= rect->x + rect->width - 9.0F)
+        {
+            thumb_y = quad.y - rect->y;
+        }
+    }
+    CHECK(thumb_y > 2.0F);
 }

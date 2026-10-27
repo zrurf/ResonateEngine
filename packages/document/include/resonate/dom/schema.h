@@ -68,6 +68,10 @@ struct ComponentDesc
     std::uint32_t align = 0;
     std::uint32_t derived = 0;
     Span<const ComponentFieldDesc> fields;
+    /* A default-constructed instance, so an authored component starts from the
+       schema's defaults and not from zero bytes. Null when the generator has
+       none for this component. */
+    const void* defaults = nullptr;
 };
 
 class SchemaRegistry

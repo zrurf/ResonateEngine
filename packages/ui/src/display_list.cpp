@@ -53,7 +53,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
     }
 
     Clip clip = outer;
-    if (world.get<ScrollView>(entity) != nullptr)
+    if (const ScrollView* view = world.get<ScrollView>(entity))
     {
         const ComputedRect* rect = world.get<ComputedRect>(entity);
         if (rect == nullptr)
@@ -61,6 +61,25 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
             return report(world, entity, "has ScrollView but no ComputedRect");
         }
         clip = intersect(outer, rect->x, rect->y, rect->width, rect->height);
+        /* The thumb sits inset on the right edge; its length is the visible
+           fraction of the content, never shorter than a grabbable minimum. */
+        const float range = view->content_height - rect->height;
+        if (range > 0.0F && view->color.w > 0.0F && rect->height > 0.0F)
+        {
+            const float thumb_width = 6.0F;
+            const float minimum = std::fmin(24.0F, rect->height);
+            const float page = std::clamp(rect->height / view->content_height, 0.0F, 1.0F);
+            const float thumb_height = std::fmax(minimum, rect->height * page);
+            const float travel = rect->height - thumb_height;
+            const float fraction = std::clamp(view->scroll / range, 0.0F, 1.0F);
+            const float thumb_x = rect->x + rect->width - thumb_width - 2.0F;
+            const float thumb_y = rect->y + travel * fraction;
+            if (visible(clip, thumb_x, thumb_y, thumb_width, thumb_height))
+            {
+                quads_.push_back(
+                    Quad{thumb_x, thumb_y, thumb_width, thumb_height, view->color});
+            }
+        }
     }
 
     if (const Background* background = world.get<Background>(entity))

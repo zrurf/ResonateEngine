@@ -236,7 +236,14 @@ bool attachGeneric(ecs::World& world, const dom::Document& document, dom::NodeHa
         return false;
     }
 
+    /* The schema's defaults are the starting point; authored fields overwrite
+       them. Without this a component lands zeroed (a colour's alpha included)
+       whenever the document names only some of its fields. */
     std::vector<std::byte> data(descriptor.size, std::byte{0});
+    if (descriptor.defaults != nullptr)
+    {
+        std::memcpy(data.data(), descriptor.defaults, descriptor.size);
+    }
     for (const dom::Field& field : component.fields)
     {
         const std::string_view name = document.text(field.name);

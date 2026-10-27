@@ -197,10 +197,14 @@
        handler moves; `content_height` is what layout measured, so the scroll
        range is known after the first pass. `step` binds scrolling to whole
        rows: zero scrolls continuously. -->
-  <component name="ScrollView" version="1">
+  <component name="ScrollView" version="2">
     <field name="scroll" type="f32" default="0.0"/>
     <field name="step" type="f32" default="0.0"/>
     <field name="content_height" type="f32" default="0.0"/>
+    <!-- The scrollbar thumb; a zero alpha hides the bar. -->
+    <field name="color" type="vec4" default="0.35 0.37 0.40 0.85"/>
+
+    <migrate from="1" to="2"/>
   </component>
 
   <!-- The pointer's current target, derived by the input system. -->
