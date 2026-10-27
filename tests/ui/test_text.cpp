@@ -762,3 +762,41 @@ TEST_CASE("ui document: widgets are reachable by their document key", "[ui][docu
     CHECK(fixture.world.get<resonate::ui::Slider>(slider_b) != nullptr);
     CHECK_FALSE(resonate::ui::findByKey(fixture.world, root, "no-such-widget").valid());
 }
+
+TEST_CASE("ui document: the selected row and widget text answer by key", "[ui][document]")
+{
+    std::ifstream file(std::string(RESONATE_SOURCE_DIR) + "/content/ui/gallery.rui");
+    REQUIRE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(source, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    REQUIRE(loadShippedStylesheets(*document));
+
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 1000.0F, 1080.0F));
+
+    const Entity list = resonate::ui::findByKey(fixture.world, root, "list");
+    REQUIRE(list.valid());
+    const Entity row = resonate::ui::findByKey(fixture.world, root, "list-row-1");
+    REQUIRE(row.valid());
+    /* A row is a button wrapping its label; the text comes from the label. */
+    CHECK(resonate::ui::widgetText(fixture.world, row) == "平行光");
+
+    resonate::ui::Selectable* selectable = fixture.world.get<resonate::ui::Selectable>(row);
+    REQUIRE(selectable != nullptr);
+    selectable->selected = true;
+    CHECK(resonate::ui::selectedChild(fixture.world, list) == row);
+
+    /* Application code reshapes a label through the canvas' runtime. */
+    const Entity title = resonate::ui::findByKey(fixture.world, root, "text-title");
+    REQUIRE(title.valid());
+    std::string error;
+    REQUIRE(resonate::ui::setText(fixture.world, root, title, "已更新", error));
+    CHECK(resonate::ui::widgetText(fixture.world, title) == "已更新");
+}

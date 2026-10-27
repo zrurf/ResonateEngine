@@ -15,6 +15,8 @@
 #include <string>
 #include <vector>
 
+#include <resonate/application/systems.h>
+
 namespace resonate::startup
 {
 
@@ -39,10 +41,21 @@ struct DisplayOptions
    whoever else parses this command line. */
 DisplayOptions displayOptionsFromCommandLine(const std::vector<std::string>& arguments);
 
+/* What a host adds to the run beyond the engine's own systems: extra schedule
+   entries, and a hook that runs once the UI document is instantiated, so the
+   host can address widgets by key and wire its own behaviour. */
+struct HostExtension
+{
+    std::vector<EngineSystemDesc> systems;
+    void (*ready)(void* context, ecs::World& world, ecs::Entity canvas) = nullptr;
+    void* ready_context = nullptr;
+};
+
 /* Parses the command line, composes a windowed or an offscreen run, and returns
    the process exit code. `default_title` names the window when the command line
    did not. */
-int run(const std::vector<std::string>& arguments, const char* default_title);
+int run(const std::vector<std::string>& arguments, const char* default_title,
+        const HostExtension& extension = {});
 
 /* From the platform's own main(). */
 std::vector<std::string> commandLine(int argc, char** argv);

@@ -556,6 +556,18 @@ bool setFocusedText(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,
     return setCaret(world, pointer->focused, utf8.size());
 }
 
+bool setText(ecs::World& world, ecs::Entity canvas, ecs::Entity entity, std::string_view utf8,
+             std::string& error)
+{
+    const TextRuntimeRef* reference = world.get<TextRuntimeRef>(canvas);
+    if (reference == nullptr || reference->runtime == nullptr)
+    {
+        error = "the canvas carries no text runtime";
+        return false;
+    }
+    return reference->runtime->setText(world, canvas, entity, utf8, error);
+}
+
 bool focusedTextEditable(ecs::World& world, ecs::Entity canvas)
 {
     const PointerState* pointer = world.get<PointerState>(canvas);

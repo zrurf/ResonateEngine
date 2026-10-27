@@ -1443,6 +1443,10 @@ Entity instantiateConfigured(World& world, dom::Document& document,
     if (bindings.runtime != nullptr)
     {
         TextRuntimeAccess::attach(*bindings.runtime, entity);
+        if (world.add(entity, TextRuntimeRef{bindings.runtime}) == nullptr)
+        {
+            return Entity{};
+        }
         bindings.page_revision = TextRuntimeAccess::revision(*bindings.runtime);
     }
     if (world.add(entity, PointerState{}) == nullptr ||
@@ -1529,6 +1533,51 @@ Entity instantiate(World& world, dom::Document& document,
     bindings.strings = strings;
     bindings.images = images;
     return instantiateConfigured(world, document, component_registry, bindings);
+}
+
+ecs::Entity selectedChild(ecs::World& world, ecs::Entity container)
+{
+    if (!world.alive(container))
+    {
+        return ecs::Entity{};
+    }
+    for (const ecs::Entity child : hierarchy::children(world, container))
+    {
+        const Selectable* selectable = world.get<Selectable>(child);
+        if (selectable != nullptr && selectable->selected)
+        {
+            return child;
+        }
+    }
+    return ecs::Entity{};
+}
+
+std::string widgetText(ecs::World& world, ecs::Entity entity)
+{
+    if (!world.alive(entity))
+    {
+        return {};
+    }
+    std::vector<ecs::Entity> stack{entity};
+    while (!stack.empty())
+    {
+        const ecs::Entity current = stack.front();
+        stack.erase(stack.begin());
+        if (const Text* text = world.get<Text>(current);
+            text != nullptr && world.alive(text->content))
+        {
+            const auto* bytes = static_cast<const char*>(world.blobData(text->content));
+            if (bytes != nullptr && world.blobSize(text->content) > 0U)
+            {
+                return std::string(bytes, world.blobSize(text->content));
+            }
+        }
+        for (const ecs::Entity child : hierarchy::children(world, current))
+        {
+            stack.push_back(child);
+        }
+    }
+    return {};
 }
 
 ecs::Entity findByKey(ecs::World& world, ecs::Entity canvas, std::string_view key)

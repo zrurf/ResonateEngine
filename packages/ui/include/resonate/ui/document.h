@@ -48,6 +48,14 @@ class TextRuntime;
    unknown key answers an invalid entity. */
 [[nodiscard]] ecs::Entity findByKey(ecs::World& world, ecs::Entity canvas, std::string_view key);
 
+/* The child of `container` whose Selectable is selected, or an invalid entity —
+   the one choice a list holds. */
+[[nodiscard]] ecs::Entity selectedChild(ecs::World& world, ecs::Entity container);
+
+/* The text a row shows: the entity's own Text, or the first descendant's when
+   the row is a button wrapping a label. Empty for a widget without text. */
+[[nodiscard]] std::string widgetText(ecs::World& world, ecs::Entity entity);
+
 } // namespace resonate::ui
 
 #endif /* RESONATE_UI_DOCUMENT_H */

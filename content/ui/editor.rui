@@ -36,26 +36,32 @@
               direction="Column" align="Stretch" gap="0"
               padding_left="0" padding_top="0" padding_right="0" padding_bottom="0">
         <Button key="camera" class="row" height="26">
+          <Selectable selected="false"/>
           <Label key="camera-label" x="10" y="4" width="240" height="18" text="主相机"
                  font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
         </Button>
         <Button key="sun" class="row" height="26">
+          <Selectable selected="false"/>
           <Label key="sun-label" x="10" y="4" width="240" height="18" text="平行光"
                  font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
         </Button>
         <Button key="ground" class="row" height="26">
+          <Selectable selected="false"/>
           <Label key="ground-label" x="10" y="4" width="240" height="18" text="地面"
                  font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
         </Button>
         <Button key="crate-a" class="row selected" height="26">
+          <Selectable selected="true"/>
           <Label key="crate-a-label" x="10" y="4" width="240" height="18" text="箱子 A"
                  font_size="13" text_color="1 1 1 1" color="0 0 0 0"/>
         </Button>
         <Button key="crate-b" class="row" height="26">
+          <Selectable selected="false"/>
           <Label key="crate-b-label" x="10" y="4" width="240" height="18" text="箱子 B"
                  font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
         </Button>
         <Button key="crate-c" class="row" height="26">
+          <Selectable selected="false"/>
           <Label key="crate-c-label" x="10" y="4" width="240" height="18" text="箱子 C"
                  font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
         </Button>

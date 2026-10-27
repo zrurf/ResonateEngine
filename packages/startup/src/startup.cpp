@@ -581,7 +581,8 @@ DisplayOptions displayOptionsFromCommandLine(const std::vector<std::string>& arg
     return options;
 }
 
-int run(const std::vector<std::string>& arguments, const char* default_title)
+int run(const std::vector<std::string>& arguments, const char* default_title,
+        const HostExtension& extension)
 {
     Application::Config config = Application::configFromCommandLine(arguments);
     const DisplayOptions display = displayOptionsFromCommandLine(arguments);
@@ -985,6 +986,20 @@ int run(const std::vector<std::string>& arguments, const char* default_title)
         /* The demo scene is what the window shows until scenes load from disk;
            it is plain ECS entities, created before the frame loop starts. */
         renderer::composeDemoScene(world);
+        /* The host's own schedule entries come after the engine's, so they see
+           this frame's layout results; the ready hook runs once the document
+           exists. */
+        for (const EngineSystemDesc& system : extension.systems)
+        {
+            if (addEngineSystem(host, system) != RESONATE_OK)
+            {
+                return RESONATE_E_INVALID;
+            }
+        }
+        if (extension.ready != nullptr)
+        {
+            extension.ready(extension.ready_context, world, ui_frame.canvas);
+        }
         return RESONATE_OK;
     };
 

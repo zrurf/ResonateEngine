@@ -5,6 +5,7 @@
 #include <resonate/hierarchy/tree.h>
 #include <resonate/ui/event.h>
 #include <resonate/ui/input.h>
+#include <resonate/ui/text_runtime.h>
 
 #include "resonate.ui/components.gen.h"
 
@@ -317,6 +318,7 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<Selectable>() != ecs::kInvalidComponent &&
            world.registerComponent<Scrubber>() != ecs::kInvalidComponent &&
            world.registerComponent<WidgetKey>() != ecs::kInvalidComponent &&
+           world.registerComponent<TextRuntimeRef>() != ecs::kInvalidComponent &&
            world.registerComponent<TextAtlasPage>() != ecs::kInvalidComponent &&
            world.registerComponent<DataContext>() != ecs::kInvalidComponent &&
            world.registerComponent<Bindings>() != ecs::kInvalidComponent &&

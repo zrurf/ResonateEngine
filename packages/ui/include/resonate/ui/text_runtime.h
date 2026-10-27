@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include <resonate/ecs/component.h>
 #include <resonate/ecs/entity.h>
 #include <resonate/ecs/world.h>
 #include <resonate/text/font.h>
@@ -67,6 +68,19 @@ enum class CaretMotion : std::uint8_t
     End,
 };
 
+/* The canvas' text runtime, attached at instantiation so application code can
+   reshape a label without holding the runtime itself. Runtime data, never
+   authored. */
+struct TextRuntimeRef
+{
+    TextRuntime* runtime = nullptr;
+};
+
+/* Replaces a widget's text through the canvas' runtime. False with a named
+   error when the canvas carries no runtime or the entity has no Text. */
+[[nodiscard]] bool setText(ecs::World& world, ecs::Entity canvas, ecs::Entity entity,
+                           std::string_view utf8, std::string& error);
+
 /* Applies typed UTF-8 to the canvas' focused Input that carries Text: the text
    lands at the caret, backspace removes the code point before it and
    delete_forward the one after (backspace wins when both are set). A field
@@ -112,5 +126,13 @@ enum class CaretMotion : std::uint8_t
 [[nodiscard]] std::string focusedText(ecs::World& world, ecs::Entity canvas);
 
 } // namespace resonate::ui
+
+namespace resonate::ecs
+{
+
+/* The runtime reference is the host's own handle, never authored. */
+RESONATE_COMPONENT(resonate::ui::TextRuntimeRef, "resonate.ui.TextRuntimeRef");
+
+} // namespace resonate::ecs
 
 #endif /* RESONATE_UI_TEXT_RUNTIME_H */
