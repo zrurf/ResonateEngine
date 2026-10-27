@@ -116,6 +116,25 @@ bool scrollWalk(ecs::World& world, ecs::Entity canvas, float x, float y, Wanted 
 
 } // namespace
 
+bool activateFocused(ecs::World& world, ecs::Entity canvas)
+{
+    const PointerState* pointer = world.get<PointerState>(canvas);
+    if (pointer == nullptr || !pointer->focused.valid() || !world.alive(pointer->focused))
+    {
+        return false;
+    }
+    const ComputedRect* rect = world.get<ComputedRect>(pointer->focused);
+    if (rect == nullptr)
+    {
+        return false;
+    }
+    Event event{};
+    event.kind = EventKind::Click;
+    event.x = rect->x + rect->width * 0.5F;
+    event.y = rect->y + rect->height * 0.5F;
+    return dispatchEvent(world, canvas, event, pointer->focused);
+}
+
 bool capturePointer(ecs::World& world, ecs::Entity canvas, ecs::Entity entity)
 {
     PointerState* pointer = world.get<PointerState>(canvas);

@@ -73,6 +73,12 @@
     <StyleRule selector="Scroll">
       <ScrollView color="var(--text-muted)"/>
     </StyleRule>
+    <StyleRule selector=".scrub:hover">
+      <Background color="var(--hover)"/>
+    </StyleRule>
+    <StyleRule selector=".scrub:pressed">
+      <Background color="var(--pressed)"/>
+    </StyleRule>
     <StyleRule selector="Selectable">
       <Selectable color="var(--select)"/>
     </StyleRule>

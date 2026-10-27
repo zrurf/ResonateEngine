@@ -1,6 +1,8 @@
 #include <resonate/startup/startup.hpp>
 
 #include <algorithm>
+#include <cstdio>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -26,7 +28,33 @@ struct EditorState
     Entity name_field{};
     Entity status{};
     Entity shown_row{};
+
+    /* The scrubbable properties: the label the drag moves and the text that
+       shows its value. */
+    struct Scrub
+    {
+        Entity handle{};
+        Entity value_label{};
+        float shown = std::numeric_limits<float>::quiet_NaN();
+    };
+    Scrub opacity{};
+    Scrub roughness{};
 };
+
+/* A scrub value is mirrored into its label only when it changes. */
+void mirrorScrub(Entity canvas, resonate::ecs::World& world, EditorState::Scrub& scrub)
+{
+    float value = 0.0F;
+    if (!resonate::ui::scrubValue(world, scrub.handle, value) || value == scrub.shown)
+    {
+        return;
+    }
+    scrub.shown = value;
+    char text[32] = {};
+    std::snprintf(text, sizeof(text), "%.2f", static_cast<double>(value));
+    std::string error;
+    (void)resonate::ui::setText(world, canvas, scrub.value_label, text, error);
+}
 
 /* The selected scene row names the inspected object: the name field and the
    status line follow the selection, reshaped only when it changes. */
@@ -37,6 +65,8 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         return;
     }
+    mirrorScrub(state->canvas, world, state->opacity);
+    mirrorScrub(state->canvas, world, state->roughness);
     const Entity selected = resonate::ui::selectedChild(world, state->scene_list);
     if (selected == state->shown_row)
     {
@@ -66,6 +96,10 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->scene_list = resonate::ui::findByKey(world, canvas, "scene-list");
     state->name_field = resonate::ui::findByKey(world, canvas, "name-field");
     state->status = resonate::ui::findByKey(world, canvas, "status");
+    state->opacity.handle = resonate::ui::findByKey(world, canvas, "opacity-scrub");
+    state->opacity.value_label = resonate::ui::findByKey(world, canvas, "opacity-value");
+    state->roughness.handle = resonate::ui::findByKey(world, canvas, "roughness-scrub");
+    state->roughness.value_label = resonate::ui::findByKey(world, canvas, "roughness-value");
 }
 
 /* The editor runs its own configuration; a command line that names one keeps

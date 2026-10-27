@@ -82,6 +82,11 @@ struct Listener
 /* Drops the capture early; the release does it too. */
 void releasePointer(ecs::World& world, ecs::Entity canvas);
 
+/* A key activation: dispatches a Click to the focused widget as if its centre
+   were pressed and released — Enter on a focused button runs its default
+   actions and listeners. False when nothing focusable has focus. */
+[[nodiscard]] bool activateFocused(ecs::World& world, ecs::Entity canvas);
+
 /* Touch-style scrolling: the first viewport on the chain from the widget under
    the point upward that can still move follows the finger. `pixels` is the
    finger's downward travel, so content tracks it one to one; a viewport clamped

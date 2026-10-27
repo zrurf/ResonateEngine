@@ -56,6 +56,15 @@ class TextRuntime;
    the row is a button wrapping a label. Empty for a widget without text. */
 [[nodiscard]] std::string widgetText(ecs::World& world, ecs::Entity entity);
 
+/* A scrubber label's current value; false when the widget is not one. The
+   value moves by dragging the label; the application reads it and clamps it to
+   its own range. */
+[[nodiscard]] bool scrubValue(ecs::World& world, ecs::Entity entity, float& out_value);
+
+/* Sets the scrubber's value from application state, keeping the drag coherent
+   when the two are kept in sync. */
+[[nodiscard]] bool setScrubValue(ecs::World& world, ecs::Entity entity, float value);
+
 } // namespace resonate::ui
 
 #endif /* RESONATE_UI_DOCUMENT_H */

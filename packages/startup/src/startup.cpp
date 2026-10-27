@@ -38,6 +38,7 @@
 #include <resonate/ui/document.h>
 #include <resonate/ui/binding.h>
 #include <resonate/ui/document_schema.h>
+#include <resonate/ui/event.h>
 #include <resonate/ui/image_registry.h>
 #include <resonate/ui/input.h>
 #include <resonate/ui/layout.h>
@@ -120,6 +121,10 @@ struct UiFrame
                     frame->input->key_down(frame->input->self, RESONATE_KEY_LSHIFT) != 0 ||
                     frame->input->key_down(frame->input->self, RESONATE_KEY_RSHIFT) != 0;
                 ui::focusNext(world, frame->canvas, backwards);
+            }
+            if (frame->input->key_pressed(frame->input->self, RESONATE_KEY_RETURN) != 0)
+            {
+                (void)ui::activateFocused(world, frame->canvas);
             }
             if (frame->text != nullptr)
             {

@@ -1535,6 +1535,32 @@ Entity instantiate(World& world, dom::Document& document,
     return instantiateConfigured(world, document, component_registry, bindings);
 }
 
+bool scrubValue(ecs::World& world, ecs::Entity entity, float& out_value)
+{
+    const Scrubber* scrubber = world.get<Scrubber>(entity);
+    if (scrubber == nullptr)
+    {
+        return false;
+    }
+    out_value = scrubber->value;
+    return true;
+}
+
+bool setScrubValue(ecs::World& world, ecs::Entity entity, float value)
+{
+    Scrubber* scrubber = world.get<Scrubber>(entity);
+    if (scrubber == nullptr)
+    {
+        return false;
+    }
+    if (scrubber->value != value)
+    {
+        scrubber->value = value;
+        world.markChanged<Scrubber>(entity);
+    }
+    return true;
+}
+
 ecs::Entity selectedChild(ecs::World& world, ecs::Entity container)
 {
     if (!world.alive(container))
