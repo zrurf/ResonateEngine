@@ -31,6 +31,9 @@ struct DragState
     /* The text field this gesture selects in: the press set the anchor, the
        drag moves the caret edge. */
     ecs::Entity text_field{};
+    /* The field and clock of the last press, for the double-click window. */
+    ecs::Entity last_click_field{};
+    double last_click_time = -1.0;
 };
 
 /* Whether the caret draws this instant: the UI frame flips it every half
@@ -55,8 +58,14 @@ struct CaretBlink
 
    A press that moves past the drag slop becomes a drag: the viewport chain
    under the pointer follows the finger and the release neither activates nor
-   clicks. */
-[[nodiscard]] bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool down);
+   clicks.
+
+   `seconds` is the run's clock at this sample, used only to spot a second
+   press on the same field within the double-click window; zero (the default)
+   disables that, which is what a test or a replay that has no wall clock
+   wants. */
+[[nodiscard]] bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool down,
+                               double seconds = 0.0);
 
 /* Moves focus to the next (or previous) focusable Input in tree order and
    wraps. Non-focusable and disabled widgets are skipped; a canvas with no

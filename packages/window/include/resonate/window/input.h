@@ -408,6 +408,15 @@ typedef struct ResonateInput
        between two steps. A provider without this keeps latches until its next
        pump. */
     void (*clear_presses)(void* self);
+
+    /* Tail: puts `size` bytes of UTF-8 on the platform clipboard. A provider
+       without this does nothing. */
+    void (*set_clipboard)(void* self, const char* utf8, uint32_t size);
+
+    /* Tail: the clipboard's UTF-8 text. Copies up to `capacity` bytes and
+       answers the bytes written, 0 when the clipboard holds nothing readable.
+       A provider without this answers 0. */
+    uint32_t (*get_clipboard)(void* self, char* out_text, uint32_t capacity);
 } ResonateInput;
 
 #ifdef __cplusplus

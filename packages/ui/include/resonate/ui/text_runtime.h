@@ -104,6 +104,11 @@ struct TextRuntimeRef
    a drag extends a selection. False when the widget carries no Text. */
 [[nodiscard]] bool extendCaretTo(ecs::World& world, ecs::Entity entity, float local_x);
 
+/* Selects the word under widget-local `x`: a run of letters, digits,
+   underscore or non-ASCII code points; a separator selects itself. False when
+   the widget carries no Text. */
+[[nodiscard]] bool selectWordAt(ecs::World& world, ecs::Entity entity, float local_x);
+
 /* The selected byte range of a text field, empty (begin == end) when none.
    False when the entity carries no Text. */
 [[nodiscard]] bool selectionRange(ecs::World& world, ecs::Entity entity,

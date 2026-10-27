@@ -245,7 +245,8 @@ void collectFocusable(ecs::World& world, ecs::Entity entity, std::vector<ecs::En
 
 } // namespace
 
-bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool down)
+bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool down,
+                 double seconds)
 {
     /* Attaching DragState moves the canvas to a new archetype, so PointerState
        is fetched only after the structural change; the pointers must not
@@ -340,11 +341,30 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         {
             /* A press inside a text field drops the caret where it landed and
                arms the selection: the anchor starts there, a drag moves the
-               edge, a plain release leaves the range empty. */
+               edge, a plain release leaves the range empty. A second press on
+               the same field inside the double-click window selects the word
+               instead. */
             const ComputedRect* rect = world.get<ComputedRect>(hover);
             if (rect != nullptr && isTextField(world, hover))
             {
-                (void)beginTextSelect(world, hover, x - rect->x);
+                constexpr double kDoubleClickWindow = 0.4;
+                const bool double_click =
+                    seconds > drag->last_click_time &&
+                    seconds - drag->last_click_time <= kDoubleClickWindow &&
+                    drag->last_click_field == hover;
+                if (double_click)
+                {
+                    (void)selectWordAt(world, hover, x - rect->x);
+                    /* No triple-click chaining: the next press starts fresh. */
+                    drag->last_click_time = -1.0;
+                    drag->last_click_field = ecs::Entity{};
+                }
+                else
+                {
+                    (void)beginTextSelect(world, hover, x - rect->x);
+                    drag->last_click_time = seconds;
+                    drag->last_click_field = hover;
+                }
                 drag->text_field = hover;
             }
         }

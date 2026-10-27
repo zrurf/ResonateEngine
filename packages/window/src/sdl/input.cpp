@@ -2,6 +2,9 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstring>
+#include <string>
+
 #include <resonate/window/host.hpp>
 
 #include "internal.h"
@@ -29,6 +32,37 @@ int32_t keyPressed(void* self, ResonateKey key)
         return 0;
     }
     return state->input.pressed[key] ? 1 : 0;
+}
+
+void setClipboard(void* self, const char* utf8, uint32_t size)
+{
+    (void)self;
+    if (utf8 == nullptr)
+    {
+        return;
+    }
+    /* SDL wants a terminator, and the text layer hands bounded spans. */
+    std::string text(utf8, size);
+    (void)SDL_SetClipboardText(text.c_str());
+}
+
+uint32_t getClipboard(void* self, char* out_text, uint32_t capacity)
+{
+    (void)self;
+    if (out_text == nullptr || capacity == 0U)
+    {
+        return 0U;
+    }
+    char* text = SDL_GetClipboardText();
+    if (text == nullptr)
+    {
+        return 0U;
+    }
+    const uint32_t length = static_cast<uint32_t>(std::strlen(text));
+    const uint32_t copied = length < capacity ? length : capacity;
+    std::memcpy(out_text, text, copied);
+    SDL_free(text);
+    return copied;
 }
 
 void clearPresses(void* self)
@@ -235,6 +269,8 @@ ResonateInput g_input = {
     nullptr,
     nullptr,
     &clearPresses,
+    &setClipboard,
+    &getClipboard,
 };
 
 } // namespace

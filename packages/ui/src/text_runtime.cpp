@@ -112,6 +112,55 @@ std::size_t nextCodepoint(const std::string& content, std::size_t offset)
     return index;
 }
 
+/* The code point that starts at `offset`, replacement character for bad
+   bytes; word selection only cares about broad classes, not exact values. */
+std::uint32_t codepointAt(const std::string& content, std::size_t offset)
+{
+    if (offset >= content.size())
+    {
+        return 0U;
+    }
+    const auto lead = static_cast<unsigned char>(content[offset]);
+    std::size_t length = 1U;
+    if (lead >= 0xF0U)
+    {
+        length = 4U;
+    }
+    else if (lead >= 0xE0U)
+    {
+        length = 3U;
+    }
+    else if (lead >= 0xC0U)
+    {
+        length = 2U;
+    }
+    /* One-byte leads carry seven bits; the multi-byte masks are 0x1F, 0x0F,
+       0x07, which is exactly 0xFF >> (length + 1). */
+    const std::uint32_t lead_mask = length == 1U ? 0x7FU : 0xFFU >> (length + 1U);
+    std::uint32_t value = lead & lead_mask;
+    for (std::size_t index = 1U; index < length && offset + index < content.size(); ++index)
+    {
+        value = value << 6U | (static_cast<unsigned char>(content[offset + index]) & 0x3FU);
+    }
+    return value;
+}
+
+/* A word for double-click selection: letters, digits, underscore, and every
+   code point outside ASCII, so CJK text selects as runs too. ASCII
+   punctuation and spaces separate words. */
+bool isWordCodepoint(std::uint32_t value)
+{
+    if (value >= 0x80U)
+    {
+        return true;
+    }
+    const bool alpha = value >= 'a' && value <= 'z';
+    const bool upper = value >= 'A' && value <= 'Z';
+    const bool digit = value >= '0' && value <= '9';
+    const bool underscore = value == '_';
+    return alpha || upper || digit || underscore;
+}
+
 } // namespace
 
 struct TextRuntime::Impl
@@ -603,6 +652,49 @@ bool selectionRange(ecs::World& world, ecs::Entity entity, std::uint32_t& out_be
     out_begin = static_cast<std::uint32_t>(begin);
     out_end = static_cast<std::uint32_t>(end);
     return true;
+}
+
+bool selectWordAt(ecs::World& world, ecs::Entity entity, float local_x)
+{
+    if (world.get<Text>(entity) == nullptr)
+    {
+        return false;
+    }
+    const std::string content = readContent(world, entity);
+    std::size_t at = caretAtLocal(world, entity, local_x);
+    /* The offset a click lands on may sit on the separator after a word; the
+       word then is the one before it. */
+    if (at >= content.size() && !content.empty())
+    {
+        at = previousCodepoint(content, at);
+    }
+    if (!content.empty() && !isWordCodepoint(codepointAt(content, at)) && at > 0U &&
+        isWordCodepoint(codepointAt(content, previousCodepoint(content, at))))
+    {
+        at = previousCodepoint(content, at);
+    }
+    std::size_t begin = at;
+    while (begin > 0U && isWordCodepoint(codepointAt(content, previousCodepoint(content, begin))))
+    {
+        begin = previousCodepoint(content, begin);
+    }
+    std::size_t end = at;
+    while (end < content.size() && isWordCodepoint(codepointAt(content, end)))
+    {
+        end = nextCodepoint(content, end);
+    }
+    if (!setCaret(world, entity, end))
+    {
+        return false;
+    }
+    TextSelection* selection = world.get<TextSelection>(entity);
+    if (selection != nullptr)
+    {
+        selection->anchor = static_cast<std::uint32_t>(begin);
+        world.markChanged<TextSelection>(entity);
+        return true;
+    }
+    return world.add(entity, TextSelection{static_cast<std::uint32_t>(begin)}) != nullptr;
 }
 
 bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion)

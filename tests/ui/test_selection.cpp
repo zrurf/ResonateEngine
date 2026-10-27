@@ -205,3 +205,45 @@ TEST_CASE("ui selection: the highlight draws behind the glyphs", "[ui][text][sel
     CHECK(highlights > 1U);
     CHECK(highlighted_width > metrics->advance * 0.9F);
 }
+
+TEST_CASE("ui selection: a double click selects the word under the pointer",
+          "[ui][text][selection]")
+{
+    Fixture fixture;
+    SelectionFixture selection(fixture.world);
+    const float mid_y = selection.rect.y + selection.rect.height * 0.5F;
+
+    /* "hello world": click into the second word twice inside the window. The
+       first press lands in "hello" or before "world"; the double click must
+       select "world" whole either way, so aim where the words split: press
+       once at the far right (end of the run), then again at the middle of
+       "world". Simpler and stable: press once at the end, then again at the
+       same spot after 0.2 s. */
+    const auto press = [&](float x, double at)
+    {
+        REQUIRE(resonate::ui::updateInput(selection.world, selection.root, x, mid_y, true, at));
+        REQUIRE(resonate::ui::updateInput(selection.world, selection.root, x, mid_y, false, at));
+    };
+    press(selection.rect.x + 1.0F, 0.0);
+    press(selection.rect.x + selection.rect.width - 1.0F, 0.25);
+
+    std::uint32_t select_begin = 0U;
+    std::uint32_t select_end = 0U;
+    REQUIRE(resonate::ui::selectionRange(selection.world, selection.field, select_begin,
+                                         select_end));
+    CHECK(selection.content().substr(select_begin, select_end - select_begin) == "world");
+
+    /* Directly: the word under a click in "hello" is "hello"; past the run it
+       is the last word. */
+    const resonate::ui::TextMetrics* metrics =
+        selection.world.get<resonate::ui::TextMetrics>(selection.field);
+    REQUIRE(metrics != nullptr);
+    REQUIRE(resonate::ui::selectWordAt(selection.world, selection.field, metrics->advance * 0.25F));
+    REQUIRE(resonate::ui::selectionRange(selection.world, selection.field, select_begin,
+                                         select_end));
+    CHECK(selection.content().substr(select_begin, select_end - select_begin) == "hello");
+    REQUIRE(resonate::ui::selectWordAt(selection.world, selection.field, metrics->advance + 5.0F));
+    REQUIRE(resonate::ui::selectionRange(selection.world, selection.field, select_begin,
+                                         select_end));
+    CHECK(selection.content().substr(select_begin, select_end - select_begin) == "world");
+}

@@ -92,6 +92,8 @@ struct UiFrame
        both, so the caret never flickers away mid-keystroke. */
     float blink_time = 0.0F;
     ecs::Entity blink_focus{};
+    /* The run's clock as the input system sees it: it times double clicks. */
+    double input_clock = 0.0;
 
     static void invoke(void* context, ecs::World& world, ecs::CommandBuffer&, float delta_seconds)
     {
@@ -110,6 +112,7 @@ struct UiFrame
         {
             frame->transitions->advance(world, delta_seconds);
         }
+        frame->input_clock += delta_seconds;
         bool text_activity = false;
         if (frame->input != nullptr)
         {
@@ -117,7 +120,8 @@ struct UiFrame
             frame->input->pointer_position(frame->input->self, &position);
             const bool down =
                 frame->input->mouse_down(frame->input->self, RESONATE_MOUSE_LEFT) != 0;
-            if (!ui::updateInput(world, frame->canvas, position.x, position.y, down))
+            if (!ui::updateInput(world, frame->canvas, position.x, position.y, down,
+                                 frame->input_clock))
             {
                 return;
             }
@@ -161,6 +165,70 @@ struct UiFrame
                     {
                         (void)ui::moveCaret(world, frame->canvas, caret_key.motion);
                         text_activity = true;
+                    }
+                }
+                /* Clipboard chords on the focused field: copy and cut take the
+                   selection, paste lands where the caret is and replaces
+                   whatever is selected. */
+                const bool ctrl =
+                    frame->input->key_down(frame->input->self, RESONATE_KEY_LCTRL) != 0 ||
+                    frame->input->key_down(frame->input->self, RESONATE_KEY_RCTRL) != 0;
+                if (ctrl && frame->input->set_clipboard != nullptr &&
+                    frame->input->get_clipboard != nullptr)
+                {
+                    const ecs::Entity focused = ui::focusedEntity(world, frame->canvas);
+                    std::uint32_t select_begin = 0U;
+                    std::uint32_t select_end = 0U;
+                    const bool selected =
+                        focused.valid() &&
+                        ui::selectionRange(world, focused, select_begin, select_end) &&
+                        select_begin < select_end;
+                    if (frame->input->key_pressed(frame->input->self, RESONATE_KEY_C) != 0 ||
+                        frame->input->key_pressed(frame->input->self, RESONATE_KEY_X) != 0)
+                    {
+                        if (selected)
+                        {
+                            char clipboard[4096] = {};
+                            std::string error;
+                            const std::string content = ui::focusedText(world, frame->canvas);
+                            const std::size_t begin = select_begin < content.size()
+                                                          ? select_begin
+                                                          : content.size();
+                            const std::size_t end = select_end < content.size()
+                                                        ? select_end
+                                                        : content.size();
+                            if (begin < end)
+                            {
+                                frame->input->set_clipboard(frame->input->self,
+                                                            content.data() + begin,
+                                                            static_cast<std::uint32_t>(end - begin));
+                            }
+                            if (frame->input->key_pressed(frame->input->self,
+                                                          RESONATE_KEY_X) != 0)
+                            {
+                                (void)ui::updateTextInput(world, frame->canvas, *frame->text, "",
+                                                          true, false, error);
+                                text_activity = true;
+                            }
+                        }
+                    }
+                    else if (frame->input->key_pressed(frame->input->self, RESONATE_KEY_V) != 0)
+                    {
+                        char clipboard[4096] = {};
+                        const std::uint32_t length =
+                            frame->input->get_clipboard(frame->input->self, clipboard,
+                                                        sizeof(clipboard));
+                        if (length > 0U)
+                        {
+                            std::string error;
+                            if (!ui::updateTextInput(world, frame->canvas, *frame->text,
+                                                     std::string_view(clipboard, length), false,
+                                                     false, error))
+                            {
+                                std::fprintf(stderr, "resonate: ui paste: %s\n", error.c_str());
+                            }
+                            text_activity = true;
+                        }
                     }
                 }
             }
