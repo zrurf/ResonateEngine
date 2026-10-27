@@ -495,9 +495,12 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
         }
     }
 
-    /* UNKNOWN in the pass key resolves to the swapchain format. */
+    /* UNKNOWN in the pass key resolves to the swapchain format. Pipelines
+       ask for the 1x clear-and-store pass over their formats: render-pass
+       compatibility covers formats and sample counts only, so this one object
+       also serves every pass whose actions differ, at 1x (IGL I3). */
     VkRenderPass pass = VK_NULL_HANDLE;
-    if (renderPassFor(desc.color_format, desc.depth_format, &pass) != RESONATE_OK)
+    if (renderPassFor(desc.color_format, desc.depth_format, 1, 0, &pass) != RESONATE_OK)
     {
         return RESONATE_E_INTERNAL;
     }

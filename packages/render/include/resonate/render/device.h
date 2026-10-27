@@ -239,6 +239,16 @@ typedef struct ResonateRenderPassDesc
        Dynamic-resolution rendering uses it instead of resizing targets. */
     uint32_t viewport_width;
     uint32_t viewport_height;
+    /* Tail: every attachment renders at this sample count (1 = no MSAA; zero
+       reads as 1). Part of the pass's identity and of the pipelines that may
+       run in it. */
+    uint32_t samples;
+    /* Tail: attachment actions over the clear-and-store defaults. Bit 0: the
+       color loads what the target holds instead of clearing; bit 1: the color
+       stores nothing (a transient target a resolve feeds); bit 2: the depth
+       loads; bit 3: the depth stores nothing. These are outside pipeline
+       compatibility, so a pipeline created for the defaults may run here. */
+    uint32_t attachment_ops;
 } ResonateRenderPassDesc;
 
 /* A memory dependency: what a resource's state was, what it becomes. The

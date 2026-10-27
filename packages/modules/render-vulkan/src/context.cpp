@@ -1633,7 +1633,7 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
     }
     swapchain_images_ = images;
 
-    if (renderPassFor(RESONATE_RENDER_FORMAT_UNKNOWN, RESONATE_RENDER_FORMAT_UNKNOWN,
+    if (renderPassFor(RESONATE_RENDER_FORMAT_UNKNOWN, RESONATE_RENDER_FORMAT_UNKNOWN, 1, 0,
                       &render_pass_) != RESONATE_OK)
     {
         note(surface_failed_, "render pass creation failed");
@@ -1735,7 +1735,7 @@ ResonateStatus Context::createOffscreen(uint32_t width, uint32_t height)
         views_.push_back(handle);
     }
 
-    if (renderPassFor(RESONATE_RENDER_FORMAT_UNKNOWN, RESONATE_RENDER_FORMAT_UNKNOWN,
+    if (renderPassFor(RESONATE_RENDER_FORMAT_UNKNOWN, RESONATE_RENDER_FORMAT_UNKNOWN, 1, 0,
                       &render_pass_) != RESONATE_OK)
     {
         note(device_failed_, "render pass creation failed");
@@ -1797,11 +1797,15 @@ void Context::destroySwapchainObjects()
        recreateSwapchain rebuilds it on demand. */
     if (render_pass_ != VK_NULL_HANDLE)
     {
-        const uint32_t key = static_cast<uint32_t>(RESONATE_RENDER_FORMAT_UNKNOWN);
-        auto found = pass_cache_.find(key);
-        if (found != pass_cache_.end() && found->second == render_pass_)
+        /* The canvas pass is cached like any other; drop its entry by value so
+           the destructor's loop below does not destroy the object twice. */
+        for (auto entry = pass_cache_.begin(); entry != pass_cache_.end(); ++entry)
         {
-            pass_cache_.erase(found);
+            if (entry->second == render_pass_)
+            {
+                pass_cache_.erase(entry);
+                break;
+            }
         }
         vkDestroyRenderPass(device_, render_pass_, nullptr);
         render_pass_ = VK_NULL_HANDLE;
@@ -1851,10 +1855,29 @@ VkFormat Context::formatOf(ResonateRenderFormat format) const
     }
 }
 
-ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRenderFormat depth,
-                                      VkRenderPass* out)
+/* The pass's sample count: 0 and 1 read as 1x; anything the format survey
+   never answered falls back to 1x rather than failing the pass. */
+static VkSampleCountFlagBits sampleCountOf(uint32_t samples)
 {
-    const uint32_t key = static_cast<uint32_t>(color) | (static_cast<uint32_t>(depth) << 8);
+    switch (samples)
+    {
+        case 2U:
+            return VK_SAMPLE_COUNT_2_BIT;
+        case 4U:
+            return VK_SAMPLE_COUNT_4_BIT;
+        case 8U:
+            return VK_SAMPLE_COUNT_8_BIT;
+        default:
+            return VK_SAMPLE_COUNT_1_BIT;
+    }
+}
+
+ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRenderFormat depth,
+                                      uint32_t samples, uint32_t ops, VkRenderPass* out)
+{
+    samples = sampleCountOf(samples);
+    const uint64_t key = static_cast<uint64_t>(color) | (static_cast<uint64_t>(depth) << 8) |
+                         (static_cast<uint64_t>(samples) << 16) | (static_cast<uint64_t>(ops & 0xFFU) << 24);
     const auto found = pass_cache_.find(key);
     if (found != pass_cache_.end())
     {
@@ -1865,6 +1888,15 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
     /* Depth-only: color NONE and a depth format make a pass with no color
        attachment (shadow maps). */
     const bool colorless = color == RESONATE_RENDER_FORMAT_NONE;
+    /* The pass's attachments all render at one sample count; the actions pick
+       bits of the ops mask. What an attachment loads and stores is outside
+       render-pass compatibility, so pipelines may share a pass whose actions
+       differ (IGL I3). */
+    const VkSampleCountFlagBits sample_flags = static_cast<VkSampleCountFlagBits>(samples);
+    const bool color_loads = (ops & 1U) != 0U;
+    const bool color_transient = (ops & 2U) != 0U;
+    const bool depth_loads = (ops & 4U) != 0U;
+    const bool depth_transient = (ops & 8U) != 0U;
 
     VkAttachmentDescription attachments[2] = {};
     VkAttachmentReference color_reference{};
@@ -1877,9 +1909,10 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
     if (!colorless)
     {
         attachments[0].format = formatOf(color);
-        attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
-        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[0].samples = sample_flags;
+        attachments[0].loadOp = color_loads ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[0].storeOp =
+            color_transient ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
         attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1909,9 +1942,11 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
 
         const uint32_t depth_index = colorless ? 0 : 1;
         attachments[depth_index].format = formatOf(depth);
-        attachments[depth_index].samples = VK_SAMPLE_COUNT_1_BIT;
-        attachments[depth_index].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        attachments[depth_index].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[depth_index].samples = sample_flags;
+        attachments[depth_index].loadOp =
+            depth_loads ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[depth_index].storeOp =
+            depth_transient ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
         attachments[depth_index].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[depth_index].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[depth_index].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -2294,12 +2329,16 @@ ResonateStatus Context::beginFrame()
     }
 
     /* Every pipeline reads the resource table as set 0, so the frame binds it
-       once at each bind point. */
-    VkDescriptorSet set = table_set_;
-    vkCmdBindDescriptorSets(frame.command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0, 1,
-                            &set, 0, nullptr);
-    vkCmdBindDescriptorSets(frame.command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout_, 0, 1,
-                            &set, 0, nullptr);
+       once at each bind point. The table and its layout come with the first
+       pipeline; a frame that runs no pipeline binds nothing. */
+    if (pipeline_layout_ != VK_NULL_HANDLE)
+    {
+        VkDescriptorSet set = table_set_;
+        vkCmdBindDescriptorSets(frame.command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0,
+                                1, &set, 0, nullptr);
+        vkCmdBindDescriptorSets(frame.command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout_, 0,
+                                1, &set, 0, nullptr);
+    }
     frame_open_ = true;
     return RESONATE_OK;
 }
@@ -2314,13 +2353,28 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
     const bool colorless =
         desc.struct_size >= offsetof(ResonateRenderPassDesc, colorless) + sizeof(uint32_t) &&
         desc.colorless != 0U;
+    /* The pass tails: a sample count other than 1 needs a multisampled target,
+       which the renderer creates with R1's image work; the actions are usable
+       now. Zero reads as the 1x clear-and-store default. */
+    const uint32_t samples =
+        desc.struct_size >= offsetof(ResonateRenderPassDesc, samples) + sizeof(uint32_t)
+            ? desc.samples
+            : 0U;
+    const uint32_t ops =
+        desc.struct_size >= offsetof(ResonateRenderPassDesc, attachment_ops) + sizeof(uint32_t)
+            ? desc.attachment_ops
+            : 0U;
+    /* The framebuffer must be rebuilt when the pass identity changes, because
+       a VkFramebuffer is created against one VkRenderPass. */
+    const uint64_t pass_identity = static_cast<uint64_t>(samples) | (static_cast<uint64_t>(ops) << 8);
     VkRenderPass pass = VK_NULL_HANDLE;
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
     VkExtent2D pass_extent{};
 
     if (desc.color.value == 0 && !colorless)
     {
-        if (renderPassFor(RESONATE_RENDER_FORMAT_UNKNOWN, RESONATE_RENDER_FORMAT_UNKNOWN, &pass) !=
+        if (renderPassFor(RESONATE_RENDER_FORMAT_UNKNOWN, RESONATE_RENDER_FORMAT_UNKNOWN, samples,
+                          ops, &pass) !=
             RESONATE_OK)
         {
             return RESONATE_E_INTERNAL;
@@ -2342,11 +2396,13 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
             return RESONATE_E_INVALID;
         }
 
-        if (renderPassFor(RESONATE_RENDER_FORMAT_NONE, depth->format_id, &pass) != RESONATE_OK)
+        if (renderPassFor(RESONATE_RENDER_FORMAT_NONE, depth->format_id, samples, ops, &pass) !=
+            RESONATE_OK)
         {
             return RESONATE_E_INTERNAL;
         }
-        const std::pair<uint64_t, uint64_t> key{0U, desc.depth.value};
+        const std::pair<uint64_t, uint64_t> key{static_cast<uint64_t>(desc.depth.value) << 32,
+                                                pass_identity};
         const auto found = framebuffer_cache_.find(key);
         if (found != framebuffer_cache_.end())
         {
@@ -2395,14 +2451,16 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
 
         const ResonateRenderFormat depth_format =
             depth != nullptr ? depth->format_id : RESONATE_RENDER_FORMAT_UNKNOWN;
-        if (renderPassFor(image->format_id, depth_format, &pass) != RESONATE_OK)
+        if (renderPassFor(image->format_id, depth_format, samples, ops, &pass) != RESONATE_OK)
         {
             return RESONATE_E_INTERNAL;
         }
 
         VkImageView attachments[2] = {image->view, depth != nullptr ? depth->view : VK_NULL_HANDLE};
         const uint32_t attachment_count = depth != nullptr ? 2U : 1U;
-        const std::pair<uint64_t, uint64_t> key{desc.color.value, desc.depth.value};
+        const std::pair<uint64_t, uint64_t> key{
+            static_cast<uint64_t>(desc.color.value) | (static_cast<uint64_t>(desc.depth.value) << 32),
+            pass_identity};
         const auto found = framebuffer_cache_.find(key);
         if (found != framebuffer_cache_.end())
         {

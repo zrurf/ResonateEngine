@@ -285,8 +285,13 @@ class Context
     VkBuffer resolveBuffer(ResonateRenderBuffer handle) const;
     void destroySwapchainObjects();
     void recreateSwapchain();
+    /* A pass is its full identity: formats, sample count and the attachment
+       actions. Pipelines may run in any pass over their formats at their
+       sample count — Vulkan render-pass compatibility ignores load/store — so
+       they ask for the defaults and the pipeline key stays formats+samples
+       (IGL I3, the R5 split). */
     ResonateStatus renderPassFor(ResonateRenderFormat color, ResonateRenderFormat depth,
-                                 VkRenderPass* out);
+                                 uint32_t samples, uint32_t ops, VkRenderPass* out);
     VkFormat formatOf(ResonateRenderFormat format) const;
     ResonateStatus submitAndRun(VkCommandBuffer command); /* one-shot sync submit */
     void drainGraveyard(std::vector<Retired>& graveyard);
@@ -379,9 +384,10 @@ class Context
     Pool<PipelineSlot> pipelines_;
     VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE; /* shared, lazy */
     VkPipelineCache pipeline_cache_ = VK_NULL_HANDLE;
-    std::map<uint32_t, VkRenderPass> pass_cache_; /* key: color | depth<<8 */
-    /* Keyed by the full color and depth handles, generations included: a
-       recreated image must not find the framebuffer of its predecessor. */
+    std::map<uint64_t, VkRenderPass> pass_cache_; /* key: color | depth<<8 | samples<<16 | ops<<24 */
+    /* Keyed by the full color and depth handles (generations included — a
+       recreated image must not find the framebuffer of its predecessor) plus
+       the pass identity the framebuffer was built against. */
     std::map<std::pair<uint64_t, uint64_t>, VkFramebuffer> framebuffer_cache_;
 
     /* The resource tables: set 0, bindings 0-4 = kStorageTableSize storage

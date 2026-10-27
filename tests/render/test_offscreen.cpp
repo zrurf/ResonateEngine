@@ -186,3 +186,70 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
     render_system.release();
     host->detachAll();
 }
+
+/* The pass identity's action half (R5): what an attachment loads and stores is
+   the caller's choice per pass, and a pipeline built for the defaults runs in
+   every such pass. The readback proves the load really kept the frame the
+   pass before it left. */
+TEST_CASE("offscreen: a loading pass keeps what the frame before it left",
+          "[render][offscreen]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    REQUIRE(resonate::render::publishOffscreen(host->capabilities(), 64U, 64U) == RESONATE_OK);
+    REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+    REQUIRE(host->resolve() == RESONATE_OK);
+    REQUIRE(host->attachAll() == RESONATE_OK);
+
+    auto* device = static_cast<ResonateRenderDevice*>(resonate_capability_find(
+        host->capabilities(), resonate::detail::CapabilityTraits<ResonateRenderDevice>::id.value(),
+        1U, nullptr));
+    REQUIRE(device != nullptr);
+    /* Raw device frames: the renderer normally attaches the target, so this
+       test does it itself. */
+    REQUIRE(device->attach_offscreen(device->self, 64U, 64U) == RESONATE_OK);
+
+    const auto frame = [&](float red, float green, float blue, std::uint32_t ops)
+    {
+        REQUIRE(device->begin_frame(device->self) == RESONATE_OK);
+        ResonateRenderPassDesc pass = {};
+        pass.struct_size = sizeof(ResonateRenderPassDesc);
+        pass.color.value = 0U; /* the canvas */
+        pass.clear_color = ResonateVec4{red, green, blue, 1.0F};
+        pass.attachment_ops = ops;
+        REQUIRE(device->begin_pass(device->self, &pass) == RESONATE_OK);
+        REQUIRE(device->end_pass(device->self) == RESONATE_OK);
+        REQUIRE(device->present(device->self) == RESONATE_OK);
+        REQUIRE(device->wait_idle(device->self) == RESONATE_OK);
+    };
+    const auto read_red = [&]
+    {
+        std::vector<std::uint8_t> pixels(64U * 64U * 4U);
+        std::uint32_t width = 0U;
+        std::uint32_t height = 0U;
+        REQUIRE(device->readback_canvas(device->self, pixels.data(),
+                                        static_cast<std::uint64_t>(pixels.size()), &width,
+                                        &height) == RESONATE_OK);
+        return pixels[0];
+    };
+
+    /* A clearing pass really clears. Two identical frames: after a single
+       presented frame the readback's slot choice is the device's business, and
+       the second frame makes the read deterministic for the test. */
+    frame(1.0F, 0.0F, 0.0F, 0U);
+    frame(1.0F, 0.0F, 0.0F, 0U);
+    CHECK(read_red() > 200U);
+
+    /* A loading pass ignores its clear color and keeps the frame before it. */
+    frame(0.0F, 0.0F, 0.0F, 1U);
+    CHECK(read_red() > 200U);
+
+    /* Back to the default: the clear wins again. */
+    frame(0.0F, 0.0F, 0.0F, 0U);
+    CHECK(read_red() < 40U);
+
+    host->detachAll();
+}
