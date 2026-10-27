@@ -197,8 +197,10 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
             }
             if (focused_ == entity)
             {
-                /* The caret sits past the last glyph's ink; an empty field
-                   starts it at the alignment edge. */
+                /* The caret sits where the shaped run ends; an empty field
+                   starts it at the alignment edge. The ink extents cannot
+                   answer this — atlas padding and trailing space advances are
+                   not visible pixels. */
                 float caret_x = rect->x;
                 float caret_y = rect->y;
                 const float caret_height = text->font_size > 0.0F ? text->font_size
@@ -206,8 +208,10 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                 if (count > 0U)
                 {
                     const detail::GlyphQuad& last = records[count - 1U];
-                    caret_x = rect->x + last.x + last.width + 1.0F;
                     caret_y = rect->y + last.y;
+                    const TextMetrics* metrics = world.get<TextMetrics>(entity);
+                    caret_x = rect->x + (metrics != nullptr ? metrics->advance
+                                                            : last.x + last.width + 1.0F);
                 }
                 else if (text->align == TextAlign::Center)
                 {

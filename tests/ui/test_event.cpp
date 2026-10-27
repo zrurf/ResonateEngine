@@ -166,7 +166,7 @@ TEST_CASE("ui event: the wheel scrolls a viewport by whole rows", "[ui][event]")
     /* Three more detents reach the end of the content and clamp there. */
     for (int step = 0; step < 5; ++step)
     {
-        resonate::ui::scrollInput(fixture.world, fixture.root, 10.0F, 50.0F, 1.0F);
+        (void)resonate::ui::scrollInput(fixture.world, fixture.root, 10.0F, 50.0F, 1.0F);
     }
     view = fixture.world.get<ScrollView>(fixture.list);
     CHECK(near(view->scroll, 60.0F));

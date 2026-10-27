@@ -223,8 +223,9 @@ bool TextAtlasBuilder::getGlyph(std::uint32_t font, std::uint32_t glyph, float s
 
 bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight, float width,
                                 std::uint32_t align, bool wrap, std::vector<GlyphQuad>& out,
-                                std::string& out_error)
+                                float& out_advance_x, std::string& out_error)
 {
+    out_advance_x = 0.0F;
     if (fonts_.empty() || fonts_[0] == nullptr || !(size > 0.0F))
     {
         out_error = "the text has no font";
@@ -379,6 +380,7 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight,
             }
             pen += entry.glyph.x_advance;
         }
+        out_advance_x = offset + pen;
         line.erase(line.begin(), line.begin() + static_cast<std::ptrdiff_t>(count));
         if (count > 0U || force)
         {

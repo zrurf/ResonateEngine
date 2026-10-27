@@ -82,6 +82,11 @@ struct TextRuntimeAccess
    is when a platform should show its soft keyboard. */
 [[nodiscard]] bool focusedTextEditable(ecs::World& world, ecs::Entity canvas);
 
+/* The focused text field's content, or empty when none has focus. A platform
+   editor owns the buffer while a field is focused, so the engine pushes this
+   into it first and mirrors what the editor then reports. */
+[[nodiscard]] std::string focusedText(ecs::World& world, ecs::Entity canvas);
+
 } // namespace resonate::ui
 
 #endif /* RESONATE_UI_TEXT_RUNTIME_H */

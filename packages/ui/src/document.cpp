@@ -690,6 +690,7 @@ struct PendingRun
 {
     Entity entity{};
     std::vector<detail::GlyphQuad> quads;
+    float advance = 0.0F;
 };
 
 struct BindingContext
@@ -881,10 +882,11 @@ bool buildTextRun(World& world, const dom::Document& document, dom::NodeHandle n
     const float width = rect != nullptr ? rect->width : 0.0F;
     std::vector<detail::GlyphQuad> glyphs;
     std::string error;
+    float advance = 0.0F;
     if (!context.atlas->buildRun(std::string_view(bytes, size), text->font_size,
                                  static_cast<float>(text->font_weight), width,
                                  static_cast<std::uint32_t>(text->align), text->wrap, glyphs,
-                                 error))
+                                 advance, error))
     {
         return report(world, document, node, "text: " + error);
     }
@@ -892,7 +894,7 @@ bool buildTextRun(World& world, const dom::Document& document, dom::NodeHandle n
     {
         return true;
     }
-    context.runs.push_back(PendingRun{entity, std::move(glyphs)});
+    context.runs.push_back(PendingRun{entity, std::move(glyphs), advance});
     return true;
 }
 
@@ -1363,7 +1365,8 @@ Entity instantiateConfigured(World& world, dom::Document& document,
             maximum_y = std::fmax(maximum_y, glyph.y + glyph.height);
         }
         if (world.add(run.entity,
-                      TextMetrics{maximum_x - minimum_x, maximum_y - minimum_y}) == nullptr)
+                      TextMetrics{maximum_x - minimum_x, maximum_y - minimum_y,
+                                  run.advance}) == nullptr)
         {
             report(world, document, root, "text metrics could not be attached");
             for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)

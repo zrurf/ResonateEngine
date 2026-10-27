@@ -163,8 +163,10 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
     const RectTransform* rect = world.get<RectTransform>(entity);
     const float width = authoredWidth(rect);
     std::vector<detail::GlyphQuad> quads;
+    float advance = 0.0F;
     if (!impl_->atlas.buildRun(utf8, text->font_size, static_cast<float>(text->font_weight), width,
-                               static_cast<std::uint32_t>(text->align), text->wrap, quads, error))
+                               static_cast<std::uint32_t>(text->align), text->wrap, quads, advance,
+                               error))
     {
         return false;
     }
@@ -238,9 +240,10 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
     {
         metrics->width = maximum_x - minimum_x;
         metrics->height = maximum_y - minimum_y;
+        metrics->advance = advance;
     }
-    else if (world.add(entity, TextMetrics{maximum_x - minimum_x, maximum_y - minimum_y}) ==
-             nullptr)
+    else if (world.add(entity, TextMetrics{maximum_x - minimum_x, maximum_y - minimum_y,
+                                           advance}) == nullptr)
     {
         error = "text metrics could not be attached";
         return false;
@@ -367,7 +370,18 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
         }
         content.erase(index);
     }
-    content.append(utf8);
+    /* Some platforms hand control keys back as text input — Win32 translates
+       the backspace key into a WM_CHAR the IME layer forwards. Text is
+       printable characters; a stored control byte would be invisible and
+       swallow the next deletion. */
+    for (const char byte : utf8)
+    {
+        const auto value = static_cast<unsigned char>(byte);
+        if (value >= 0x20U && value != 0x7FU)
+        {
+            content.push_back(byte);
+        }
+    }
     return runtime.setText(world, canvas, pointer->focused, content, error);
 }
 
@@ -398,6 +412,17 @@ bool focusedTextEditable(ecs::World& world, ecs::Entity canvas)
     const PointerState* pointer = world.get<PointerState>(canvas);
     return pointer != nullptr && pointer->focused.valid() &&
            world.get<Text>(pointer->focused) != nullptr;
+}
+
+std::string focusedText(ecs::World& world, ecs::Entity canvas)
+{
+    const PointerState* pointer = world.get<PointerState>(canvas);
+    if (pointer == nullptr || !pointer->focused.valid() ||
+        world.get<Text>(pointer->focused) == nullptr)
+    {
+        return {};
+    }
+    return readContent(world, pointer->focused);
 }
 
 } // namespace resonate::ui

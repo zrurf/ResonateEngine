@@ -224,7 +224,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         }
         if (drag->dragging)
         {
-            dragScroll(world, canvas, x, y, y - last_y);
+            (void)dragScroll(world, canvas, x, y, y - last_y);
         }
     }
 

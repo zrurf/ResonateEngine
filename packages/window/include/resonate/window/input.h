@@ -384,15 +384,22 @@ typedef struct ResonateInput
        consumed by the read. A provider without one answers 0. */
     void (*pointer_wheel)(void* self, ResonateVec2* out_delta);
 
-    /* Tail: the whole text the platform's text editor holds, sent when it
-       changed since the previous call (committed text plus the composing
-       preedit). Copies up to `capacity` bytes, answers the bytes written, and
-       answers 0 when nothing changed. A provider without this answers 0. */
+    /* Tail: the whole text the platform's text editor holds as it stands
+       (committed text plus the composing preedit). Copies up to `capacity`
+       bytes and answers the bytes written. An empty answer is a buffer that
+       holds no text, not "nothing changed": the caller mirrors every answer,
+       or the last deletion before an empty buffer never reaches the field.
+       A provider without this reports nothing. */
     uint32_t (*text_snapshot)(void* self, char* out_text, uint32_t capacity);
 
     /* Tail: shows or hides the platform's soft keyboard because a text widget
        took or lost focus. A provider without this does nothing. */
     void (*set_text_focus)(void* self, int32_t active);
+
+    /* Tail: replaces the platform editor's buffer, so a field that gains focus
+       fills the editor before the editor's buffer is mirrored back over it.
+       A provider without this keeps whatever its editor holds. */
+    void (*set_text_buffer)(void* self, const char* utf8, uint32_t size);
 } ResonateInput;
 
 #ifdef __cplusplus

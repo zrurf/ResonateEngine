@@ -79,6 +79,9 @@ struct UiFrame
     const ResonateRenderCanvas* target = nullptr;
     const ResonateInput* input = nullptr;
     ui::TextRuntime* text = nullptr;
+    /* Whether the platform editor held the text buffer on the previous frame,
+       so a field that takes focus fills it once. */
+    bool editor_active = false;
 
     static void invoke(void* context, ecs::World& world, ecs::CommandBuffer&, float)
     {
@@ -128,27 +131,35 @@ struct UiFrame
                     std::fprintf(stderr, "resonate: ui text composition: %s\n", error.c_str());
                 }
             }
+            bool editable = false;
             if (frame->text != nullptr && frame->input->set_text_focus != nullptr)
             {
                 /* The soft keyboard follows focus: it belongs to the text widget
                    that owns the caret, not to the window. */
-                const bool editable = ui::focusedTextEditable(world, frame->canvas);
+                editable = ui::focusedTextEditable(world, frame->canvas);
+                if (editable && !frame->editor_active && frame->input->set_text_buffer != nullptr)
+                {
+                    /* The editor owns the buffer from here on, so it starts
+                       from what the field already shows. */
+                    const std::string field_text = ui::focusedText(world, frame->canvas);
+                    frame->input->set_text_buffer(frame->input->self, field_text.data(),
+                                                  static_cast<std::uint32_t>(field_text.size()));
+                }
                 frame->input->set_text_focus(frame->input->self, editable ? 1 : 0);
             }
+            frame->editor_active = editable;
             if (frame->text != nullptr && frame->input->text_snapshot != nullptr)
             {
-                /* A platform editor reports its whole buffer; mirror it. */
+                /* A platform editor reports its whole buffer; mirror it. An
+                   empty answer is an emptied buffer and must clear the field. */
                 char snapshot[512] = {};
                 const std::uint32_t snapshot_length =
                     frame->input->text_snapshot(frame->input->self, snapshot, sizeof(snapshot));
-                if (snapshot_length > 0U)
+                std::string error;
+                if (!ui::setFocusedText(world, frame->canvas, *frame->text,
+                                        std::string_view(snapshot, snapshot_length), error))
                 {
-                    std::string error;
-                    if (!ui::setFocusedText(world, frame->canvas, *frame->text,
-                                            std::string_view(snapshot, snapshot_length), error))
-                    {
-                        std::fprintf(stderr, "resonate: ui text: %s\n", error.c_str());
-                    }
+                    std::fprintf(stderr, "resonate: ui text: %s\n", error.c_str());
                 }
             }
             if (frame->text != nullptr)

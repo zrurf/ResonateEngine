@@ -50,10 +50,13 @@ class TextAtlasBuilder
        wrapped lines. `width` is the alignment span (the widget's authored
        width); when it is positive and `wrap` is set, lines break at spaces or
        between glyphs, and `align` (0 start, 1 center, 2 end) offsets each line
-       within it. False with a named error when the page is full or a glyph
-       cannot be rasterized. */
+       within it. `out_advance_x` receives the shaped end of the last line, the
+       alignment offset included: where the caret sits after the final glyph,
+       trailing space advances and all. False with a named error when the page
+       is full or a glyph cannot be rasterized. */
     bool buildRun(std::string_view utf8, float size, float weight, float width, std::uint32_t align,
-                  bool wrap, std::vector<GlyphQuad>& out, std::string& out_error);
+                  bool wrap, std::vector<GlyphQuad>& out, float& out_advance_x,
+                  std::string& out_error);
 
     /* Refreshes a quad's UV rect after a repack. False when the key is not in
        the atlas. */

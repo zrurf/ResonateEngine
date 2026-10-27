@@ -130,10 +130,16 @@
   </component>
 
   <!-- The shaped run's measured extent, written by the adapter. Layout uses it
-       when the RectTransform leaves a dimension at zero. -->
-  <component name="TextMetrics" version="1" derived="true">
+       when the RectTransform leaves a dimension at zero. `advance` is where the
+       shaped run ends on its last line (alignment offset included), which is
+       where the caret sits; the ink extents cannot answer that (atlas padding
+       and trailing spaces). -->
+  <component name="TextMetrics" version="2" derived="true">
     <field name="width" type="f32"/>
     <field name="height" type="f32"/>
+    <field name="advance" type="f32"/>
+
+    <migrate from="1" to="2"/>
   </component>
 
   <!-- The canvas's single font atlas: RGBA8 coverage pages and the revision

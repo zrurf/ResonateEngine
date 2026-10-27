@@ -70,6 +70,15 @@ public class ResonateActivity extends NativeActivity {
         });
     }
 
+    /** Replaces the editor's buffer; called from native as a field takes focus. */
+    public void setEditorBuffer(byte[] text) {
+        final String value = new String(text, StandardCharsets.UTF_8);
+        runOnUiThread(() -> {
+            field.setText(value);
+            field.setSelection(field.getText().length());
+        });
+    }
+
     /** Shows the soft keyboard; called from native when a text widget gains focus. */
     public void showKeyboard() {
         runOnUiThread(() -> {

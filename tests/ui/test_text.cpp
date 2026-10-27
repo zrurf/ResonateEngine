@@ -31,6 +31,7 @@ using resonate::ui::Glyphs;
 using resonate::ui::PointerState;
 using resonate::ui::Text;
 using resonate::ui::TextAtlasPage;
+using resonate::ui::TextMetrics;
 
 const char* const kLabel = R"xml(<document version="1" schemas="resonate.ui">
   <Screen key="hud">
@@ -38,6 +39,12 @@ const char* const kLabel = R"xml(<document version="1" schemas="resonate.ui">
            width="160" height="32"/>
   </Screen>
 </document>)xml";
+
+bool near(float actual, float expected)
+{
+    const float difference = actual - expected;
+    return difference > -0.001F && difference < 0.001F;
+}
 
 std::shared_ptr<const resonate::text::Font> loadFont()
 {
@@ -400,7 +407,11 @@ TEST_CASE("ui text: typing edits the focused field", "[ui][text]")
     {
         const Text* component = fixture.world.get<Text>(field);
         REQUIRE(component != nullptr);
-        REQUIRE(fixture.world.alive(component->content));
+        /* Empty text carries no blob at all. */
+        if (!fixture.world.alive(component->content))
+        {
+            return std::string{};
+        }
         return std::string(static_cast<const char*>(fixture.world.blobData(component->content)),
                            fixture.world.blobSize(component->content));
     };
@@ -417,6 +428,28 @@ TEST_CASE("ui text: typing edits the focused field", "[ui][text]")
     CHECK(page->revision == revision + 1U);
     revision = page->revision;
 
+    /* The caret sits where the shaped run ends: the advance, not the last
+       glyph's ink edge, which atlas padding pushes right. */
+    const TextMetrics* metrics = fixture.world.get<TextMetrics>(field);
+    REQUIRE(metrics != nullptr);
+    CHECK(metrics->advance > 0.0F);
+    resonate::ui::DisplayList caret_list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, caret_list));
+    bool caret_found = false;
+    for (const resonate::ui::Quad& quad : caret_list.quads())
+    {
+        if (quad.texture == resonate::ui::kTextureWhite && quad.width == 1.0F)
+        {
+            CHECK(near(quad.x, rect->x + metrics->advance));
+            caret_found = true;
+        }
+    }
+    CHECK(caret_found);
+
+    /* A control byte from a platform's key translation is not text. */
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\b", false, error));
+    CHECK(content() == "AB");
+
     /* Backspace erases a whole code point, not one byte. */
     REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "\xE4\xBD\xA0", false,
                                           error));
@@ -425,6 +458,10 @@ TEST_CASE("ui text: typing edits the focused field", "[ui][text]")
     CHECK(content() == "AB");
     REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, error));
     CHECK(content() == "A");
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, error));
+    CHECK(content().empty());
+    REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "", true, error));
+    CHECK(content().empty());
 
     /* A press outside the field drops focus and typing becomes a no-op. */
     REQUIRE(resonate::ui::updateInput(fixture.world, root, -100.0F, -100.0F, true));
@@ -434,7 +471,7 @@ TEST_CASE("ui text: typing edits the focused field", "[ui][text]")
     CHECK_FALSE(pointer->focused.valid());
     CHECK(carets() == 0U);
     REQUIRE(resonate::ui::updateTextInput(fixture.world, root, runtime, "Z", false, error));
-    CHECK(content() == "A");
+    CHECK(content().empty());
 }
 
 TEST_CASE("ui text: an IME preedit previews and then commits", "[ui][text]")
@@ -471,7 +508,11 @@ TEST_CASE("ui text: an IME preedit previews and then commits", "[ui][text]")
     {
         const Text* component = fixture.world.get<Text>(field);
         REQUIRE(component != nullptr);
-        REQUIRE(fixture.world.alive(component->content));
+        /* Empty text carries no blob at all. */
+        if (!fixture.world.alive(component->content))
+        {
+            return std::string{};
+        }
         return std::string(static_cast<const char*>(fixture.world.blobData(component->content)),
                            fixture.world.blobSize(component->content));
     };

@@ -35,7 +35,6 @@ struct AndroidState
     jobject activity = nullptr;
     std::mutex text_mutex;
     std::string text;
-    bool text_changed = false;
     bool keyboard_requested = false;
 };
 
@@ -299,7 +298,8 @@ ResonateRenderCanvas g_canvas = {
     nullptr,
 };
 
-/* Drains the editor's text when it changed since the previous read. */
+/* The editor's whole buffer; the engine mirrors it every frame, so an empty
+   editor must read as empty rather than as "unchanged". */
 uint32_t textSnapshot(void*, char* out_text, uint32_t capacity)
 {
     if (out_text == nullptr || capacity == 0U)
@@ -307,14 +307,48 @@ uint32_t textSnapshot(void*, char* out_text, uint32_t capacity)
         return 0;
     }
     std::lock_guard<std::mutex> lock(g_state.text_mutex);
-    if (!g_state.text_changed)
-    {
-        return 0;
-    }
     const std::size_t count = g_state.text.size() < capacity ? g_state.text.size() : capacity;
     g_state.text.copy(out_text, count);
-    g_state.text_changed = false;
     return static_cast<uint32_t>(count);
+}
+
+/* Pushes a field's text into the editor before the mirror takes over: without
+   this, focusing a field with authored text would overwrite it with the
+   editor's stale buffer. */
+void setTextBuffer(void*, const char* utf8, uint32_t size)
+{
+    JNIEnv* env = nullptr;
+    if (g_state.java_vm == nullptr || g_state.activity == nullptr ||
+        g_state.java_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || env == nullptr)
+    {
+        return;
+    }
+    jclass activity_class = env->GetObjectClass(g_state.activity);
+    if (activity_class != nullptr)
+    {
+        const jmethodID method =
+            env->GetMethodID(activity_class, "setEditorBuffer", "([B)V");
+        if (method != nullptr)
+        {
+            const jsize length = static_cast<jsize>(size);
+            jbyteArray bytes = env->NewByteArray(length);
+            if (bytes != nullptr)
+            {
+                if (length > 0)
+                {
+                    env->SetByteArrayRegion(bytes, 0, length,
+                                            reinterpret_cast<const jbyte*>(utf8));
+                }
+                env->CallVoidMethod(g_state.activity, method, bytes);
+                env->DeleteLocalRef(bytes);
+            }
+        }
+        env->DeleteLocalRef(activity_class);
+    }
+    if (env->ExceptionCheck())
+    {
+        env->ExceptionClear();
+    }
 }
 
 /* Shows or hides the soft keyboard by calling the activity's own methods; the
@@ -369,6 +403,7 @@ ResonateInput g_input = {
     nullptr,
     &textSnapshot,
     &setTextFocus,
+    &setTextBuffer,
 };
 
 } // namespace
@@ -414,7 +449,6 @@ void setEditorText(std::string text)
 {
     std::lock_guard<std::mutex> lock(g_state.text_mutex);
     g_state.text = std::move(text);
-    g_state.text_changed = true;
 }
 
 } // namespace resonate::window
