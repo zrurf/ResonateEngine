@@ -95,6 +95,20 @@ struct TextRuntimeRef
    widget carries no Text. */
 [[nodiscard]] bool placeCaretAt(ecs::World& world, ecs::Entity entity, float local_x);
 
+/* Starts a selection gesture: the caret lands at widget-local `x` and the
+   selection anchor follows it, so the range is empty until a drag moves the
+   caret. False when the widget carries no Text. */
+[[nodiscard]] bool beginTextSelect(ecs::World& world, ecs::Entity entity, float local_x);
+
+/* Moves the caret to widget-local `x` without moving the anchor, which is how
+   a drag extends a selection. False when the widget carries no Text. */
+[[nodiscard]] bool extendCaretTo(ecs::World& world, ecs::Entity entity, float local_x);
+
+/* The selected byte range of a text field, empty (begin == end) when none.
+   False when the entity carries no Text. */
+[[nodiscard]] bool selectionRange(ecs::World& world, ecs::Entity entity,
+                                  std::uint32_t& out_begin, std::uint32_t& out_end);
+
 /* Moves the focused field's caret one code point or to an edge; false when no
    text field has focus. */
 [[nodiscard]] bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion);

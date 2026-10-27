@@ -271,6 +271,13 @@
     <field name="offset" type="u32"/>
   </component>
 
+  <!-- The selection anchor of a text field: the caret is the moving edge and
+       the byte range between them is selected. Empty when the anchor equals
+       the caret. Runtime data, written by the input and text layers. -->
+  <component name="TextSelection" version="1" derived="true">
+    <field name="anchor" type="u32"/>
+  </component>
+
   <!-- A checkbox: an Input widget that draws a box on its left and toggles on
        click. The author reserves the box's room with Text padding_left. -->
   <component name="Checkbox" version="1">

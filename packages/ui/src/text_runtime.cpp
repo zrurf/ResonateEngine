@@ -59,6 +59,29 @@ bool setCaret(ecs::World& world, ecs::Entity entity, std::size_t offset)
     return true;
 }
 
+/* The selected byte range, empty when no anchor or the anchor equals the
+   caret. The caret is the moving edge; both clamp to the content. */
+void selectionRangeOf(ecs::World& world, ecs::Entity entity, std::size_t content_size,
+                      std::size_t& out_begin, std::size_t& out_end)
+{
+    const TextSelection* selection = world.get<TextSelection>(entity);
+    const std::size_t caret = caretOffset(world, entity, content_size);
+    /* No anchor component means no selection: the anchor sits on the caret,
+       not at the content's end, or every edit would read one. */
+    const std::size_t anchor =
+        selection != nullptr && selection->anchor <= content_size ? selection->anchor : caret;
+    out_begin = anchor < caret ? anchor : caret;
+    out_end = anchor < caret ? caret : anchor;
+}
+
+void clearSelection(ecs::World& world, ecs::Entity entity)
+{
+    if (world.get<TextSelection>(entity) != nullptr)
+    {
+        world.remove<TextSelection>(entity);
+    }
+}
+
 /* One code point left: UTF-8 continuation bytes step back to their lead. */
 std::size_t previousCodepoint(const std::string& content, std::size_t offset)
 {
@@ -228,6 +251,9 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
         caret->offset = static_cast<std::uint32_t>(utf8.size());
         world.markChanged<TextCaret>(entity);
     }
+    /* A wholesale replacement is not a caret edit: whatever range pointed into
+       the old bytes is stale, so it dies with them. */
+    clearSelection(world, entity);
     const RectTransform* rect = world.get<RectTransform>(entity);
     const float width = std::fmax(0.0F, authoredWidth(rect) - text->padding_left);
     std::vector<detail::GlyphQuad> quads;
@@ -434,9 +460,22 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
     {
         return true;
     }
-
     std::string content = readContent(world, pointer->focused);
     std::size_t caret = caretOffset(world, pointer->focused, content.size());
+    std::size_t select_begin = 0U;
+    std::size_t select_end = 0U;
+    selectionRangeOf(world, pointer->focused, content.size(), select_begin, select_end);
+    /* A selection is the edit: either key deletes it whole, and typed text
+       replaces it. An empty range is no edit, but its anchor still dies: left
+       behind, the next edit past it would read as a selection. */
+    if (select_begin < select_end)
+    {
+        content.erase(select_begin, select_end - select_begin);
+        caret = select_begin;
+        backspace = false;
+        delete_forward = false;
+    }
+    clearSelection(world, pointer->focused);
     if (backspace && caret > 0U)
     {
         const std::size_t start = previousCodepoint(content, caret);
@@ -473,25 +512,22 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
     return runtime.setText(world, canvas, pointer->focused, content, error);
 }
 
-bool placeCaretAt(ecs::World& world, ecs::Entity entity, float local_x)
+namespace
 {
-    const Text* text = world.get<Text>(entity);
-    if (text == nullptr)
-    {
-        return false;
-    }
-    local_x -= text->padding_left;
+
+/* The byte offset a press or drag edge lands on: before the glyph whose cell
+   it is in, split at the cell's middle. */
+std::size_t caretAtLocal(ecs::World& world, ecs::Entity entity, float local_x)
+{
+    local_x -= world.get<Text>(entity)->padding_left;
     const Glyphs* glyphs = world.get<Glyphs>(entity);
     if (glyphs == nullptr || !world.alive(glyphs->records))
     {
-        /* An empty field takes the caret at the only place it can be. */
-        return setCaret(world, entity, 0U);
+        return 0U;
     }
     const auto* records = static_cast<const detail::GlyphQuad*>(world.blobData(glyphs->records));
     const std::size_t count = world.blobSize(glyphs->records) / sizeof(detail::GlyphQuad);
     const TextMetrics* metrics = world.get<TextMetrics>(entity);
-    /* A click lands before the glyph whose cell it is in, split at the cell's
-       middle; the cell ends where the next glyph starts. */
     for (std::size_t index = 0; index < count; ++index)
     {
         const float start = records[index].pen_x;
@@ -502,10 +538,71 @@ bool placeCaretAt(ecs::World& world, ecs::Entity entity, float local_x)
                                      : start + 1.0F);
         if (local_x < (start + end) * 0.5F)
         {
-            return setCaret(world, entity, records[index].byte_offset);
+            return records[index].byte_offset;
         }
     }
-    return setCaret(world, entity, readContent(world, entity).size());
+    return readContent(world, entity).size();
+}
+
+} // namespace
+
+bool placeCaretAt(ecs::World& world, ecs::Entity entity, float local_x)
+{
+    if (world.get<Text>(entity) == nullptr)
+    {
+        return false;
+    }
+    clearSelection(world, entity);
+    return setCaret(world, entity, caretAtLocal(world, entity, local_x));
+}
+
+bool beginTextSelect(ecs::World& world, ecs::Entity entity, float local_x)
+{
+    if (world.get<Text>(entity) == nullptr)
+    {
+        return false;
+    }
+    clearSelection(world, entity);
+    if (!setCaret(world, entity, caretAtLocal(world, entity, local_x)))
+    {
+        return false;
+    }
+    /* The anchor starts at the caret; until a drag moves the edge, the range
+       is empty and the field behaves as if it had none. */
+    const TextCaret* caret = world.get<TextCaret>(entity);
+    return world.add(entity, TextSelection{caret != nullptr ? caret->offset : 0U}) != nullptr;
+}
+
+bool extendCaretTo(ecs::World& world, ecs::Entity entity, float local_x)
+{
+    if (world.get<Text>(entity) == nullptr)
+    {
+        return false;
+    }
+    if (world.get<TextSelection>(entity) == nullptr &&
+        world.add(entity, TextSelection{static_cast<std::uint32_t>(
+                              caretOffset(world, entity, readContent(world, entity).size()))}) ==
+            nullptr)
+    {
+        return false;
+    }
+    return setCaret(world, entity, caretAtLocal(world, entity, local_x));
+}
+
+bool selectionRange(ecs::World& world, ecs::Entity entity, std::uint32_t& out_begin,
+                    std::uint32_t& out_end)
+{
+    const Text* text = world.get<Text>(entity);
+    if (text == nullptr)
+    {
+        return false;
+    }
+    std::size_t begin = 0U;
+    std::size_t end = 0U;
+    selectionRangeOf(world, entity, readContent(world, entity).size(), begin, end);
+    out_begin = static_cast<std::uint32_t>(begin);
+    out_end = static_cast<std::uint32_t>(end);
+    return true;
 }
 
 bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion)
@@ -519,21 +616,48 @@ bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion)
     const std::string content = readContent(world, pointer->focused);
     const std::size_t caret = caretOffset(world, pointer->focused, content.size());
     std::size_t moved = caret;
-    switch (motion)
+    std::size_t select_begin = 0U;
+    std::size_t select_end = 0U;
+    selectionRangeOf(world, pointer->focused, content.size(), select_begin, select_end);
+    if (select_begin < select_end)
     {
-        case CaretMotion::Left:
-            moved = previousCodepoint(content, caret);
-            break;
-        case CaretMotion::Right:
-            moved = nextCodepoint(content, caret);
-            break;
-        case CaretMotion::Home:
-            moved = 0U;
-            break;
-        case CaretMotion::End:
-            moved = content.size();
-            break;
+        /* A selection collapses at the edge the motion points at; a second
+           press of the same key then moves from there. */
+        switch (motion)
+        {
+            case CaretMotion::Left:
+                moved = select_begin;
+                break;
+            case CaretMotion::Right:
+                moved = select_end;
+                break;
+            case CaretMotion::Home:
+                moved = 0U;
+                break;
+            case CaretMotion::End:
+                moved = content.size();
+                break;
+        }
     }
+    else
+    {
+        switch (motion)
+        {
+            case CaretMotion::Left:
+                moved = previousCodepoint(content, caret);
+                break;
+            case CaretMotion::Right:
+                moved = nextCodepoint(content, caret);
+                break;
+            case CaretMotion::Home:
+                moved = 0U;
+                break;
+            case CaretMotion::End:
+                moved = content.size();
+                break;
+        }
+    }
+    clearSelection(world, pointer->focused);
     return setCaret(world, pointer->focused, moved);
 }
 

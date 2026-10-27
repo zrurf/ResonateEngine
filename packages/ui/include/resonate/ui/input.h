@@ -28,6 +28,9 @@ struct DragState
     ecs::Entity scrubber{};
     /* The viewport whose scrollbar thumb this gesture drags. */
     ecs::Entity scroll_thumb{};
+    /* The text field this gesture selects in: the press set the anchor, the
+       drag moves the caret edge. */
+    ecs::Entity text_field{};
 };
 
 /* Whether the caret draws this instant: the UI frame flips it every half

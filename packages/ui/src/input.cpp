@@ -338,11 +338,14 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         world.markChanged<PointerState>(canvas);
         if (hover.valid())
         {
-            /* A press inside a text field drops the caret where it landed. */
+            /* A press inside a text field drops the caret where it landed and
+               arms the selection: the anchor starts there, a drag moves the
+               edge, a plain release leaves the range empty. */
             const ComputedRect* rect = world.get<ComputedRect>(hover);
             if (rect != nullptr && isTextField(world, hover))
             {
-                (void)placeCaretAt(world, hover, x - rect->x);
+                (void)beginTextSelect(world, hover, x - rect->x);
+                drag->text_field = hover;
             }
         }
         /* A press on a slider jumps its value there and owns the gesture; the
@@ -404,6 +407,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         drag->splitter = ecs::Entity{};
         drag->scrubber = ecs::Entity{};
         drag->scroll_thumb = ecs::Entity{};
+        drag->text_field = ecs::Entity{};
         const ecs::Entity press = pointer->press;
         Event released = move;
         released.kind = EventKind::PointerUp;
@@ -493,6 +497,16 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                 view->scroll = wanted;
                 world.markChanged<ScrollView>(drag->scroll_thumb);
             }
+        }
+    }
+    else if (drag->pressed && pointer->down && drag->text_field.valid())
+    {
+        /* Selection drags have no slop: every sample the pointer moves moves
+           the caret edge, which is how a short drag selects a few letters. */
+        const ComputedRect* rect = world.get<ComputedRect>(drag->text_field);
+        if (rect != nullptr && !pressed_this_sample)
+        {
+            (void)extendCaretTo(world, drag->text_field, x - rect->x);
         }
     }
     else if (drag->pressed && pointer->down)

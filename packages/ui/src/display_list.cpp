@@ -346,6 +346,48 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                     ? intersect(clip, rect->x, rect->y, rect->width, rect->height)
                     : clip;
             const ClipRect text_clip_rect = clip_of(text_clip);
+            /* The line box the caret and the selection highlight span. */
+            const TextMetrics* line = world.get<TextMetrics>(entity);
+            const float line_ascent =
+                line != nullptr && line->ascent > 0.0F ? line->ascent : text->font_size * 0.8F;
+            const float line_descent = line != nullptr && line->descent < 0.0F
+                                           ? line->descent
+                                           : -text->font_size * 0.2F;
+            if (focused_ == entity && count > 0U)
+            {
+                std::uint32_t select_begin = 0U;
+                std::uint32_t select_end = 0U;
+                if (selectionRange(world, entity, select_begin, select_end) &&
+                    select_begin < select_end)
+                {
+                    /* One column per selected glyph's cell, spanning the line
+                       box. The theme grows a token for this when Text does. */
+                    constexpr Vec4 kSelectionColor{0.20F, 0.40F, 0.70F, 0.40F};
+                    for (std::size_t index = 0; index < count; ++index)
+                    {
+                        const detail::GlyphQuad& glyph = records[index];
+                        if (glyph.byte_offset < select_begin ||
+                            glyph.byte_offset >= select_end)
+                        {
+                            continue;
+                        }
+                        const float start = origin_x + glyph.pen_x;
+                        const float end = index + 1U < count
+                                              ? origin_x + records[index + 1U].pen_x
+                                              : (line != nullptr && line->advance > glyph.pen_x
+                                                     ? origin_x + line->advance
+                                                     : start + glyph.width);
+                        if (end <= start)
+                        {
+                            continue;
+                        }
+                        quads_.push_back(Quad{start, origin_y + glyph.pen_y - line_ascent,
+                                              end - start, line_ascent - line_descent,
+                                              kSelectionColor});
+                        quads_.back().clip = text_clip_rect;
+                    }
+                }
+            }
             if (label_visible && world.alive(text->content) && count > 0U)
             {
                 TextRun run;
@@ -386,18 +428,11 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                 float caret_y = rect->y;
                 /* The caret spans the line box, so its height does not follow
                    the letters next to it and an empty field still has one. */
-                const TextMetrics* metrics = world.get<TextMetrics>(entity);
-                const float ascent = metrics != nullptr && metrics->ascent > 0.0F
-                                         ? metrics->ascent
-                                         : text->font_size * 0.8F;
-                const float descent = metrics != nullptr && metrics->descent < 0.0F
-                                          ? metrics->descent
-                                          : -text->font_size * 0.2F;
-                const float caret_height = ascent - descent;
+                const float caret_height = line_ascent - line_descent;
                 if (count > 0U)
                 {
                     const std::size_t line = caret_index < count ? caret_index : count - 1U;
-                    caret_y = origin_y + records[line].pen_y - ascent;
+                    caret_y = origin_y + records[line].pen_y - line_ascent;
                     caret_x = rect->x + text->padding_left - scroll_x + caret_local;
                 }
                 else
