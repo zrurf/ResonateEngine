@@ -74,6 +74,13 @@ float3 tonemap(float3 color)
     return saturate((color * (a * color + b)) / (color * (c * color + d) + e));
 }
 
+// One LSB of positional noise: 8-bit output bands on smooth gradients, and a
+// half-LSB dither dissolves the steps without changing the average.
+float ditherValue(float2 position)
+{
+    return frac(sin(dot(position, float2(12.9898, 78.233))) * 43758.5453);
+}
+
 // The sRGB transfer function, for a surface that does not encode on write.
 float3 encodeSrgb(float3 color)
 {
@@ -95,6 +102,7 @@ float4 tonemapFragment(VertexOutput input) : SV_Target
                        ? image_table[push.slots.y].Sample(input.uv).rgb
                        : float3(0.0, 0.0, 0.0);
     float3 ldr = tonemap(hdr + bloom * 0.35);
+    ldr += (ditherValue(input.position.xy) - 0.5) * (1.0 / 255.0);
     // x: 1 when the surface presents linear and this pass owns the encode.
     // Encoding here puts FXAA on perceptual luma and leaves the blend a
     // plain composite of display-ready values.
