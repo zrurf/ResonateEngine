@@ -294,6 +294,12 @@
     <field name="value" type="f32" default="0.0"/>
   </component>
 
+  <!-- The document key an instantiated widget was authored under, hashed, so
+       application code reaches a named widget after the document is gone. -->
+  <component name="WidgetKey" version="1" derived="true">
+    <field name="hash" type="u64"/>
+  </component>
+
   <!-- State-style overrides, compiled at instantiation; a blob on the canvas. -->
   <component name="StateStyles" version="1" derived="true">
     <field name="records" type="blob"/>

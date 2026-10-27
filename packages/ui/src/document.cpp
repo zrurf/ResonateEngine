@@ -1287,6 +1287,23 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
         bindings.canvas = entity;
     }
 
+    /* The document's key survives as a hash, so application code can reach the
+       widget after the document is dropped. */
+    if (const dom::StringId key = document.key(node); key != dom::kInvalidString)
+    {
+        std::uint64_t hash = 1469598103934665603ULL;
+        for (const char character : document.text(key))
+        {
+            hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(character));
+            hash *= 1099511628211ULL;
+        }
+        if (world.add(entity, WidgetKey{hash}) == nullptr)
+        {
+            report(world, document, node, "the widget key could not be attached");
+            return Entity{};
+        }
+    }
+
     if (!applyComponents(world, document, node, entity, styles.resolve(document, node), bindings,
                          component_registry) ||
         !collectStateStyles(world, document, node, entity, styles, component_registry))
@@ -1512,6 +1529,50 @@ Entity instantiate(World& world, dom::Document& document,
     bindings.strings = strings;
     bindings.images = images;
     return instantiateConfigured(world, document, component_registry, bindings);
+}
+
+ecs::Entity findByKey(ecs::World& world, ecs::Entity canvas, std::string_view key)
+{
+    if (!world.alive(canvas))
+    {
+        return ecs::Entity{};
+    }
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (const char character : key)
+    {
+        hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(character));
+        hash *= 1099511628211ULL;
+    }
+    struct Search
+    {
+        std::uint64_t hash = 0U;
+        ecs::Entity found{};
+    };
+    Search search{hash, ecs::Entity{}};
+    const auto visit = [](Search& state, ecs::World& world, ecs::Entity entity)
+    {
+        const WidgetKey* key_component = world.get<WidgetKey>(entity);
+        if (key_component != nullptr && key_component->hash == state.hash)
+        {
+            state.found = entity;
+        }
+    };
+    std::vector<ecs::Entity> stack{canvas};
+    while (!stack.empty())
+    {
+        const ecs::Entity entity = stack.back();
+        stack.pop_back();
+        visit(search, world, entity);
+        if (search.found.valid())
+        {
+            return search.found;
+        }
+        for (const ecs::Entity child : hierarchy::children(world, entity))
+        {
+            stack.push_back(child);
+        }
+    }
+    return ecs::Entity{};
 }
 
 } // namespace resonate::ui

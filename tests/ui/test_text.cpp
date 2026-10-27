@@ -735,3 +735,30 @@ TEST_CASE("ui gallery: the widget gallery instantiates", "[ui][text]")
     REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
     CHECK(list.size() > 20U);
 }
+
+TEST_CASE("ui document: widgets are reachable by their document key", "[ui][document]")
+{
+    const std::string path = std::string(RESONATE_SOURCE_DIR) + "/content/ui/gallery.rui";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE(in.is_open());
+    const std::string text((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    REQUIRE(loadShippedStylesheets(*document));
+
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+
+    const Entity dropdown = resonate::ui::findByKey(fixture.world, root, "dropdown");
+    REQUIRE(dropdown.valid());
+    CHECK(fixture.world.get<resonate::ui::Dropdown>(dropdown) != nullptr);
+    const Entity slider_b = resonate::ui::findByKey(fixture.world, root, "slider-b");
+    REQUIRE(slider_b.valid());
+    CHECK(fixture.world.get<resonate::ui::Slider>(slider_b) != nullptr);
+    CHECK_FALSE(resonate::ui::findByKey(fixture.world, root, "no-such-widget").valid());
+}

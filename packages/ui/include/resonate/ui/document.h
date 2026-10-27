@@ -43,6 +43,11 @@ class TextRuntime;
                                       TextRuntime& text, const StringTable* strings = nullptr,
                                       const ImageRegistry* images = nullptr);
 
+/* The widget authored under `key`, found through the WidgetKey every keyed node
+   carries — the document itself is gone by the time an application looks. An
+   unknown key answers an invalid entity. */
+[[nodiscard]] ecs::Entity findByKey(ecs::World& world, ecs::Entity canvas, std::string_view key);
+
 } // namespace resonate::ui
 
 #endif /* RESONATE_UI_DOCUMENT_H */
