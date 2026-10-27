@@ -26,6 +26,8 @@ struct DragState
     ecs::Entity splitter{};
     /* The property label this gesture scrubs, invalid for any other drag. */
     ecs::Entity scrubber{};
+    /* The viewport whose scrollbar thumb this gesture drags. */
+    ecs::Entity scroll_thumb{};
 };
 
 /* Whether the caret draws this instant: the UI frame flips it every half

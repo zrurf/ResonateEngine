@@ -405,3 +405,51 @@ TEST_CASE("ui input: dragging a property label scrubs its value", "[ui][input]")
     CHECK_FALSE(input->activated);
     CHECK(near(value(), 20.0F));
 }
+
+TEST_CASE("ui input: dragging the scrollbar thumb moves the scroll", "[ui][input]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Scroll key="list" x="0" y="0" width="100" height="100"
+            direction="Column" align="Stretch">
+      <Button key="row0" height="40" color="0.1 0.1 0.1 1"/>
+      <Button key="row1" height="40" color="0.1 0.1 0.1 1"/>
+      <Button key="row2" height="40" color="0.1 0.1 0.1 1"/>
+      <Button key="row3" height="40" color="0.1 0.1 0.1 1"/>
+    </Scroll>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 200.0F));
+    const Entity list = resonate::hierarchy::children(world, root)[0];
+    const resonate::ui::ScrollView* view = world.get<resonate::ui::ScrollView>(list);
+    REQUIRE(view != nullptr);
+    CHECK(near(view->content_height, 160.0F));
+    CHECK(near(view->scroll, 0.0F));
+
+    /* The thumb runs the right edge; pressing it and dragging down scrolls by
+       the thumb's own travel ratio: 20 px against 40 px of travel over a 60 px
+       range moves 30. */
+    REQUIRE(resonate::ui::updateInput(world, root, 95.0F, 10.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 95.0F, 30.0F, true));
+    view = world.get<resonate::ui::ScrollView>(list);
+    /* 20 px of drag over 37.5 px of travel covers the 60 px range. */
+    CHECK(near(view->scroll, 32.0F));
+
+    /* The row under the press was never activated by the thumb drag. */
+    REQUIRE(resonate::ui::updateInput(world, root, 95.0F, 30.0F, false));
+    const auto rows = resonate::hierarchy::children(world, list);
+    REQUIRE(rows.size() == 4U);
+    const resonate::ui::Input* first_row = world.get<resonate::ui::Input>(rows[0]);
+    REQUIRE(first_row != nullptr);
+    CHECK_FALSE(first_row->activated);
+}

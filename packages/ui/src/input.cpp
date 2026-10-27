@@ -11,6 +11,7 @@
 
 #include "state_style_internal.h"
 #include "resonate.ui/components.gen.h"
+#include "widget_shown.h"
 
 namespace resonate::ui
 {
@@ -141,6 +142,28 @@ void applySplitter(ecs::World& world, ecs::Entity entity, float dx, float dy)
         }
         world.markChanged<RectTransform>(entity);
     }
+}
+
+/* The nearest viewport on the hit chain whose scrollbar thumb the point is
+   inside; dragging one moves the scroll rather than the content. */
+ecs::Entity scrollThumbAt(ecs::World& world, ecs::Entity entity, float x, float y)
+{
+    for (std::uint32_t depth = 0U; entity.valid() && depth <= hierarchy::kMaxDepth; ++depth)
+    {
+        const ScrollView* view = world.get<ScrollView>(entity);
+        const ComputedRect* rect = world.get<ComputedRect>(entity);
+        if (view != nullptr && rect != nullptr)
+        {
+            const detail::ScrollThumb thumb = detail::scrollThumbOf(*rect, *view);
+            if (thumb.visible && x >= thumb.x && x <= thumb.x + thumb.width && y >= thumb.y &&
+                y <= thumb.y + thumb.height)
+            {
+                return entity;
+            }
+        }
+        entity = hierarchy::parentOf(world, entity);
+    }
+    return {};
 }
 
 /* The nearest widget on the hit chain that carries a Scrubber. */
@@ -352,6 +375,16 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                 world.markChanged<PointerState>(canvas);
             }
         }
+        if (!captured_now && !drag->slider.valid() && !drag->splitter.valid() &&
+            !drag->scrubber.valid())
+        {
+            drag->scroll_thumb = scrollThumbAt(world, hit, x, y);
+            if (drag->scroll_thumb.valid())
+            {
+                pointer->press = ecs::Entity{};
+                world.markChanged<PointerState>(canvas);
+            }
+        }
         drag->pressed = true;
         drag->dragging = false;
         drag->press_x = x;
@@ -370,6 +403,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         drag->slider = ecs::Entity{};
         drag->splitter = ecs::Entity{};
         drag->scrubber = ecs::Entity{};
+        drag->scroll_thumb = ecs::Entity{};
         const ecs::Entity press = pointer->press;
         Event released = move;
         released.kind = EventKind::PointerUp;
@@ -440,6 +474,25 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         if (!pressed_this_sample)
         {
             applyScrubber(world, drag->scrubber, x - last_x);
+        }
+    }
+    else if (drag->pressed && pointer->down && drag->scroll_thumb.valid())
+    {
+        /* The thumb follows the pointer one for one: its travel covers the
+           whole range. */
+        ScrollView* view = world.get<ScrollView>(drag->scroll_thumb);
+        const ComputedRect* rect = world.get<ComputedRect>(drag->scroll_thumb);
+        if (view != nullptr && rect != nullptr && !pressed_this_sample)
+        {
+            const detail::ScrollThumb thumb = detail::scrollThumbOf(*rect, *view);
+            const float max_scroll = std::fmax(0.0F, view->content_height - rect->height);
+            const float wanted =
+                std::clamp(view->scroll + (y - last_y) * thumb.scroll_per_pixel, 0.0F, max_scroll);
+            if (wanted != view->scroll)
+            {
+                view->scroll = wanted;
+                world.markChanged<ScrollView>(drag->scroll_thumb);
+            }
         }
     }
     else if (drag->pressed && pointer->down)

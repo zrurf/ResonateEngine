@@ -134,7 +134,11 @@ struct UiFrame
                     frame->input->key_down(frame->input->self, RESONATE_KEY_RSHIFT) != 0;
                 ui::focusNext(world, frame->canvas, backwards);
             }
-            if (frame->input->key_pressed(frame->input->self, RESONATE_KEY_RETURN) != 0)
+            /* Return and Space activate the focused widget; a text field takes
+               the space as a character instead. */
+            if (frame->input->key_pressed(frame->input->self, RESONATE_KEY_RETURN) != 0 ||
+                (frame->input->key_pressed(frame->input->self, RESONATE_KEY_SPACE) != 0 &&
+                 !ui::focusedTextEditable(world, frame->canvas)))
             {
                 (void)ui::activateFocused(world, frame->canvas);
             }
