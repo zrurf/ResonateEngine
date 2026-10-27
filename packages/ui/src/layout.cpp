@@ -162,6 +162,21 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
     const float main_extent = row ? content.width : content.height;
     const float cross_extent = row ? content.height : content.width;
 
+    /* Zero means "no bound"; the clamp never pushes a size up to a zero min or
+       down to a zero max. */
+    auto clamp_extent = [](float value, float minimum, float maximum)
+    {
+        if (minimum > 0.0F && value < minimum)
+        {
+            value = minimum;
+        }
+        if (maximum > 0.0F && value > maximum)
+        {
+            value = maximum;
+        }
+        return value;
+    };
+
     /* Absolute children are placed from their anchors and take no room in the
        flow. */
     struct FlowItem
@@ -169,6 +184,17 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
         ecs::Entity entity{};
         float main = 0.0F;
         float cross = 0.0F;
+        /* Margins in flow order: along the main axis and across it. */
+        float main_before = 0.0F;
+        float main_after = 0.0F;
+        float cross_before = 0.0F;
+        float cross_after = 0.0F;
+        float grow = 0.0F;
+        float min_main = 0.0F;
+        float max_main = 0.0F;
+        float min_cross = 0.0F;
+        float max_cross = 0.0F;
+        SelfAlign align_self = SelfAlign::Auto;
     };
     std::vector<FlowItem> items;
     for (const ecs::Entity child : children)
@@ -183,10 +209,29 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
             continue;
         }
         const Vec2 size = effectiveSize(world, child, *rect);
-        const float main_size = row ? size.x : size.y;
-        const float cross_size = row ? size.y : size.x;
-        items.push_back(FlowItem{child, main_size > 0.0F ? main_size : 0.0F,
-                                 cross_size > 0.0F ? cross_size : 0.0F});
+        const LayoutItem* config = world.get<LayoutItem>(child);
+        FlowItem item;
+        item.entity = child;
+        item.main = row ? size.x : size.y;
+        item.cross = row ? size.y : size.x;
+        if (config != nullptr)
+        {
+            item.main = clamp_extent(item.main, row ? config->min_width : config->min_height,
+                                     row ? config->max_width : config->max_height);
+            item.cross = clamp_extent(item.cross, row ? config->min_height : config->min_width,
+                                      row ? config->max_height : config->max_width);
+            item.main_before = row ? config->margin_left : config->margin_top;
+            item.main_after = row ? config->margin_right : config->margin_bottom;
+            item.cross_before = row ? config->margin_top : config->margin_left;
+            item.cross_after = row ? config->margin_bottom : config->margin_right;
+            item.grow = config->grow;
+            item.min_main = row ? config->min_width : config->min_height;
+            item.max_main = row ? config->max_width : config->max_height;
+            item.min_cross = row ? config->min_height : config->min_width;
+            item.max_cross = row ? config->max_height : config->max_width;
+            item.align_self = config->align_self;
+        }
+        items.push_back(item);
     }
 
     /* Absolute children sit where their anchors put them and take no part in
@@ -208,7 +253,8 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
     }
 
     /* Lines: a non-wrapping group flows on one; a wrapping one starts a new
-       line wherever the next item would pass the content extent. */
+       line wherever the next item would pass the content extent. Outer sizes
+       (margins included) are what a line has to fit. */
     struct Line
     {
         std::size_t begin = 0U;
@@ -223,13 +269,14 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
         for (std::size_t index = 0; index < items.size(); ++index)
         {
             const FlowItem& item = items[index];
-            if (group->wrap && index > line_begin && cursor + item.main > main_extent)
+            const float outer = item.main + item.main_before + item.main_after;
+            if (group->wrap && index > line_begin && cursor + outer > main_extent)
             {
                 lines.push_back(Line{line_begin, index, 0.0F, 0.0F});
                 line_begin = index;
                 cursor = 0.0F;
             }
-            cursor += item.main + (index > line_begin ? gap : 0.0F);
+            cursor += outer + (index > line_begin ? gap : 0.0F);
         }
         lines.push_back(Line{line_begin, items.size(), 0.0F, 0.0F});
     }
@@ -240,15 +287,85 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
         const std::size_t count = line.end - line.begin;
         for (std::size_t index = line.begin; index < line.end; ++index)
         {
-            line.used += items[index].main;
-            line.cross = std::fmax(line.cross, items[index].cross);
+            const FlowItem& item = items[index];
+            line.used += item.main + item.main_before + item.main_after;
+            line.cross =
+                std::fmax(line.cross, item.cross + item.cross_before + item.cross_after);
         }
         if (count > 1U)
         {
             line.used += gap * static_cast<float>(count - 1U);
         }
 
-        const float free_space = std::fmax(0.0F, main_extent - line.used);
+        /* Grow hands the free space out in proportion; an item that hits its
+           min or max freezes at it and the rest of the free space redistributes
+           over the original base sizes of the growers still free. What remains
+           is what justify spreads. A line that overflows (or has no growers)
+           keeps its sizes, so justify behaves exactly as it did. */
+        float free_space = std::fmax(0.0F, main_extent - line.used);
+        if (free_space > 0.01F)
+        {
+            std::vector<float> base(count);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                base[index] = items[line.begin + index].main;
+            }
+            std::vector<bool> frozen(count, false);
+            for (bool again = true; again && free_space > 0.01F;)
+            {
+                again = false;
+                float active_grow = 0.0F;
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    if (!frozen[index] && items[line.begin + index].grow > 0.0F)
+                    {
+                        active_grow += items[line.begin + index].grow;
+                    }
+                }
+                if (active_grow <= 0.0F)
+                {
+                    break;
+                }
+                const float share = free_space / active_grow;
+                float frozen_used = 0.0F;
+                bool froze_any = false;
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    FlowItem& item = items[line.begin + index];
+                    if (frozen[index] || item.grow <= 0.0F)
+                    {
+                        continue;
+                    }
+                    const float wanted = base[index] + share * item.grow;
+                    const float grown = clamp_extent(wanted, item.min_main, item.max_main);
+                    if (grown < wanted - 0.01F)
+                    {
+                        item.main = grown;
+                        frozen[index] = true;
+                        froze_any = true;
+                        frozen_used += grown - base[index];
+                    }
+                }
+                if (froze_any)
+                {
+                    free_space -= frozen_used;
+                    again = true;
+                }
+                else
+                {
+                    for (std::size_t index = 0; index < count; ++index)
+                    {
+                        FlowItem& item = items[line.begin + index];
+                        if (!frozen[index] && item.grow > 0.0F)
+                        {
+                            item.main = base[index] + share * item.grow;
+                        }
+                    }
+                    free_space = 0.0F;
+                }
+            }
+        }
+
         float cursor = 0.0F;
         float step = gap;
         switch (group->justify)
@@ -270,23 +387,34 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
         }
 
         /* One unwrapped line stretches across the whole content; each wrapped
-           line uses its own tallest item. */
+           line uses its own tallest item. align_self overrides the container
+           for one item, and margins set the item's cross inset. */
         const float line_extent = group->wrap ? line.cross : cross_extent;
         for (std::size_t index = line.begin; index < line.end; ++index)
         {
             const FlowItem& item = items[index];
+            const Align align = item.align_self == SelfAlign::Auto
+                                    ? group->align
+                                    : static_cast<Align>(static_cast<std::uint8_t>(
+                                          item.align_self) - 1U);
             float cross_size = item.cross;
-            float cross_position = 0.0F;
-            switch (group->align)
+            float cross_position = item.cross_before;
+            switch (align)
             {
             case Align::Center:
-                cross_position = (line_extent - cross_size) * 0.5F;
+                cross_position =
+                    (line_extent - cross_size - item.cross_before - item.cross_after) * 0.5F +
+                    item.cross_before;
                 break;
             case Align::End:
-                cross_position = line_extent - cross_size;
+                cross_position =
+                    line_extent - cross_size - item.cross_after;
                 break;
             case Align::Stretch:
-                cross_size = line_extent;
+                cross_size =
+                    clamp_extent(line_extent - item.cross_before - item.cross_after,
+                                 item.min_cross, item.max_cross);
+                cross_position = item.cross_before;
                 break;
             case Align::Start:
                 break;
@@ -295,15 +423,19 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
             Box box;
             if (row)
             {
+                cursor += item.main_before;
                 box = Box{content.x + cursor, content.y + cross_used + cross_position, item.main,
                           cross_size};
+                cursor += item.main + item.main_after;
             }
             else
             {
+                cursor += item.main_before;
                 box = Box{content.x + cross_used + cross_position, content.y + cursor, cross_size,
                           item.main};
+                cursor += item.main + item.main_after;
             }
-            cursor += item.main + step;
+            cursor += step;
             box.y -= scroll;
 
             if (!writeRect(world, item.entity, box, scale) ||
@@ -351,6 +483,7 @@ bool registerComponents(ecs::World& world)
     return world.registerComponent<Canvas>() != ecs::kInvalidComponent &&
            world.registerComponent<RectTransform>() != ecs::kInvalidComponent &&
            world.registerComponent<LayoutGroup>() != ecs::kInvalidComponent &&
+           world.registerComponent<LayoutItem>() != ecs::kInvalidComponent &&
            world.registerComponent<ComputedRect>() != ecs::kInvalidComponent &&
            world.registerComponent<Background>() != ecs::kInvalidComponent &&
            world.registerComponent<Image>() != ecs::kInvalidComponent &&

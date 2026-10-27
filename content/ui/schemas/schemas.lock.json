@@ -212,6 +212,27 @@
       ]
     },
     {
+      "name": "LayoutItem",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component LayoutItem version 1",
+        "  size 44 align 4",
+        "  field grow f32 @0 size 4 min=0 default=0",
+        "  field shrink f32 @4 size 4 min=0 default=1",
+        "  field align_self resonate.ui.SelfAlign @8 size 1 default=Auto",
+        "  field margin_left f32 @12 size 4 min=0 default=0",
+        "  field margin_top f32 @16 size 4 min=0 default=0",
+        "  field margin_right f32 @20 size 4 min=0 default=0",
+        "  field margin_bottom f32 @24 size 4 min=0 default=0",
+        "  field min_width f32 @28 size 4 min=0 default=0",
+        "  field min_height f32 @32 size 4 min=0 default=0",
+        "  field max_width f32 @36 size 4 min=0 default=0",
+        "  field max_height f32 @40 size 4 min=0 default=0",
+        "  enum SelfAlign u8 values Auto=0, Start=1, Center=2, End=3, Stretch=4"
+      ]
+    },
+    {
       "name": "Panel",
       "kind": "node",
       "version": 1,

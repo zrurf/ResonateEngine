@@ -29,7 +29,9 @@ using resonate::ui::ComputedRect;
 using resonate::ui::FlexDirection;
 using resonate::ui::Justify;
 using resonate::ui::LayoutGroup;
+using resonate::ui::LayoutItem;
 using resonate::ui::PositionMode;
+using resonate::ui::SelfAlign;
 using resonate::ui::RectTransform;
 
 bool near(float actual, float expected)
@@ -376,4 +378,109 @@ TEST_CASE("ui layout: a wrapping row flows onto further lines", "[ui][layout]")
     CHECK(near(rect_of(boxes[0]).y, 0.0F));
     CHECK(near(rect_of(boxes[1]).y, 0.0F));
     CHECK(near(rect_of(boxes[2]).y, 20.0F));
+}
+
+TEST_CASE("ui layout: grow hands the free space out in proportion", "[ui][layout]")
+{
+    Fixture fixture;
+    LayoutGroup group;
+    group.direction = FlexDirection::Row;
+    fixture.world.add(fixture.canvas, group);
+
+    const Entity fixed = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 40.0F, 20.0F));
+    const Entity grow_two = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 20.0F, 20.0F));
+    const Entity grow_one = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 20.0F, 20.0F));
+    fixture.world.add(grow_two, LayoutItem{2.0F});
+    fixture.world.add(grow_one, LayoutItem{1.0F});
+    fixture.finish();
+
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.canvas, 300.0F, 100.0F));
+
+    fixture.requireRect(fixed, 0.0F, 0.0F, 40.0F, 20.0F);
+    /* 300 - 80 = 220 free; two thirds to the first grower. */
+    fixture.requireRect(grow_two, 40.0F, 0.0F, 166.6667F, 20.0F);
+    fixture.requireRect(grow_one, 206.6667F, 0.0F, 93.3333F, 20.0F);
+}
+
+TEST_CASE("ui layout: grow freezes at a max and the rest redistributes", "[ui][layout]")
+{
+    Fixture fixture;
+    LayoutGroup group;
+    group.direction = FlexDirection::Row;
+    fixture.world.add(fixture.canvas, group);
+
+    const Entity capped = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 20.0F, 20.0F));
+    fixture.world.add(capped, LayoutItem{1.0F, 1.0F, SelfAlign::Auto, 0, 0, 0, 0, 0, 0, 100.0F});
+    const Entity floored = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 10.0F, 20.0F));
+    fixture.world.add(floored, LayoutItem{1.0F});
+    fixture.finish();
+
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.canvas, 300.0F, 100.0F));
+
+    /* An even share would put both at 155; the cap freezes at 100 and the
+       remaining space goes to the other grower from its base. */
+    fixture.requireRect(capped, 0.0F, 0.0F, 100.0F, 20.0F);
+    fixture.requireRect(floored, 100.0F, 0.0F, 200.0F, 20.0F);
+}
+
+TEST_CASE("ui layout: min and max clamp the authored size before the flow", "[ui][layout]")
+{
+    Fixture fixture;
+    LayoutGroup group;
+    group.direction = FlexDirection::Row;
+    group.gap = 10.0F;
+    fixture.world.add(fixture.canvas, group);
+
+    const Entity raised = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 10.0F, 20.0F));
+    fixture.world.add(raised, LayoutItem{0.0F, 1.0F, SelfAlign::Auto, 0, 0, 0, 0, 150.0F});
+    const Entity lowered = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 200.0F, 20.0F));
+    fixture.world.add(lowered, LayoutItem{0.0F, 1.0F, SelfAlign::Auto, 0, 0, 0, 0, 0, 0, 60.0F});
+    fixture.finish();
+
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.canvas, 300.0F, 100.0F));
+
+    fixture.requireRect(raised, 0.0F, 0.0F, 150.0F, 20.0F);
+    fixture.requireRect(lowered, 160.0F, 0.0F, 60.0F, 20.0F);
+}
+
+TEST_CASE("ui layout: margins sit between the padding and the item", "[ui][layout]")
+{
+    Fixture fixture;
+    LayoutGroup group;
+    group.direction = FlexDirection::Row;
+    fixture.world.add(fixture.canvas, group);
+
+    const Entity item = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 50.0F, 20.0F));
+    fixture.world.add(item, LayoutItem{0.0F, 1.0F, SelfAlign::Auto, 10.0F, 4.0F, 6.0F, 8.0F});
+    fixture.finish();
+
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.canvas, 300.0F, 100.0F));
+
+    fixture.requireRect(item, 10.0F, 4.0F, 50.0F, 20.0F);
+}
+
+TEST_CASE("ui layout: align_self overrides the container's cross alignment", "[ui][layout]")
+{
+    Fixture fixture;
+    LayoutGroup group;
+    group.direction = FlexDirection::Row;
+    group.align = Align::Stretch;
+    group.gap = 10.0F;
+    fixture.world.add(fixture.canvas, group);
+
+    const Entity stretched = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 50.0F, 20.0F));
+    const Entity centred = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 50.0F, 20.0F));
+    fixture.world.add(centred, LayoutItem{0.0F, 1.0F, SelfAlign::Center, 0, 0, 0, 0});
+    const Entity floored = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 50.0F, 20.0F));
+    fixture.world.add(floored,
+                      LayoutItem{0.0F, 1.0F, SelfAlign::End, 0, 0, 0, 0, 0, 0, 0, 40.0F});
+    fixture.finish();
+
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.canvas, 300.0F, 100.0F));
+
+    fixture.requireRect(stretched, 0.0F, 0.0F, 50.0F, 100.0F);
+    fixture.requireRect(centred, 60.0F, 40.0F, 50.0F, 20.0F);
+    /* End alignment: stuck to the line's bottom; a cap only clamps, it never
+       grows the item. */
+    fixture.requireRect(floored, 120.0F, 80.0F, 50.0F, 20.0F);
 }

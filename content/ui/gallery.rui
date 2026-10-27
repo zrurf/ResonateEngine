@@ -190,7 +190,28 @@
       </Box>
     </Panel>
 
-    <Panel key="list-area" class="panel" x="24" y="850" width="952" height="150"
+    <Panel key="layout-area" class="panel" x="24" y="850" width="952" height="90"
+           direction="Column" align="Start" gap="8"
+           padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
+           border_color="0.0452 0.0452 0.0500 1" border_width="1">
+      <Label key="layout-title" height="18" text="布局条目" font_size="13"
+             font_weight="700" text_color="0.60 0.63 0.68 1"/>
+      <Panel key="layout-demo" x="0" y="26" width="928" height="40" direction="Row" gap="8"
+             align="Stretch">
+        <Box key="layout-fixed" width="80" height="40" color="0.10 0.12 0.16 1"/>
+        <Box key="layout-grow" width="20" height="40" color="0.10 0.30 0.18 1">
+          <LayoutItem grow="1"/>
+        </Box>
+        <Box key="layout-capped" width="200" height="40" color="0.14 0.12 0.28 1">
+          <LayoutItem grow="1" max_width="240"/>
+        </Box>
+        <Box key="layout-centred" width="60" height="24" color="0.28 0.18 0.10 1">
+          <LayoutItem align_self="Center" margin_left="24"/>
+        </Box>
+      </Panel>
+    </Panel>
+
+    <Panel key="list-area" class="panel" x="24" y="952" width="952" height="150"
            direction="Column" align="Start" gap="8"
            padding_left="12" padding_top="12" padding_right="12" padding_bottom="12"
            border_color="0.0452 0.0452 0.0500 1" border_width="1">

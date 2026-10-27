@@ -34,6 +34,15 @@
     <value name="Stretch"/>
   </enum>
 
+  <!-- Per-item cross-axis alignment: Auto defers to the container's align. -->
+  <enum name="SelfAlign" width="u8">
+    <value name="Auto"/>
+    <value name="Start"/>
+    <value name="Center"/>
+    <value name="End"/>
+    <value name="Stretch"/>
+  </enum>
+
   <enum name="TextAlign" width="u8">
     <value name="Start"/>
     <value name="Center"/>
@@ -94,6 +103,26 @@
     <field name="wrap" type="bool" default="false"/>
 
     <migrate from="1" to="2"/>
+  </component>
+
+  <!-- One flow item's own share of the container's line: grow takes free main
+         space (proportional), shrink gives some back when the line overflows,
+         margins sit between the container padding and the item on both axes,
+         and min/max clamp the main-axis result. The authored width/height is
+         the basis; a zero dimension still measures from text. Written by the
+         document adapter when a node authors any of these. -->
+  <component name="LayoutItem" version="1">
+    <field name="grow" type="f32" min="0" default="0"/>
+    <field name="shrink" type="f32" min="0" default="1"/>
+    <field name="align_self" type="SelfAlign" default="Auto"/>
+    <field name="margin_left" type="f32" min="0" default="0"/>
+    <field name="margin_top" type="f32" min="0" default="0"/>
+    <field name="margin_right" type="f32" min="0" default="0"/>
+    <field name="margin_bottom" type="f32" min="0" default="0"/>
+    <field name="min_width" type="f32" min="0" default="0"/>
+    <field name="min_height" type="f32" min="0" default="0"/>
+    <field name="max_width" type="f32" min="0" default="0"/>
+    <field name="max_height" type="f32" min="0" default="0"/>
   </component>
 
   <!-- Written by the layout pass, in target pixels. Consumers (render, hit

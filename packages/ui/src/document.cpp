@@ -413,6 +413,135 @@ bool applyLayoutGroup(const dom::Document& document, const dom::Component& compo
     return true;
 }
 
+bool applyLayoutItem(const dom::Document& document, const dom::Component& component,
+                     LayoutItem& item, std::string& error)
+{
+    for (const dom::Field& field : component.fields)
+    {
+        const std::string_view name = document.text(field.name);
+        if (name == "grow")
+        {
+            if (!parseFloat(field.value, item.grow) || item.grow < 0.0F)
+            {
+                error = "LayoutItem.grow is not a non-negative number";
+                return false;
+            }
+        }
+        else if (name == "shrink")
+        {
+            if (!parseFloat(field.value, item.shrink) || item.shrink < 0.0F)
+            {
+                error = "LayoutItem.shrink is not a non-negative number";
+                return false;
+            }
+        }
+        else if (name == "align_self")
+        {
+            if (field.value == "Auto")
+            {
+                item.align_self = SelfAlign::Auto;
+            }
+            else if (field.value == "Start")
+            {
+                item.align_self = SelfAlign::Start;
+            }
+            else if (field.value == "Center")
+            {
+                item.align_self = SelfAlign::Center;
+            }
+            else if (field.value == "End")
+            {
+                item.align_self = SelfAlign::End;
+            }
+            else if (field.value == "Stretch")
+            {
+                item.align_self = SelfAlign::Stretch;
+            }
+            else
+            {
+                error = "LayoutItem.align_self is Auto, Start, Center, End or Stretch";
+                return false;
+            }
+        }
+        else if (name == "margin_left")
+        {
+            if (!parseFloat(field.value, item.margin_left) || item.margin_left < 0.0F)
+            {
+                error = "LayoutItem.margin_left is not a non-negative number";
+                return false;
+            }
+        }
+        else if (name == "margin_top")
+        {
+            if (!parseFloat(field.value, item.margin_top) || item.margin_top < 0.0F)
+            {
+                error = "LayoutItem.margin_top is not a non-negative number";
+                return false;
+            }
+        }
+        else if (name == "margin_right")
+        {
+            if (!parseFloat(field.value, item.margin_right) || item.margin_right < 0.0F)
+            {
+                error = "LayoutItem.margin_right is not a non-negative number";
+                return false;
+            }
+        }
+        else if (name == "margin_bottom")
+        {
+            if (!parseFloat(field.value, item.margin_bottom) || item.margin_bottom < 0.0F)
+            {
+                error = "LayoutItem.margin_bottom is not a non-negative number";
+                return false;
+            }
+        }
+        else if (name == "min_width")
+        {
+            if (!parseFloat(field.value, item.min_width) || item.min_width < 0.0F)
+            {
+                error = "LayoutItem.min_width is not a non-negative number";
+                return false;
+            }
+        }
+        else if (name == "min_height")
+        {
+            if (!parseFloat(field.value, item.min_height) || item.min_height < 0.0F)
+            {
+                error = "LayoutItem.min_height is not a non-negative number";
+                return false;
+            }
+        }
+        else if (name == "max_width")
+        {
+            if (!parseFloat(field.value, item.max_width) || item.max_width < 0.0F)
+            {
+                error = "LayoutItem.max_width is not a non-negative number";
+                return false;
+            }
+        }
+        else if (name == "max_height")
+        {
+            if (!parseFloat(field.value, item.max_height) || item.max_height < 0.0F)
+            {
+                error = "LayoutItem.max_height is not a non-negative number";
+                return false;
+            }
+        }
+        else
+        {
+            error = "unknown LayoutItem field '" + std::string(name) + "'";
+            return false;
+        }
+    }
+    if ((item.min_width > 0.0F && item.max_width > 0.0F && item.min_width > item.max_width) ||
+        (item.min_height > 0.0F && item.max_height > 0.0F && item.min_height > item.max_height))
+    {
+        error = "LayoutItem min exceeds max";
+        return false;
+    }
+    return true;
+}
+
 bool applyBackground(const dom::Document& document, const dom::Component& component,
                      Background& background, std::string& error)
 {
@@ -1175,6 +1304,12 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
         {
             LayoutGroup value;
             applied = applyLayoutGroup(document, component, value, error) &&
+                      world.add(entity, value) != nullptr;
+        }
+        else if (name == "LayoutItem")
+        {
+            LayoutItem value;
+            applied = applyLayoutItem(document, component, value, error) &&
                       world.add(entity, value) != nullptr;
         }
         else if (name == "Background")

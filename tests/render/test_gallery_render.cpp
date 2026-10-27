@@ -98,7 +98,7 @@ TEST_CASE("offscreen: the widget gallery renders", "[render][gallery]")
     auto host = resonate::ModuleHost::create(resonate::systemAllocator());
     REQUIRE(host != nullptr);
     constexpr std::uint32_t kWidth = 1000U;
-    constexpr std::uint32_t kHeight = 1000U;
+    constexpr std::uint32_t kHeight = 1120U;
     REQUIRE(resonate::render::publishOffscreen(host->capabilities(), kWidth, kHeight) ==
             RESONATE_OK);
     REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
