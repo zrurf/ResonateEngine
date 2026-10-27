@@ -18,11 +18,16 @@
 #include <resonate/render/offscreen.hpp>
 #include <resonate/renderer/renderer.h>
 #include <resonate/text/font.h>
+#include <resonate/ui/display_list.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/document_schema.h>
+#include <resonate/ui/hit_test.h>
+#include <resonate/ui/input.h>
 #include <resonate/ui/layout.h>
 #include <resonate/ui/style.h>
 #include <resonate/ui/text_runtime.h>
+
+#include "resonate.ui/components.gen.h"
 
 #include "paths.h"
 
@@ -152,6 +157,26 @@ TEST_CASE("offscreen: the widget gallery renders", "[render][gallery]")
         render_system.waitIdle();
     }
 
+    /* A click focuses the empty field. Its caret is the only bright pixel in a
+       box that holds no text, so the readback can prove where it landed: the
+       caret used to be drawn along the box top for any focused widget, which
+       put a column on checkboxes and off the text baseline. */
+    const resonate::ecs::Entity empty_field =
+        resonate::ui::findByKey(world, canvas, "empty-field");
+    REQUIRE(empty_field.valid());
+    const auto* field_rect = world.get<resonate::ui::ComputedRect>(empty_field);
+    REQUIRE(field_rect != nullptr);
+    const float field_x = field_rect->x;
+    const float field_y = field_rect->y;
+    const float field_w = field_rect->width;
+    const float field_h = field_rect->height;
+    REQUIRE(resonate::ui::updateInput(world, canvas, field_x + field_w * 0.5F,
+                                      field_y + field_h * 0.5F, true));
+    REQUIRE(resonate::ui::updateInput(world, canvas, field_x + field_w * 0.5F,
+                                      field_y + field_h * 0.5F, false));
+    render_system.run(world);
+    render_system.waitIdle();
+
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(kWidth) * kHeight * 4U);
     std::uint32_t width = 0U;
     std::uint32_t height = 0U;
@@ -194,6 +219,44 @@ TEST_CASE("offscreen: the widget gallery renders", "[render][gallery]")
     CHECK(panel_pixels > 20000U);
     CHECK(accent_pixels > 2000U);
     CHECK(bright_text > 500U);
+
+    /* The caret inside the empty field: a bright column whose top and bottom
+       both clear the box edge by the same margin, i.e. centred, not clipped to
+       one end. */
+    int caret_top = -1;
+    int caret_bottom = -1;
+    int caret_columns = 0;
+    const auto left = static_cast<int>(field_x) + 1;
+    const auto right = static_cast<int>(field_x + field_w) - 1;
+    const auto top = static_cast<int>(field_y) + 1;
+    const auto bottom = static_cast<int>(field_y + field_h) - 1;
+    for (int y = top; y < bottom; ++y)
+    {
+        bool bright = false;
+        for (int x = left; x < right; ++x)
+        {
+            const std::size_t at = (static_cast<std::size_t>(y) * width +
+                                    static_cast<std::size_t>(x)) *
+                                   4U;
+            if (pixels[at] > 150U && pixels[at + 1U] > 150U && pixels[at + 2U] > 150U)
+            {
+                bright = true;
+            }
+        }
+        if (bright)
+        {
+            if (caret_top < 0)
+            {
+                caret_top = y;
+            }
+            caret_bottom = y;
+            ++caret_columns;
+        }
+    }
+    INFO("caret rows " << caret_top << ".." << caret_bottom << " of " << top << ".." << bottom);
+    REQUIRE(caret_columns > 0);
+    CHECK(caret_top - top >= 2);
+    CHECK(bottom - 1 - caret_bottom >= 2);
 
     render_system.release();
     host->detachAll();

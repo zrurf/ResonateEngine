@@ -117,6 +117,39 @@ TEST_CASE("a close request ends the window, which is how a caller reads a quit",
     REQUIRE(window.width(window.self) == 0U);
 }
 
+TEST_CASE("a key press survives the pumps before the step that reads it", "[window]")
+{
+    const DummyVideo dummy;
+
+    ResonateWindow& window = resonate::window::windowCapability();
+    REQUIRE(window.create(window.self, "Resonate test", 320, 200) == RESONATE_OK);
+
+    ResonateInput& input = resonate::window::inputCapability();
+    REQUIRE(input.clear_presses != nullptr);
+
+    SDL_Event key = {};
+    key.type = SDL_EVENT_KEY_DOWN;
+    key.key.scancode = SDL_SCANCODE_TAB;
+    key.key.key = SDLK_TAB;
+    key.key.down = true;
+    REQUIRE(SDL_PushEvent(&key) == true);
+
+    /* The loop pumps once per rendered frame and runs a simulation step only on
+       the frames the clock grants one, so a press must outlive every pump until
+       a step reads it. The bug this guards against cleared the latches at pump
+       start, which dropped most of them. */
+    window.pump_events(window.self);
+    REQUIRE(input.key_pressed(input.self, RESONATE_KEY_TAB) == 1);
+    window.pump_events(window.self);
+    REQUIRE(input.key_pressed(input.self, RESONATE_KEY_TAB) == 1);
+
+    /* One tap is one edit: the step clears the latch when it is done reading. */
+    input.clear_presses(input.self);
+    REQUIRE(input.key_pressed(input.self, RESONATE_KEY_TAB) == 0);
+
+    window.destroy(window.self);
+}
+
 TEST_CASE("the window capability refuses a size it cannot pass on", "[window]")
 {
     const DummyVideo dummy;

@@ -402,13 +402,20 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                 }
                 else
                 {
+                    /* The empty field's caret follows the alignment inside the
+                       padded span, where its first character would start. */
+                    const float inner = std::fmax(1.0F, rect->width - text->padding_left);
                     if (text->align == TextAlign::Center)
                     {
-                        caret_x = rect->x + (rect->width - 1.0F) * 0.5F;
+                        caret_x = rect->x + text->padding_left + (inner - 1.0F) * 0.5F;
                     }
                     else if (text->align == TextAlign::End)
                     {
-                        caret_x = rect->x + rect->width - 1.0F;
+                        caret_x = rect->x + text->padding_left + inner - 1.0F;
+                    }
+                    else
+                    {
+                        caret_x = rect->x + text->padding_left;
                     }
                     if (text->v_align == VAlign::Middle)
                     {
