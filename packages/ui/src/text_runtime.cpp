@@ -414,6 +414,12 @@ bool focusedTextEditable(ecs::World& world, ecs::Entity canvas)
            world.get<Text>(pointer->focused) != nullptr;
 }
 
+ecs::Entity focusedEntity(ecs::World& world, ecs::Entity canvas)
+{
+    const PointerState* pointer = world.get<PointerState>(canvas);
+    return pointer != nullptr ? pointer->focused : ecs::Entity{};
+}
+
 std::string focusedText(ecs::World& world, ecs::Entity canvas)
 {
     const PointerState* pointer = world.get<PointerState>(canvas);

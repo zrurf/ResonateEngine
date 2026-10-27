@@ -79,9 +79,10 @@ struct UiFrame
     const ResonateRenderCanvas* target = nullptr;
     const ResonateInput* input = nullptr;
     ui::TextRuntime* text = nullptr;
-    /* Whether the platform editor held the text buffer on the previous frame,
-       so a field that takes focus fills it once. */
-    bool editor_active = false;
+    /* The field the platform editor mirrored on the previous frame, so a field
+       that takes focus fills the editor once — a direct move between fields
+       must not leave the previous field's buffer behind. */
+    ecs::Entity editor_entity{};
 
     static void invoke(void* context, ecs::World& world, ecs::CommandBuffer&, float)
     {
@@ -131,13 +132,15 @@ struct UiFrame
                     std::fprintf(stderr, "resonate: ui text composition: %s\n", error.c_str());
                 }
             }
-            bool editable = false;
             if (frame->text != nullptr && frame->input->set_text_focus != nullptr)
             {
                 /* The soft keyboard follows focus: it belongs to the text widget
                    that owns the caret, not to the window. */
-                editable = ui::focusedTextEditable(world, frame->canvas);
-                if (editable && !frame->editor_active && frame->input->set_text_buffer != nullptr)
+                const bool editable = ui::focusedTextEditable(world, frame->canvas);
+                const ecs::Entity focused = editable ? ui::focusedEntity(world, frame->canvas)
+                                                     : ecs::Entity{};
+                if (focused.valid() && focused != frame->editor_entity &&
+                    frame->input->set_text_buffer != nullptr)
                 {
                     /* The editor owns the buffer from here on, so it starts
                        from what the field already shows. */
@@ -145,9 +148,9 @@ struct UiFrame
                     frame->input->set_text_buffer(frame->input->self, field_text.data(),
                                                   static_cast<std::uint32_t>(field_text.size()));
                 }
+                frame->editor_entity = focused;
                 frame->input->set_text_focus(frame->input->self, editable ? 1 : 0);
             }
-            frame->editor_active = editable;
             if (frame->text != nullptr && frame->input->text_snapshot != nullptr)
             {
                 /* A platform editor reports its whole buffer; mirror it. An

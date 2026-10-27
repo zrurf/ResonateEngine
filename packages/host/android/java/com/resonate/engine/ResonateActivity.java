@@ -83,10 +83,14 @@ public class ResonateActivity extends NativeActivity {
     public void showKeyboard() {
         runOnUiThread(() -> {
             field.requestFocus();
-            InputMethodManager manager = getSystemService(InputMethodManager.class);
-            if (manager != null) {
-                manager.showSoftInput(field, InputMethodManager.SHOW_IMPLICIT);
-            }
+            /* showSoftInput right after requestFocus is dropped when the
+               window has not taken input focus yet. */
+            field.postDelayed(() -> {
+                InputMethodManager manager = getSystemService(InputMethodManager.class);
+                if (manager != null) {
+                    manager.showSoftInput(field, InputMethodManager.SHOW_IMPLICIT);
+                }
+            }, 120);
         });
     }
 
