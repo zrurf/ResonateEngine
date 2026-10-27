@@ -427,11 +427,18 @@ ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool r
             const std::filesystem::path base(source->directory);
             if (!base.empty())
             {
-                const std::filesystem::path candidate = base / std::filesystem::path(source_path);
-                if (std::filesystem::is_regular_file(candidate, ignored) &&
-                    readTextFile(candidate.string(), out_text))
+                /* Beside the document, by path and then by name: a host that
+                   stages the UI assets into one flat directory answers the
+                   second. */
+                for (const std::filesystem::path& candidate :
+                     {base / std::filesystem::path(source_path),
+                      base / std::filesystem::path(source_path).filename()})
                 {
-                    return true;
+                    if (std::filesystem::is_regular_file(candidate, ignored) &&
+                        readTextFile(candidate.string(), out_text))
+                    {
+                        return true;
+                    }
                 }
             }
             const std::string found = findContentFile(std::string(source_path));

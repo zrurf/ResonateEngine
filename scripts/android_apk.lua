@@ -135,11 +135,15 @@ end
 -- manager lists directories without nesting.
 local ui_source = path.join(os.projectdir(), "content", "ui")
 local ui_assets = os.files(path.join(ui_source, "*.rui"))
+local ui_sheets = os.files(path.join(ui_source, "*.rcss"))
 local ui_strings = os.files(path.join(ui_source, "*.rstrings"))
-if #ui_assets > 0 or #ui_strings > 0 then
+if #ui_assets > 0 or #ui_sheets > 0 or #ui_strings > 0 then
     os.mkdir(path.join(staging, "assets", "ui"))
     for _, document in ipairs(ui_assets) do
         os.cp(document, path.join(staging, "assets", "ui"))
+    end
+    for _, sheet in ipairs(ui_sheets) do
+        os.cp(sheet, path.join(staging, "assets", "ui"))
     end
     for _, strings in ipairs(ui_strings) do
         os.cp(strings, path.join(staging, "assets", "ui"))
