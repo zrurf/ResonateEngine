@@ -18,6 +18,7 @@
 
 #include "resonate.ui/components.gen.h"
 #include <resonate/ui/document_schema.h>
+#include <resonate/ui/style.h>
 #include <resonate/ui/layout.h>
 
 #include "resonate.ui/components.gen.h"
@@ -224,6 +225,33 @@ TEST_CASE("ui document: an unknown component is a parse error", "[ui][document]"
     CHECK_FALSE(diagnostics.empty());
 }
 
+namespace
+{
+
+/* Loads a shipped document's external stylesheets the way startup does: paths
+   resolve from the source tree. */
+bool loadShippedStylesheets(resonate::dom::Document& document)
+{
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    return resonate::ui::loadStylesheets(
+        document, nullptr,
+        [](void*, std::string_view source_path, std::string& out_text)
+        {
+            std::ifstream file(std::string(RESONATE_SOURCE_DIR) + "/" + std::string(source_path),
+                               std::ios::binary);
+            if (!file.is_open())
+            {
+                return false;
+            }
+            out_text.assign(std::istreambuf_iterator<char>(file),
+                            std::istreambuf_iterator<char>());
+            return true;
+        },
+        diagnostics);
+}
+
+} // namespace
+
 TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]")
 {
     const std::string path = std::string(RESONATE_SOURCE_DIR) + "/content/ui/demo.rui";
@@ -237,6 +265,7 @@ TEST_CASE("ui document: the shipped demo document instantiates", "[ui][document]
                                                    diagnostics);
     REQUIRE(document != nullptr);
     CHECK(diagnostics.empty());
+    REQUIRE(loadShippedStylesheets(*document));
 
     Fixture fixture;
     resonate::ui::ImageRegistry images;

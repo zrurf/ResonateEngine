@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<document version="1" schemas="resonate.ui">
+  <!-- The shared theme: palette tokens and the widget rules both the game HUD
+       and the editor use. Colors are linear; the hex in each comment is the
+       sRGB value the display shows. Documents override any of these by
+       declaring their own rules after the sheet that references this file. -->
+  <StyleSheet key="theme">
+    <Variable token="--bg" value="0.0106 0.0106 0.0113 1"/>          <!-- #1b1b1c -->
+    <Variable token="--panel" value="0.0176 0.0195 0.0243 1"/>       <!-- #242428 -->
+    <Variable token="--header" value="0.0246 0.0273 0.0331 1"/>      <!-- #2b2b2f -->
+    <Variable token="--surface" value="0.0331 0.0362 0.0430 1"/>     <!-- #333338 -->
+    <Variable token="--field" value="0.0132 0.0132 0.0148 1"/>       <!-- #1e1e1f -->
+    <Variable token="--hover" value="0.0452 0.0497 0.0578 1"/>       <!-- #3c3c41 -->
+    <Variable token="--pressed" value="0.0080 0.0090 0.0110 1"/>     <!-- #151517 -->
+    <Variable token="--select" value="0.0257 0.0684 0.1559 1"/>      <!-- #2c4a6e -->
+    <Variable token="--accent" value="0.7454 0.3813 0.0423 1"/>      <!-- #e0a63a -->
+    <Variable token="--text" value="0.6317 0.6400 0.6600 1"/>        <!-- #d0d1d4 -->
+    <Variable token="--text-dim" value="0.3515 0.3600 0.3800 1"/>    <!-- #a0a1a4 -->
+    <Variable token="--text-muted" value="0.2158 0.2200 0.2350 1"/>  <!-- #808184 -->
+
+    <StyleRule selector=".panel">
+      <Background color="var(--panel)"/>
+    </StyleRule>
+    <StyleRule selector=".header">
+      <Background color="var(--header)"/>
+    </StyleRule>
+    <StyleRule selector=".title">
+      <Background color="var(--header)"/>
+    </StyleRule>
+    <StyleRule selector=".title">
+      <Text text_color="var(--text)"/>
+    </StyleRule>
+    <StyleRule selector=".field">
+      <Background color="var(--field)"/>
+    </StyleRule>
+    <StyleRule selector=".field:focus">
+      <Background color="var(--select)"/>
+    </StyleRule>
+    <StyleRule selector=".tool">
+      <Background color="var(--header)"/>
+    </StyleRule>
+    <StyleRule selector=".tool:hover">
+      <Background color="var(--hover)"/>
+    </StyleRule>
+    <StyleRule selector=".tool:pressed">
+      <Background color="var(--pressed)"/>
+    </StyleRule>
+    <StyleRule selector=".row">
+      <Background color="var(--panel)"/>
+    </StyleRule>
+    <StyleRule selector=".row:hover">
+      <Background color="var(--hover)"/>
+    </StyleRule>
+    <StyleRule selector=".row:pressed">
+      <Background color="var(--pressed)"/>
+    </StyleRule>
+    <StyleRule selector=".selected">
+      <Background color="var(--select)"/>
+    </StyleRule>
+    <StyleRule selector=".muted">
+      <Text text_color="var(--text-dim)"/>
+    </StyleRule>
+    <StyleRule selector=".accent">
+      <Background color="var(--accent)"/>
+    </StyleRule>
+  </StyleSheet>
+</document>

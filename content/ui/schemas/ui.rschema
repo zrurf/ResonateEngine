@@ -292,8 +292,18 @@
   </node>
 
   <!-- Non-visual style data. The UI compiler consumes the sheet; instantiation
-       skips its subtree. A rule's component elements are declarations. -->
-  <node name="StyleSheet" version="1"/>
+       skips its subtree. A rule's component elements are declarations; a `src`
+       names an external stylesheet whose sheets are imported when the document
+       loads. Variable children feed var() references in declaration values;
+       the last definition in document order wins. -->
+  <node name="StyleSheet" version="1">
+    <field name="src" type="string"/>
+  </node>
+
+  <node name="Variable" version="1">
+    <field name="token" type="string"/>
+    <field name="value" type="string"/>
+  </node>
 
   <node name="StyleRule" version="1">
     <field name="selector" type="string"/>

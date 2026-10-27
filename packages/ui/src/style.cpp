@@ -8,12 +8,79 @@
 #include <utility>
 #include <vector>
 
+#include <map>
+
 #include <resonate/hierarchy/tree.h>
+#include <resonate/ui/document_schema.h>
 
 namespace resonate::ui
 {
 namespace
 {
+
+void trimInPlace(std::string& text)
+{
+    const std::size_t first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos)
+    {
+        text.clear();
+        return;
+    }
+    const std::size_t last = text.find_last_not_of(" \t\r\n");
+    text = text.substr(first, last - first + 1U);
+}
+
+/* Substitutes var(--token[, fallback]) references; an unknown token without a
+   fallback is a compile error, like any other style mistake. */
+bool substituteVariables(const std::map<std::string, std::string>& variables,
+                         const std::string& value, std::string& out, std::string& error)
+{
+    out.clear();
+    std::size_t index = 0;
+    while (index < value.size())
+    {
+        const std::size_t start = value.find("var(", index);
+        if (start == std::string::npos)
+        {
+            out.append(value, index, std::string::npos);
+            return true;
+        }
+        out.append(value, index, start - index);
+        const std::size_t end = value.find(')', start);
+        if (end == std::string::npos)
+        {
+            error = "unterminated var( in \"" + value + "\"";
+            return false;
+        }
+        std::string call = value.substr(start + 4U, end - start - 4U);
+        std::string fallback;
+        bool has_fallback = false;
+        if (const std::size_t comma = call.find(','); comma != std::string::npos)
+        {
+            fallback = call.substr(comma + 1U);
+            call = call.substr(0U, comma);
+            has_fallback = true;
+            trimInPlace(fallback);
+        }
+        trimInPlace(call);
+        const auto found = variables.find(call);
+        if (found != variables.end())
+        {
+            out.append(found->second);
+        }
+        else if (has_fallback)
+        {
+            out.append(fallback);
+        }
+        else
+        {
+            error = "unknown theme variable \"" + call + "\"";
+            return false;
+        }
+        index = end + 1U;
+    }
+    return true;
+}
 
 std::string_view baseName(std::string_view name)
 {
@@ -161,6 +228,94 @@ void collectStyleRules(dom::Document& document, dom::NodeHandle node,
     }
 }
 
+/* Theme variables are data: every <Variable> under a sheet, the last
+   definition in document order winning. */
+void collectVariables(dom::Document& document, dom::NodeHandle node,
+                      dom::StringId token_name, dom::StringId value_name,
+                      std::map<std::string, std::string>& out)
+{
+    if (isNodeType(document, node, "Variable"))
+    {
+        const dom::Field* token = document.property(node, token_name);
+        const dom::Field* value = document.property(node, value_name);
+        if (token != nullptr && !token->value.empty() && value != nullptr)
+        {
+            out[token->value] = value->value;
+        }
+    }
+    for (dom::NodeHandle child = document.firstChild(node); child.valid();
+         child = document.nextSibling(child))
+    {
+        collectVariables(document, child, token_name, value_name, out);
+    }
+}
+
+/* Recreates one node of a stylesheet under the target document: strings are
+   interned there, so the imported rules compare against the document's own
+   classes and ids. */
+dom::NodeHandle importNode(dom::Document& target, dom::Document& source,
+                           dom::NodeHandle source_node)
+{
+    const dom::StringId type = source.type(source_node);
+    if (type == dom::kInvalidString)
+    {
+        return dom::NodeHandle{};
+    }
+    const dom::NodeHandle copy = target.create(target.intern(source.text(type)));
+    if (!copy.valid())
+    {
+        return copy;
+    }
+    if (const dom::StringId key = source.key(source_node); key != dom::kInvalidString)
+    {
+        target.setKey(copy, target.intern(source.text(key)));
+    }
+    if (const dom::StringId id = source.id(source_node); id != dom::kInvalidString)
+    {
+        target.setId(copy, target.intern(source.text(id)));
+    }
+    if (const dom::StringId name = source.name(source_node); name != dom::kInvalidString)
+    {
+        target.setName(copy, target.intern(source.text(name)));
+    }
+    std::vector<dom::StringId> classes;
+    for (const dom::StringId class_id : source.classes(source_node))
+    {
+        classes.push_back(target.intern(source.text(class_id)));
+    }
+    if (!classes.empty())
+    {
+        target.setClasses(copy, resonate::Span<const dom::StringId>(classes.data(), classes.size()));
+    }
+    for (const dom::Component& component : source.components(source_node))
+    {
+        dom::Component imported;
+        imported.type = target.intern(source.text(component.type));
+        imported.fields.reserve(component.fields.size());
+        for (const dom::Field& field : component.fields)
+        {
+            imported.fields.push_back(
+                dom::Field{target.intern(source.text(field.name)), field.value});
+        }
+        target.setComponent(copy, std::move(imported));
+    }
+    for (const dom::Field& property : source.properties(source_node))
+    {
+        target.setProperty(copy,
+                           dom::Field{target.intern(source.text(property.name)), property.value});
+    }
+    for (dom::NodeHandle child = source.firstChild(source_node); child.valid();
+         child = source.nextSibling(child))
+    {
+        const dom::NodeHandle imported_child = importNode(target, source, child);
+        if (imported_child.valid())
+        {
+            target.append(copy, imported_child);
+        }
+    }
+    return copy;
+}
+
 } // namespace
 
 struct StyleTable::Impl
@@ -304,9 +459,15 @@ bool buildStyles(dom::Document& document, StyleTable& out,
     const std::vector<dom::NodeHandle> sheets = document.findType(sheet_type);
 
     std::vector<dom::NodeHandle> rule_nodes;
-    for (const dom::NodeHandle sheet : sheets)
+    std::map<std::string, std::string> variables;
     {
-        collectStyleRules(document, sheet, rule_nodes);
+        const dom::StringId token_name = document.intern("token");
+        const dom::StringId value_name = document.intern("value");
+        for (const dom::NodeHandle sheet : sheets)
+        {
+            collectVariables(document, sheet, token_name, value_name, variables);
+            collectStyleRules(document, sheet, rule_nodes);
+        }
     }
 
     std::uint32_t order = 0U;
@@ -334,6 +495,7 @@ bool buildStyles(dom::Document& document, StyleTable& out,
                                 ? 10
                                 : (rule.selector.state == 0U ? 0 : 20));
         rule.order = order++;
+        bool declarations_ok = true;
         for (const dom::Component& component : document.components(node))
         {
             if (baseName(document.text(component.type)) == "ComputedRect")
@@ -343,7 +505,32 @@ bool buildStyles(dom::Document& document, StyleTable& out,
                     "style rule declares a derived component (ComputedRect)"});
                 continue;
             }
-            rule.declarations.push_back(component);
+            dom::Component declaration = component;
+            for (dom::Field& field : declaration.fields)
+            {
+                if (field.value.find("var(") == std::string::npos)
+                {
+                    continue;
+                }
+                std::string substituted;
+                if (!substituteVariables(variables, field.value, substituted, error))
+                {
+                    diagnostics.push_back(dom::Diagnostic{dom::Diagnostic::Severity::Error, 0U,
+                                                          0U, "style rule: " + error});
+                    declarations_ok = false;
+                    break;
+                }
+                field.value = std::move(substituted);
+            }
+            if (!declarations_ok)
+            {
+                break;
+            }
+            rule.declarations.push_back(std::move(declaration));
+        }
+        if (!declarations_ok)
+        {
+            continue;
         }
         out.impl_->rules.push_back(std::move(rule));
     }
@@ -358,6 +545,77 @@ bool buildStyles(dom::Document& document, StyleTable& out,
                          return left.order < right.order;
                      });
     return diagnostics.empty();
+}
+
+bool loadStylesheets(dom::Document& document, void* context, StylesheetReader reader,
+                     std::vector<dom::Diagnostic>& diagnostics)
+{
+    if (reader == nullptr)
+    {
+        return true;
+    }
+    const dom::StringId sheet_type = document.intern("StyleSheet");
+    const dom::StringId src_name = document.intern("src");
+    const std::vector<dom::NodeHandle> sheets = document.findType(sheet_type);
+    bool ok = true;
+    for (const dom::NodeHandle sheet : sheets)
+    {
+        const dom::Field* src = document.property(sheet, src_name);
+        if (src == nullptr || src->value.empty())
+        {
+            continue;
+        }
+        const std::string path = src->value;
+        std::string text;
+        if (!reader(context, path, text))
+        {
+            diagnostics.push_back(dom::Diagnostic{
+                dom::Diagnostic::Severity::Error, 0U, 0U,
+                "stylesheet '" + path + "' could not be read"});
+            ok = false;
+            continue;
+        }
+        std::vector<dom::Diagnostic> imported_diagnostics;
+        auto imported = dom::Document::parse(text, &documentSchema(), imported_diagnostics);
+        for (dom::Diagnostic& diagnostic : imported_diagnostics)
+        {
+            diagnostic.message = path + ": " + diagnostic.message;
+            diagnostics.push_back(std::move(diagnostic));
+        }
+        if (imported == nullptr)
+        {
+            ok = false;
+            continue;
+        }
+        const std::vector<dom::NodeHandle> imported_sheets =
+            imported->findType(imported->intern("StyleSheet"));
+        if (imported_sheets.empty())
+        {
+            diagnostics.push_back(dom::Diagnostic{dom::Diagnostic::Severity::Error, 0U, 0U,
+                                                  "stylesheet '" + path +
+                                                      "' carries no StyleSheet"});
+            ok = false;
+            continue;
+        }
+        const dom::NodeHandle parent = document.parent(sheet);
+        dom::NodeHandle reference = sheet;
+        for (const dom::NodeHandle imported_sheet : imported_sheets)
+        {
+            const dom::NodeHandle copy = importNode(document, *imported, imported_sheet);
+            if (!copy.valid() || !parent.valid() ||
+                !document.insertAfter(parent, copy, reference))
+            {
+                diagnostics.push_back(dom::Diagnostic{dom::Diagnostic::Severity::Error, 0U, 0U,
+                                                      "stylesheet '" + path +
+                                                          "' could not be imported"});
+                ok = false;
+                break;
+            }
+            reference = copy;
+        }
+        document.removeProperty(sheet, src_name);
+    }
+    return ok;
 }
 
 bool isStyleNode(const dom::Document& document, dom::NodeHandle node)

@@ -42,6 +42,7 @@
 #include <resonate/ui/input.h>
 #include <resonate/ui/layout.h>
 #include <resonate/ui/string_table.h>
+#include <resonate/ui/style.h>
 #include <resonate/ui/text_runtime.h>
 #include <resonate/window/input.h>
 #include <resonate/window/session.hpp>
@@ -393,6 +394,44 @@ ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool r
             std::fprintf(stderr, "resonate: ui document: %s:%u:%u: %s\n", path.c_str(),
                          diagnostic.line, diagnostic.column, diagnostic.message.c_str());
         }
+        return ecs::Entity{};
+    }
+
+    /* External stylesheets: a src resolves beside the document first, then
+       through the content walk. A broken sheet ends the document the same way
+       a broken document does. */
+    struct StylesheetSource
+    {
+        std::string directory;
+    };
+    StylesheetSource stylesheet_source{std::filesystem::path(path).parent_path().string()};
+    std::vector<dom::Diagnostic> style_diagnostics;
+    const bool styles_ok = ui::loadStylesheets(
+        *document, &stylesheet_source,
+        [](void* context, std::string_view source_path, std::string& out_text)
+        {
+            auto* source = static_cast<StylesheetSource*>(context);
+            std::error_code ignored;
+            const std::filesystem::path base(source->directory);
+            if (!base.empty())
+            {
+                const std::filesystem::path candidate = base / std::filesystem::path(source_path);
+                if (std::filesystem::is_regular_file(candidate, ignored) &&
+                    readTextFile(candidate.string(), out_text))
+                {
+                    return true;
+                }
+            }
+            const std::string found = findContentFile(std::string(source_path));
+            return !found.empty() && readTextFile(found, out_text);
+        },
+        style_diagnostics);
+    for (const dom::Diagnostic& diagnostic : style_diagnostics)
+    {
+        std::fprintf(stderr, "resonate: ui stylesheet: %s\n", diagnostic.message.c_str());
+    }
+    if (!styles_ok)
+    {
         return ecs::Entity{};
     }
     const ecs::Entity canvas =

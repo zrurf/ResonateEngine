@@ -152,3 +152,131 @@ TEST_CASE("ui style: a state rule needs a normal declaration and may not add com
         CHECK_FALSE(resonate::ui::instantiate(fixture.world, *document).valid());
     }
 }
+
+TEST_CASE("ui style: theme variables resolve in declaration values", "[ui][style]")
+{
+    const char* const themed = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <StyleSheet key="theme">
+      <Variable token="--panel" value="0.5 0.25 0.125 1"/>
+      <Variable token="--panel" value="0.5 0.25 0.25 1"/>
+      <StyleRule selector=".panel"><Background color="var(--panel)"/></StyleRule>
+      <StyleRule selector=".fallback"><Background color="var(--missing, 0.125 0.5 0.25 1)"/></StyleRule>
+    </StyleSheet>
+    <Panel key="panel" class="panel" x="0" y="0" width="100" height="100"/>
+    <Box key="fallback" class="fallback" x="0" y="0" width="100" height="100"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(themed, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    resonate::ui::StyleTable styles;
+    REQUIRE(resonate::ui::buildStyles(*document, styles, diagnostics));
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document);
+    REQUIRE(root.valid());
+    const auto children = resonate::hierarchy::children(fixture.world, root);
+    REQUIRE(children.size() == 2U);
+    /* The last Variable definition wins. */
+    const Background* panel = fixture.world.get<Background>(children[0]);
+    REQUIRE(panel != nullptr);
+    CHECK(std::fabs(panel->color.y - 0.25F) < 0.001F);
+    CHECK(std::fabs(panel->color.z - 0.25F) < 0.001F);
+    /* An unknown token takes its fallback. */
+    const Background* fallback = fixture.world.get<Background>(children[1]);
+    REQUIRE(fallback != nullptr);
+    CHECK(std::fabs(fallback->color.y - 0.5F) < 0.001F);
+}
+
+TEST_CASE("ui style: an unknown theme variable is refused", "[ui][style]")
+{
+    const char* const broken = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <StyleSheet key="theme">
+      <StyleRule selector=".panel"><Background color="var(--missing)"/></StyleRule>
+    </StyleSheet>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(broken, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    resonate::ui::StyleTable styles;
+    CHECK_FALSE(resonate::ui::buildStyles(*document, styles, diagnostics));
+    REQUIRE_FALSE(diagnostics.empty());
+}
+
+namespace
+{
+
+bool readMemoryStylesheet(void* context, std::string_view path, std::string& out_text)
+{
+    auto* sheets = static_cast<const std::vector<std::pair<std::string, std::string>>*>(context);
+    for (const auto& sheet : *sheets)
+    {
+        if (sheet.first == path)
+        {
+            out_text = sheet.second;
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("ui style: an external stylesheet imports into the document", "[ui][style]")
+{
+    const char* const sheet = R"xml(<document version="1" schemas="resonate.ui">
+  <StyleSheet key="theme">
+    <Variable token="--accent" value="0.75 0.375 0.0 1"/>
+    <StyleRule selector=".panel"><Background color="var(--accent)"/></StyleRule>
+  </StyleSheet>
+</document>)xml";
+    const char* const document_text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <StyleSheet key="theme" src="theme.rcss"/>
+    <StyleSheet key="styles">
+      <StyleRule selector=".panel"><Background color="0.125 0.125 0.125 1"/></StyleRule>
+    </StyleSheet>
+    <Panel key="panel" class="panel" x="0" y="0" width="100" height="100"/>
+  </Screen>
+</document>)xml";
+
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(document_text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    std::vector<std::pair<std::string, std::string>> sheets{{"theme.rcss", sheet}};
+    REQUIRE(resonate::ui::loadStylesheets(*document, &sheets, &readMemoryStylesheet,
+                                          diagnostics));
+    CHECK(diagnostics.empty());
+
+    resonate::ui::StyleTable styles;
+    REQUIRE(resonate::ui::buildStyles(*document, styles, diagnostics));
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document);
+    REQUIRE(root.valid());
+    const Entity panel = resonate::hierarchy::children(fixture.world, root)[0];
+    const Background* background = fixture.world.get<Background>(panel);
+    REQUIRE(background != nullptr);
+    /* The document's own rule comes after the reference and wins the order
+       tie-break at equal specificity. */
+    CHECK(std::fabs(background->color.x - 0.125F) < 0.001F);
+
+    /* A sheet the reader cannot open fails the load. */
+    const char* const absent_text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <StyleSheet key="theme" src="absent.rcss"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> missing;
+    auto broken = resonate::dom::Document::parse(absent_text, &resonate::ui::documentSchema(),
+                                                missing);
+    REQUIRE(broken != nullptr);
+    missing.clear();
+    CHECK_FALSE(resonate::ui::loadStylesheets(*broken, &sheets, &readMemoryStylesheet, missing));
+    CHECK_FALSE(missing.empty());
+}

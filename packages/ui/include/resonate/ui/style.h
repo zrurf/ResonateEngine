@@ -42,9 +42,23 @@ class StyleTable
 };
 
 /* Collects every StyleSheet subtree in the document. False with diagnostics on
-   a malformed selector or a derived component used as a declaration. */
+   a malformed selector or a derived component used as a declaration. Values
+   may reference theme variables as var(--token) or var(--token, fallback), and
+   <Variable token="..." value="..."/> nodes under any StyleSheet define them;
+   the last definition in document order wins. */
 bool buildStyles(dom::Document& document, StyleTable& out,
                  std::vector<dom::Diagnostic>& diagnostics);
+
+/* Reads one stylesheet file for loadStylesheets. */
+using StylesheetReader = bool (*)(void* context, std::string_view path, std::string& out_text);
+
+/* Expands <StyleSheet src="..."> references: each file parses as a document
+   whose StyleSheet subtrees are imported right after the reference, so rules
+   the reference's document declares after it win the order tie-break. False
+   with diagnostics when a file cannot be read or parsed. */
+[[nodiscard]] bool loadStylesheets(dom::Document& document, void* context,
+                                   StylesheetReader reader,
+                                   std::vector<dom::Diagnostic>& diagnostics);
 
 /* True for the non-visual StyleSheet/StyleRule subtree; instantiation skips it. */
 [[nodiscard]] bool isStyleNode(const dom::Document& document, dom::NodeHandle node);
