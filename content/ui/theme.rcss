@@ -32,12 +32,14 @@
     </StyleRule>
     <StyleRule selector=".field">
       <Background color="var(--field)"/>
+      <Transition duration_ms="120"/>
     </StyleRule>
     <StyleRule selector=".field:focus">
       <Background color="var(--select)"/>
     </StyleRule>
     <StyleRule selector=".tool">
       <Background color="var(--header)"/>
+      <Transition duration_ms="120"/>
     </StyleRule>
     <StyleRule selector=".tool:hover">
       <Background color="var(--hover)"/>
@@ -47,6 +49,7 @@
     </StyleRule>
     <StyleRule selector=".row">
       <Background color="var(--panel)"/>
+      <Transition duration_ms="120"/>
     </StyleRule>
     <StyleRule selector=".row:hover">
       <Background color="var(--hover)"/>

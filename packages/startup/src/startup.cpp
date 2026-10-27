@@ -45,6 +45,7 @@
 #include <resonate/ui/string_table.h>
 #include <resonate/ui/style.h>
 #include <resonate/ui/text_runtime.h>
+#include <resonate/ui/transition.h>
 #include <resonate/window/input.h>
 #include <resonate/window/session.hpp>
 
@@ -81,12 +82,14 @@ struct UiFrame
     const ResonateRenderCanvas* target = nullptr;
     const ResonateInput* input = nullptr;
     ui::TextRuntime* text = nullptr;
+    /* Animated state changes advance before layout each frame. */
+    ui::ColorTransitionSystem* transitions = nullptr;
     /* The field the platform editor mirrored on the previous frame, so a field
        that takes focus fills the editor once — a direct move between fields
        must not leave the previous field's buffer behind. */
     ecs::Entity editor_entity{};
 
-    static void invoke(void* context, ecs::World& world, ecs::CommandBuffer&, float)
+    static void invoke(void* context, ecs::World& world, ecs::CommandBuffer&, float delta_seconds)
     {
         auto* frame = static_cast<UiFrame*>(context);
         if (frame == nullptr || frame->target == nullptr || !frame->canvas.valid())
@@ -98,6 +101,10 @@ struct UiFrame
         if (width == 0U || height == 0U)
         {
             return;
+        }
+        if (frame->transitions != nullptr)
+        {
+            frame->transitions->advance(world, delta_seconds);
         }
         if (frame->input != nullptr)
         {
@@ -900,6 +907,11 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
             }
             render_system.setUiFontPaths(std::move(ui_font_paths));
             ui_text = std::make_unique<ui::TextRuntime>(std::move(ui_fonts));
+            auto ui_transitions = std::make_unique<ui::ColorTransitionSystem>();
+            if (ui_transitions->bind(world))
+            {
+                ui_frame.transitions = ui_transitions.get();
+            }
             /* Picture images: every file under content/ui/images registers
                under its file name; sorted, so the ids are deterministic. */
             auto ui_images = std::make_unique<ui::ImageRegistry>();

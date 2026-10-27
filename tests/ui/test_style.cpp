@@ -12,7 +12,9 @@
 #include <resonate/ui/document.h>
 #include <resonate/ui/document_schema.h>
 #include <resonate/ui/layout.h>
+#include <resonate/ui/input.h>
 #include <resonate/ui/style.h>
+#include <resonate/ui/transition.h>
 
 #include "resonate.ui/components.gen.h"
 
@@ -279,4 +281,53 @@ TEST_CASE("ui style: an external stylesheet imports into the document", "[ui][st
     missing.clear();
     CHECK_FALSE(resonate::ui::loadStylesheets(*broken, &sheets, &readMemoryStylesheet, missing));
     CHECK_FALSE(missing.empty());
+}
+
+TEST_CASE("ui style: a transition tweens the hover colour instead of jumping",
+          "[ui][style]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <StyleSheet key="styles">
+      <StyleRule selector=".action">
+        <Background color="0.25 0.25 0.25 1"/>
+        <Transition duration_ms="100"/>
+      </StyleRule>
+      <StyleRule selector=".action:hover">
+        <Background color="0.75 0.75 0.75 1"/>
+      </StyleRule>
+    </StyleSheet>
+    <Button key="action" class="action" x="0" y="0" width="100" height="40"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+    const Entity action = resonate::hierarchy::children(fixture.world, root)[0];
+
+    resonate::ui::ColorTransitionSystem transitions;
+    REQUIRE(transitions.bind(fixture.world));
+
+    /* Hovering does not jump: the tween starts and the colour walks. */
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, 50.0F, 20.0F, false));
+    const Background* background = fixture.world.get<Background>(action);
+    REQUIRE(background != nullptr);
+    CHECK(std::fabs(background->color.x - 0.25F) < 0.01F);
+    REQUIRE(fixture.world.get<resonate::ui::ColorTween>(action) != nullptr);
+
+    transitions.advance(fixture.world, 0.05F);
+    background = fixture.world.get<Background>(action);
+    CHECK(std::fabs(background->color.x - 0.50F) < 0.01F);
+
+    transitions.advance(fixture.world, 0.05F);
+    background = fixture.world.get<Background>(action);
+    CHECK(std::fabs(background->color.x - 0.75F) < 0.01F);
+    CHECK(fixture.world.get<resonate::ui::ColorTween>(action) == nullptr);
 }

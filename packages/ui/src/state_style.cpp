@@ -1,5 +1,6 @@
 #include "state_style_internal.h"
 
+#include <cstddef>
 #include <cstring>
 
 #include <resonate/ecs/world.h>
@@ -23,11 +24,32 @@ void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state
     }
     const std::size_t count = world.blobSize(styles->records) / sizeof(StateStyleRecord);
 
+    /* A widget carrying Transition animates its Background colour instead of
+       jumping: the target is recorded here and the tween system walks the
+       colour over, starting from what is on screen. */
+    const Transition* transition = world.get<Transition>(entity);
+    const bool animates = transition != nullptr && transition->duration_ms > 0U;
+    Vec4 tween_target{0.0F, 0.0F, 0.0F, 0.0F};
+    bool wants_tween = false;
+
     /* A field the target state overrides is written once, straight to the state
        value; the others return to their normal value. */
     const auto apply = [&](const StateStyleRecord& record)
     {
-        void* data = world.get(entity, static_cast<ecs::ComponentIndex>(record.component));
+        const auto component = static_cast<ecs::ComponentIndex>(record.component);
+        if (animates && record.size == sizeof(Vec4) && record.component != 0U)
+        {
+            void* data = world.get(entity, component);
+            const Background* background = world.get<Background>(entity);
+            if (data != nullptr && background != nullptr &&
+                record.offset == offsetof(Background, color))
+            {
+                std::memcpy(&tween_target, record.value, sizeof(Vec4));
+                wants_tween = true;
+                return;
+            }
+        }
+        void* data = world.get(entity, component);
         if (data == nullptr)
         {
             return;
@@ -38,7 +60,7 @@ void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state
             return;
         }
         std::memcpy(bytes, record.value, record.size);
-        world.markChanged(entity, static_cast<ecs::ComponentIndex>(record.component));
+        world.markChanged(entity, component);
     };
 
     for (std::size_t index = 0; index < count; ++index)
@@ -75,6 +97,33 @@ void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state
             {
                 apply(records[index]);
             }
+        }
+    }
+
+    /* The tween is attached after the record loop: attaching it moves the
+       entity to another archetype, which would invalidate nothing held here but
+       is cheaper done once. It starts from the colour on screen (a mid-tween
+       change starts from where the last one got to). */
+    if (wants_tween)
+    {
+        const Background* background = world.get<Background>(entity);
+        if (background == nullptr)
+        {
+            return;
+        }
+        const float duration = static_cast<float>(transition->duration_ms) * 0.001F;
+        ColorTween* tween = world.get<ColorTween>(entity);
+        if (tween == nullptr)
+        {
+            (void)world.add(entity, ColorTween{background->color, tween_target, 0.0F, duration});
+        }
+        else
+        {
+            tween->from = background->color;
+            tween->to = tween_target;
+            tween->elapsed = 0.0F;
+            tween->duration = duration;
+            world.markChanged<ColorTween>(entity);
         }
     }
 }

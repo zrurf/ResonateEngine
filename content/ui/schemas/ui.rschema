@@ -300,6 +300,21 @@
     <field name="hash" type="u64"/>
   </component>
 
+  <!-- Animates state changes: a widget carrying Transition tweens its
+       Background colour over `duration_ms` instead of jumping. Authored through
+       style rules like any other component. -->
+  <component name="Transition" version="1">
+    <field name="duration_ms" type="u32" default="120"/>
+  </component>
+
+  <!-- One in-flight colour tween, derived by the state machinery. -->
+  <component name="ColorTween" version="1" derived="true">
+    <field name="from" type="vec4"/>
+    <field name="to" type="vec4"/>
+    <field name="elapsed" type="f32"/>
+    <field name="duration" type="f32"/>
+  </component>
+
   <!-- State-style overrides, compiled at instantiation; a blob on the canvas. -->
   <component name="StateStyles" version="1" derived="true">
     <field name="records" type="blob"/>

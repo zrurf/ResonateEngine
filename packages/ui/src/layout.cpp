@@ -319,6 +319,8 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<Scrubber>() != ecs::kInvalidComponent &&
            world.registerComponent<WidgetKey>() != ecs::kInvalidComponent &&
            world.registerComponent<TextRuntimeRef>() != ecs::kInvalidComponent &&
+           world.registerComponent<Transition>() != ecs::kInvalidComponent &&
+           world.registerComponent<ColorTween>() != ecs::kInvalidComponent &&
            world.registerComponent<TextAtlasPage>() != ecs::kInvalidComponent &&
            world.registerComponent<DataContext>() != ecs::kInvalidComponent &&
            world.registerComponent<Bindings>() != ecs::kInvalidComponent &&
