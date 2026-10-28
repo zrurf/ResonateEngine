@@ -46,6 +46,7 @@ struct EditorState
     };
     Scrub opacity{};
     Scrub roughness{};
+    Scrub metallic{};
 
     /* The name field mirrors the selection; a user edit writes back. */
     std::string mirrored_name{};
@@ -77,7 +78,9 @@ void mirrorScrub(Entity canvas, resonate::ecs::World& world, EditorState::Scrub&
 
 /* The material pass: the opacity scrub scales every box's tint and the box
    whose tree row is selected brightens on top, so the selection is visible
-   in the viewport itself. */
+   in the viewport itself. The roughness and metallic scrubs write the
+   selected box's material; the selection seeds them, so the drag continues
+   from the object's own value. */
 void applyMaterials(EditorState& state, resonate::ecs::World& world,
                     resonate::ecs::Entity selected_row)
 {
@@ -96,7 +99,10 @@ void applyMaterials(EditorState& state, resonate::ecs::World& world,
         resonate::ecs::World* world;
         float value;
         resonate::ecs::Entity selected_box;
-    } context{&world, opacity, selected_box};
+        float roughness;
+        float metallic;
+    } context{&world, opacity, selected_box, std::clamp(state.roughness.shown, 0.0F, 1.0F),
+              std::clamp(state.metallic.shown, 0.0F, 1.0F)};
     state.boxes.forEachChunk(
         [](void* context, resonate::ecs::ChunkView view)
         {
@@ -105,9 +111,14 @@ void applyMaterials(EditorState& state, resonate::ecs::World& world,
                 resonate::ecs::column<resonate::render::Material>(view);
             for (std::uint32_t row = 0; row < view.count; ++row)
             {
-                const float value =
-                    state->value * (view.entities[row] == state->selected_box ? 2.0F : 1.0F);
+                const bool selected = view.entities[row] == state->selected_box;
+                const float value = state->value * (selected ? 2.0F : 1.0F);
                 material.data[row].tint = resonate::Vec3{value, value, value};
+                if (selected)
+                {
+                    material.data[row].roughness = state->roughness;
+                    material.data[row].metallic = state->metallic;
+                }
                 state->world->markChanged(
                     view.entities[row],
                     resonate::ecs::ComponentTraits<resonate::render::Material>::index);
@@ -243,6 +254,29 @@ Entity entityOfRow(const EditorState& state, Entity row)
     return Entity{};
 }
 
+/* The material scrubs follow the selected object: the scrubber takes the
+   value the object already carries, and the mirror rewrites its label on the
+   next tick (shown resets so the rewrite is not skipped). */
+void seedMaterial(const EditorState& state, resonate::ecs::World& world, Entity entity)
+{
+    const resonate::render::Material* material =
+        entity.valid() ? world.get<resonate::render::Material>(entity) : nullptr;
+    const float roughness = material != nullptr ? material->roughness : 0.5F;
+    const float metallic = material != nullptr ? material->metallic : 0.0F;
+    const std::pair<const EditorState::Scrub*, float> seeds[2] = {
+        {&state.roughness, roughness}, {&state.metallic, metallic}};
+    for (const auto& [scrub, value] : seeds)
+    {
+        if (resonate::ui::Scrubber* component = world.get<resonate::ui::Scrubber>(scrub->handle))
+        {
+            component->value = value;
+            (void)world.markChanged<resonate::ui::Scrubber>(scrub->handle);
+        }
+        const_cast<EditorState::Scrub*>(scrub)->shown =
+            std::numeric_limits<float>::quiet_NaN();
+    }
+}
+
 /* The selected scene row names the inspected object: the name field and the
    status line follow the selection, reshaped only when it changes. */
 void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuffer&, float)
@@ -255,8 +289,12 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     mirrorConsole(*state, world);
     mirrorScrub(state->canvas, world, state->opacity);
     mirrorScrub(state->canvas, world, state->roughness);
+    mirrorScrub(state->canvas, world, state->metallic);
     const Entity selected = resonate::ui::selectedChild(world, state->scene_list);
-    if (!std::isnan(state->opacity.shown) && state->boxes.valid())
+    /* applyMaterials reads all three scrub values, so it waits until the
+       first mirror has read them (the scrubbers answer their authored
+       defaults on the first call). */
+    if (!std::isnan(state->metallic.shown) && state->boxes.valid())
     {
         applyMaterials(*state, world, selected);
     }
@@ -317,6 +355,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         (void)resonate::ui::setText(world, state->canvas, state->name_field, name, error);
         state->mirrored_name = name;
         (void)resonate::ui::setText(world, state->canvas, state->status, "已选择 " + name, error);
+        seedMaterial(*state, world, entity);
     }
     else
     {
@@ -339,6 +378,8 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->opacity.value_label = resonate::ui::findByKey(world, canvas, "opacity-value");
     state->roughness.handle = resonate::ui::findByKey(world, canvas, "roughness-scrub");
     state->roughness.value_label = resonate::ui::findByKey(world, canvas, "roughness-value");
+    state->metallic.handle = resonate::ui::findByKey(world, canvas, "metallic-scrub");
+    state->metallic.value_label = resonate::ui::findByKey(world, canvas, "metallic-value");
     state->console = resonate::ui::findByKey(world, canvas, "console-line");
     world.setReportSink(state, &reportSink);
 
