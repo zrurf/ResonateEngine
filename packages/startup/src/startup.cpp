@@ -880,6 +880,9 @@ DisplayOptions displayOptionsFromCommandLine(const std::vector<std::string>& arg
 int run(const std::vector<std::string>& arguments, const char* default_title,
         const HostExtension& extension)
 {
+#if defined(RESONATE_PLATFORM_WINDOWS)
+    installCrashHandler();
+#endif
     Application::Config config = Application::configFromCommandLine(arguments);
     const DisplayOptions display = displayOptionsFromCommandLine(arguments);
 

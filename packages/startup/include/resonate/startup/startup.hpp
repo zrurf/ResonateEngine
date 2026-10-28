@@ -66,6 +66,14 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
 /* From the platform's own main(). */
 std::vector<std::string> commandLine(int argc, char** argv);
 
+#if defined(RESONATE_PLATFORM_WINDOWS)
+/* Installs the unhandled-exception filter: a fault writes a minidump beside
+   the executable (resonate-crash-<timestamp>.dmp) and the process ends with
+   it. RESONATE_CRASH_TEST=1 raises right after the install, which is how the
+   dump path is verified without a real fault. */
+void installCrashHandler();
+#endif
+
 #ifdef RESONATE_PLATFORM_WINDOWS
 /* The process's arguments as UTF-8, program name first, read from the OS.
  *

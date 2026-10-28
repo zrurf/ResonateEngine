@@ -7,6 +7,9 @@ target("Resonate.Startup")
     set_kind("static")
     add_includedirs("include", {public = true})
     add_files("src/**.cpp")
+    if is_plat("windows") then
+        add_syslinks("dbghelp")
+    end
 
     add_deps("Resonate.Runtime", "Resonate.Window", "Resonate.Render",
              "Resonate.Hierarchy", "Resonate.Renderer", "Resonate.Gameplay",
