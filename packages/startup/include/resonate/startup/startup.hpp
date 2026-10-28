@@ -20,6 +20,8 @@
 namespace resonate::startup
 {
 
+class CVarHost;
+
 /* The display options a command line asks for. */
 struct DisplayOptions
 {
@@ -49,6 +51,10 @@ struct HostExtension
     std::vector<EngineSystemDesc> systems;
     void (*ready)(void* context, ecs::World& world, ecs::Entity canvas) = nullptr;
     void* ready_context = nullptr;
+    /* When set, the run copies its CVar host into it after binding the
+       engine's own keys: the application reads and applies them and binds
+       more. */
+    CVarHost* cvars = nullptr;
 };
 
 /* Parses the command line, composes a windowed or an offscreen run, and returns

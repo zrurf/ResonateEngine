@@ -91,16 +91,30 @@ class RenderSystem
     /* The HDR scene target's format: "auto" picks the tier's choice (packed
        B10G11R11 on a mobile GPU, RGBA16F otherwise); "rgba16f" and
        "b10g11r11" name one explicitly. Answers false with the reason for an
-       unknown name. Call before the frame loop. */
+       unknown name. The graph rebuilds on the next frame. */
     [[nodiscard]] bool setHdrFormat(const std::string& name, std::string& out_error);
 
     /* The shadow map's extent in texels, square; zero keeps the tier's choice
-       (1024 on a mobile GPU, 2048 otherwise). Call before the frame loop. */
+       (1024 on a mobile GPU, 2048 otherwise). The graph rebuilds on the next
+       frame. */
     void setShadowSize(std::uint32_t size);
 
-    /* The scene pass's sample count (2/4/8; zero or one renders 1x). Call
-       before the frame loop: the pass and its pipeline are built from it. */
+    /* The scene pass's sample count (2/4/8; zero or one renders 1x). The graph
+       and its pipelines rebuild on the next frame. */
     void setMsaa(std::uint32_t samples);
+
+    /* The live render settings, for a console or an editor: what the run is
+       actually doing, not what the config file asked for. */
+    [[nodiscard]] float renderScale() const;
+    [[nodiscard]] float targetFrameMs() const;
+    [[nodiscard]] std::uint32_t msaa() const;
+    [[nodiscard]] std::uint32_t shadowSize() const;
+    [[nodiscard]] const std::string& hdrFormatName() const;
+    /* The post chain as the settings form it: the comma-separated chain and
+       the AA slot; bloom's threshold rides its own setting. */
+    [[nodiscard]] std::string featureChain() const;
+    [[nodiscard]] const std::string& antialiasing() const;
+    [[nodiscard]] float bloomThreshold() const;
 
     /* Registers the render components; idempotent, and a refusal (a name
        collision) answers false. */

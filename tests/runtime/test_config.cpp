@@ -304,6 +304,12 @@ TEST_CASE("settings schema: a wrong type or range is refused", "[settings]")
     store.load(config_file.path());
     CHECK_FALSE(schema.validate(store, warnings, error));
     CHECK(error.find("expected a number") != std::string::npos);
+
+    /* The single-value check a console uses shares the same contract. */
+    REQUIRE(schema.checkValue("render.width", "800", error));
+    CHECK_FALSE(schema.checkValue("render.width", "wide", error));
+    CHECK_FALSE(schema.checkValue("render.width", "9000", error));
+    CHECK_FALSE(schema.checkValue("render.undeclared", "1", error));
 }
 
 TEST_CASE("settings schema: bad declarations fail the load", "[settings]")

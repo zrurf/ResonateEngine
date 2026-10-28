@@ -99,7 +99,8 @@ target("Resonate.Tests")
              "Resonate.UI.Abi", "Resonate.PAL", "Resonate.Runtime",
              "Resonate.Core.Container", "Resonate.Core.Math", "Resonate.Core.Job",
              "Resonate.ECS", "Resonate.Gameplay", "Resonate.Hierarchy", "Resonate.UI",
-             "Resonate.Document", "Resonate.Renderer", "Resonate.Text", "Resonate.CSharp")
+             "Resonate.Document", "Resonate.Renderer", "Resonate.Text", "Resonate.CSharp",
+             "Resonate.Startup")
 
     -- The C# host test loads a managed fixture; publishing it is a build step,
     -- so a stale or missing assembly fails the build instead of a test that

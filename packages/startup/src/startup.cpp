@@ -30,6 +30,7 @@
 #include <resonate/hierarchy/system.h>
 #include <resonate/hierarchy/tree.h>
 #include <resonate/module/host.hpp>
+#include <resonate/startup/cvar.h>
 #include <resonate/dom/document.h>
 #include <resonate/render/canvas.h>
 #include <resonate/render/offscreen.hpp>
@@ -59,6 +60,127 @@ namespace resonate::startup
 {
 namespace
 {
+
+/* The CVar appliers: the schema has validated the text, so parsing here is
+   safe. The reads answer what the run is doing now, not what the config file
+   asked for. */
+std::string formatFloat(float value)
+{
+    char text[32] = {};
+    std::snprintf(text, sizeof(text), "%.2f", static_cast<double>(value));
+    return text;
+}
+
+bool applyRenderScale(void* context, const std::string& value, std::string&)
+{
+    static_cast<renderer::RenderSystem*>(context)->setRenderScale(
+        std::strtof(value.c_str(), nullptr));
+    return true;
+}
+
+std::string readRenderScale(void* context)
+{
+    return formatFloat(static_cast<const renderer::RenderSystem*>(context)->renderScale());
+}
+
+bool applyTargetFrameMs(void* context, const std::string& value, std::string&)
+{
+    static_cast<renderer::RenderSystem*>(context)->setTargetFrameMs(
+        std::strtof(value.c_str(), nullptr));
+    return true;
+}
+
+std::string readTargetFrameMs(void* context)
+{
+    return formatFloat(static_cast<const renderer::RenderSystem*>(context)->targetFrameMs());
+}
+
+bool applyMsaa(void* context, const std::string& value, std::string&)
+{
+    static_cast<renderer::RenderSystem*>(context)->setMsaa(
+        static_cast<std::uint32_t>(std::strtoul(value.c_str(), nullptr, 10)));
+    return true;
+}
+
+std::string readMsaa(void* context)
+{
+    return std::to_string(static_cast<const renderer::RenderSystem*>(context)->msaa());
+}
+
+bool applyShadowSize(void* context, const std::string& value, std::string&)
+{
+    static_cast<renderer::RenderSystem*>(context)->setShadowSize(
+        static_cast<std::uint32_t>(std::strtoul(value.c_str(), nullptr, 10)));
+    return true;
+}
+
+std::string readShadowSize(void* context)
+{
+    return std::to_string(static_cast<const renderer::RenderSystem*>(context)->shadowSize());
+}
+
+bool applyHdrFormat(void* context, const std::string& value, std::string& error)
+{
+    return static_cast<renderer::RenderSystem*>(context)->setHdrFormat(value, error);
+}
+
+std::string readHdrFormat(void* context)
+{
+    return static_cast<const renderer::RenderSystem*>(context)->hdrFormatName();
+}
+
+bool applyFeatureChain(void* context, const std::string& value, std::string& error)
+{
+    auto* render = static_cast<renderer::RenderSystem*>(context);
+    renderer::FeatureStack stack;
+    if (!renderer::parseFeatureStack(value, render->antialiasing(), stack, error))
+    {
+        return false;
+    }
+    render->setFeatures(stack);
+    return true;
+}
+
+std::string readFeatureChain(void* context)
+{
+    return static_cast<const renderer::RenderSystem*>(context)->featureChain();
+}
+
+bool applyAntialiasing(void* context, const std::string& value, std::string& error)
+{
+    auto* render = static_cast<renderer::RenderSystem*>(context);
+    renderer::FeatureStack stack;
+    if (!renderer::parseFeatureStack(render->featureChain(), value, stack, error))
+    {
+        return false;
+    }
+    render->setFeatures(stack);
+    return true;
+}
+
+std::string readAntialiasing(void* context)
+{
+    return static_cast<const renderer::RenderSystem*>(context)->antialiasing();
+}
+
+bool applyBloomThreshold(void* context, const std::string& value, std::string& error)
+{
+    auto* render = static_cast<renderer::RenderSystem*>(context);
+    renderer::FeatureStack stack;
+    if (!renderer::parseFeatureStack(render->featureChain(), render->antialiasing(), stack,
+                                     error))
+    {
+        return false;
+    }
+    stack.bloom_threshold = std::strtof(value.c_str(), nullptr);
+    render->setFeatures(stack);
+    return true;
+}
+
+std::string readBloomThreshold(void* context)
+{
+    return formatFloat(static_cast<const renderer::RenderSystem*>(context)->bloomThreshold());
+}
 
 /* The input system: one sample per frame, before anything gameplay reads the
    actions. A run without the input capability (headless) releases everything. */
@@ -916,6 +1038,27 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
     render_system.setShadowSize(
         schema.readUInt(config.settings, "resonate.render.shadow-size", 0U));
     render_system.setMsaa(schema.readUInt(config.settings, "resonate.render.msaa", 0U));
+
+    /* The run's CVars: settings keys bound to the live systems, so a console
+       command reaches the running renderer instead of only the config file.
+       The schema validates a command's value before the applier runs. */
+    CVarHost cvars;
+    cvars.setSchema(&schema);
+    cvars.bind({"resonate.render.scale", &render_system, &applyRenderScale, &readRenderScale});
+    cvars.bind({"resonate.render.target-frame-ms", &render_system, &applyTargetFrameMs,
+                &readTargetFrameMs});
+    cvars.bind({"resonate.render.msaa", &render_system, &applyMsaa, &readMsaa});
+    cvars.bind({"resonate.render.shadow-size", &render_system, &applyShadowSize, &readShadowSize});
+    cvars.bind({"resonate.render.hdr-format", &render_system, &applyHdrFormat, &readHdrFormat});
+    cvars.bind({"resonate.render.features", &render_system, &applyFeatureChain, &readFeatureChain});
+    cvars.bind({"resonate.render.antialiasing", &render_system, &applyAntialiasing,
+                &readAntialiasing});
+    cvars.bind({"resonate.render.bloom-threshold", &render_system, &applyBloomThreshold,
+                &readBloomThreshold});
+    if (extension.cvars != nullptr)
+    {
+        *extension.cvars = cvars;
+    }
 
 #if defined(RESONATE_WITH_CSHARP)
     /* An optional managed assembly: its systems register alongside the C++

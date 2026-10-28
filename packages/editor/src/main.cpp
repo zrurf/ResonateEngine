@@ -12,8 +12,10 @@
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/name.h>
 #include <resonate/hierarchy/tree.h>
+#include <resonate/startup/cvar.h>
 #include "resonate.render/components.gen.h"
 #include <resonate/ui/document.h>
+#include <resonate/ui/event.h>
 #include <resonate/ui/text_runtime.h>
 
 #include "resonate.ui/components.gen.h"
@@ -72,7 +74,16 @@ struct EditorState
        lines, flushed into the label when a new one arrives. */
     std::deque<std::string> console_lines;
     bool console_dirty = false;
+
+    /* The command line: the run button latches, the tick executes after the
+       dispatch has finished. */
+    Entity command_field{};
+    bool command_pending = false;
 };
+
+/* The run's CVars: startup copies the engine's bindings in through the host
+   extension before the frame loop starts. */
+resonate::startup::CVarHost cvar_host;
 
 /* A scrub value is mirrored into its label only when it changes. */
 void mirrorScrub(Entity canvas, resonate::ecs::World& world, EditorState::Scrub& scrub)
@@ -290,6 +301,107 @@ void seedMaterial(const EditorState& state, resonate::ecs::World& world, Entity 
     }
 }
 
+/* The console command: `set <key> <value>`, `get <key>` and `find <pattern>`
+   over the run's CVars. The answer echoes into the console's line, and a run
+   clears the field. */
+void executeCommand(EditorState& state, resonate::ecs::World& world, const std::string& line)
+{
+    const std::size_t first = line.find_first_not_of(' ');
+    if (first == std::string::npos)
+    {
+        return;
+    }
+    const std::size_t space = line.find(' ', first);
+    const std::string command = line.substr(
+        first, space == std::string::npos ? std::string::npos : space - first);
+    std::string echo;
+    std::string error;
+    if (command == "set")
+    {
+        const std::size_t key_begin = line.find_first_not_of(' ', space);
+        const std::size_t key_end = key_begin == std::string::npos
+                                        ? std::string::npos
+                                        : line.find(' ', key_begin);
+        if (key_begin == std::string::npos || key_end == std::string::npos)
+        {
+            echo = "set <key> <value>";
+        }
+        else
+        {
+            const std::string key = line.substr(key_begin, key_end - key_begin);
+            const std::size_t value_begin = line.find_first_not_of(' ', key_end);
+            const std::string value =
+                value_begin == std::string::npos ? "" : line.substr(value_begin);
+            if (cvar_host.apply(key, value, error))
+            {
+                echo = key + " = " + value;
+            }
+            else
+            {
+                echo = error;
+            }
+        }
+    }
+    else if (command == "get")
+    {
+        const std::size_t key_begin = line.find_first_not_of(' ', space);
+        if (key_begin == std::string::npos)
+        {
+            echo = "get <key>";
+        }
+        else
+        {
+            const std::string key = line.substr(key_begin);
+            std::string value;
+            echo = cvar_host.read(key, value) ? key + " = " + value : key + " is not bound";
+        }
+    }
+    else if (command == "find")
+    {
+        const std::size_t pattern_begin = line.find_first_not_of(' ', space);
+        const std::string pattern =
+            pattern_begin == std::string::npos ? "" : line.substr(pattern_begin);
+        const std::vector<std::string> keys = cvar_host.find(pattern);
+        if (keys.empty())
+        {
+            echo = "no cvar matches";
+        }
+        else
+        {
+            for (const std::string& key : keys)
+            {
+                if (!echo.empty())
+                {
+                    echo += "  |  ";
+                }
+                echo += key;
+            }
+        }
+    }
+    else
+    {
+        echo = "unknown command '" + command + "' (set/get/find)";
+    }
+    if (!echo.empty())
+    {
+        (void)resonate::ui::setText(world, state.canvas, state.console, echo, error);
+    }
+    (void)resonate::ui::setText(world, state.canvas, state.command_field, "", error);
+}
+
+/* The run button latches the click; the tick executes once the event
+   dispatch has finished (the echo reshapes the console's text). */
+bool runCommand(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+                resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->command_pending = true;
+    return true;
+}
+
 /* One axis of the position: the field shows it, a typed number writes it.
    A field that does not parse keeps its text and is not retried until the
    next edit. */
@@ -343,6 +455,11 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     if (!world.alive(state->canvas))
     {
         return;
+    }
+    if (state->command_pending)
+    {
+        state->command_pending = false;
+        executeCommand(*state, world, resonate::ui::widgetText(world, state->command_field));
     }
     mirrorConsole(*state, world);
     mirrorScrub(state->canvas, world, state->opacity);
@@ -456,6 +573,14 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->position_x.handle = resonate::ui::findByKey(world, canvas, "position-x");
     state->position_y.handle = resonate::ui::findByKey(world, canvas, "position-y");
     state->position_z.handle = resonate::ui::findByKey(world, canvas, "position-z");
+    state->command_field = resonate::ui::findByKey(world, canvas, "command-field");
+    const resonate::ecs::Entity run_button = resonate::ui::findByKey(world, canvas, "command-run");
+    if (run_button.valid())
+    {
+        world.add(run_button,
+                  resonate::ui::Listener{&runCommand, state,
+                                         resonate::ui::eventBit(resonate::ui::EventKind::Click)});
+    }
     state->console = resonate::ui::findByKey(world, canvas, "console-line");
     world.setReportSink(state, &reportSink);
 
@@ -518,6 +643,7 @@ int runEditor(const std::vector<std::string>& arguments)
 
     EditorState state;
     resonate::startup::HostExtension extension;
+    extension.cvars = &cvar_host;
     extension.systems.push_back(resonate::EngineSystemDesc{"editor.selection",
                                                            RESONATE_STAGE_LATE_UPDATE, &tick,
                                                            &state});

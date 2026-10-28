@@ -2931,6 +2931,8 @@ bool RenderSystem::setHdrFormat(const std::string& name, std::string& out_error)
         return false;
     }
     impl_->hdr_format_name = name;
+    /* The graph is built from the format: the next frame recompiles it. */
+    impl_->initialized = false;
     out_error.clear();
     return true;
 }
@@ -2938,11 +2940,65 @@ bool RenderSystem::setHdrFormat(const std::string& name, std::string& out_error)
 void RenderSystem::setShadowSize(std::uint32_t size)
 {
     impl_->shadow_size = size;
+    /* The shadow maps are graph resources: the next frame recompiles it. */
+    impl_->initialized = false;
 }
 
 void RenderSystem::setMsaa(std::uint32_t samples)
 {
     impl_->msaa = samples;
+    /* The scene pass and its pipeline carry the sample count: the next frame
+       recompiles both. */
+    impl_->initialized = false;
+}
+
+float RenderSystem::renderScale() const
+{
+    return impl_->render_scale;
+}
+
+float RenderSystem::targetFrameMs() const
+{
+    return impl_->target_frame_ms;
+}
+
+std::uint32_t RenderSystem::msaa() const
+{
+    return impl_->msaa;
+}
+
+std::uint32_t RenderSystem::shadowSize() const
+{
+    return impl_->shadow_size;
+}
+
+const std::string& RenderSystem::hdrFormatName() const
+{
+    return impl_->hdr_format_name;
+}
+
+std::string RenderSystem::featureChain() const
+{
+    std::string chain;
+    for (const std::string& entry : impl_->features.chain)
+    {
+        if (!chain.empty())
+        {
+            chain += ", ";
+        }
+        chain += entry;
+    }
+    return chain;
+}
+
+const std::string& RenderSystem::antialiasing() const
+{
+    return impl_->features.antialiasing;
+}
+
+float RenderSystem::bloomThreshold() const
+{
+    return impl_->features.bloom_threshold;
 }
 
 void RenderSystem::setUiImageTexture(std::uint32_t id, std::string path)

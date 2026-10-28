@@ -426,6 +426,32 @@ bool SettingsSchema::validate(const ConfigStore& store, std::vector<std::string>
     return !visit.failed;
 }
 
+bool SettingsSchema::checkValue(const char* key, const std::string& text,
+                                std::string& error) const
+{
+    error.clear();
+    const SettingDecl* decl = find(key);
+    if (decl == nullptr)
+    {
+        error = std::string(key) + " is not a declared setting";
+        return false;
+    }
+    std::string why;
+    if (!validValue(*decl, text, why))
+    {
+        error = std::string(key) + ": " + why;
+        if (decl->type == SettingType::Enum)
+        {
+            for (const std::string& value : decl->values)
+            {
+                error += " " + value;
+            }
+        }
+        return false;
+    }
+    return true;
+}
+
 std::string SettingsSchema::valueText(const ConfigStore& store, const SettingDecl& decl) const
 {
     std::string section;

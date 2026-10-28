@@ -68,6 +68,13 @@ class SettingsSchema final
 
     [[nodiscard]] const SettingDecl* find(const char* key) const noexcept;
 
+    /* Checks one value against its declaration: the type parses and a bounded
+       or enum declaration accepts it. False names the reason in `error`; an
+       unknown key does the same. The per-value half of validate(), for a
+       console or an editor that applies a single change. */
+    [[nodiscard]] bool checkValue(const char* key, const std::string& text,
+                                  std::string& error) const;
+
     /* Checks the store's scalar keys against the declarations. Each unknown key
        is appended to `warnings`; the first bad value stops the check and is
        reported through `error`. Arrays are not settings and are not visited. */
