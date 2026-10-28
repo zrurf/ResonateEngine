@@ -459,6 +459,10 @@ struct RenderSystem::Impl
     std::uint32_t shadow_size = 0U;
     /* The scene pass's sample count; zero renders 1x (no MSAA). */
     std::uint32_t msaa = 0U;
+    /* Diagnostic: when positive, force a graph rebuild every Nth frame, which
+       retires every graph image and exercises the framebuffer cache. */
+    std::uint32_t rebuild_stress = 0U;
+    std::uint64_t rendered_frames = 0U;
     float render_scale = 1.0F;
     std::uint32_t render_width = 0U;
     std::uint32_t render_height = 0U;
@@ -655,6 +659,16 @@ void RenderSystem::Impl::readRenderScaleOverrides()
     if (const char* budget = std::getenv("RESONATE_TARGET_FRAME_MS"))
     {
         target_frame_ms = std::fmax(0.0F, static_cast<float>(std::atof(budget)));
+    }
+    /* Same environment the tests use; Android reaches it through the host's
+       property mapping, where no settings file travels with the package. */
+    if (const char* msaa_override = std::getenv("RESONATE_MSAA"))
+    {
+        msaa = static_cast<std::uint32_t>(std::max(0, std::atoi(msaa_override)));
+    }
+    if (const char* stress = std::getenv("RESONATE_REBUILD_STRESS"))
+    {
+        rebuild_stress = static_cast<std::uint32_t>(std::max(0, std::atoi(stress)));
     }
 }
 
@@ -3249,6 +3263,13 @@ bool RenderSystem::Impl::prepareTargets(uint32_t width, uint32_t height)
 
 void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
 {
+    /* Diagnostic rebuild stress: drop the plan so prepareTargets drains and
+       re-initializes, retiring every graph image at the same shape. */
+    ++rendered_frames;
+    if (rebuild_stress != 0U && rendered_frames % rebuild_stress == 0U)
+    {
+        initialized = false;
+    }
     /* Read before the first `initialize`: the graph is built from the scale, and
        reading it later would build at full size and never revisit it. */
     if (!prepareTargets(snapshot.target_width, snapshot.target_height))

@@ -282,6 +282,8 @@ void applyDebugProperties()
         {"debug.resonate.pass_sentinels", "RESONATE_PASS_SENTINELS"},
         {"debug.resonate.tgfx_disable", "RESONATE_TGFX_DISABLE"},
         {"debug.resonate.tgfx_sync", "RESONATE_TGFX_SYNC"},
+        {"debug.resonate.msaa", "RESONATE_MSAA", true},
+        {"debug.resonate.rebuild_stress", "RESONATE_REBUILD_STRESS", true},
     };
     for (const Property& entry : kProperties)
     {
