@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <resonate/module/stage.h>
@@ -565,6 +566,38 @@ TEST_CASE("a world-aware system is called with the handles it was registered wit
     REQUIRE(runner.seen_world == &world);
     REQUIRE(runner.seen_commands == &commands);
     REQUIRE(runner.seen_delta == 0.016F);
+
+    resonate_scheduler_destroy(scheduler);
+}
+
+TEST_CASE("a world-aware system runs on the stage's thread", "[module][scheduler]")
+{
+    resonate::test::FakeHost fake;
+    ResonateScheduler* scheduler = nullptr;
+    REQUIRE(resonate_scheduler_create(&scheduler, fake.api()) == RESONATE_OK);
+
+    struct ThreadWorker
+    {
+        std::thread::id caller{};
+        std::thread::id seen{};
+
+        static void run(void* context, ResonateWorld*, ResonateCommands*, float)
+        {
+            static_cast<ThreadWorker*>(context)->seen = std::this_thread::get_id();
+        }
+    };
+    ThreadWorker worker;
+    worker.caller = std::this_thread::get_id();
+    ResonateSystemDesc desc =
+        describeRun(nullptr, &worker, RESONATE_STAGE_UPDATE, "thread", TRANSFORMS, 0);
+    desc.run_world = &ThreadWorker::run;
+    REQUIRE(resonate_scheduler_add_system(scheduler, &desc) == RESONATE_OK);
+
+    resonate_scheduler_run_frame(scheduler, 0.016F);
+
+    /* The world-aware form records into the world's slot table and hosts reach
+       platform APIs from it; it must not land on a pool worker. */
+    REQUIRE(worker.seen == worker.caller);
 
     resonate_scheduler_destroy(scheduler);
 }

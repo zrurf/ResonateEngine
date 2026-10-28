@@ -36,6 +36,8 @@ struct ScheduledRun
     ResonateCommands* commands;
     float delta_seconds;
     resonate::JobIndex handle;
+    /* False for a world-aware system, which the stage runs inline. */
+    bool submitted = false;
 };
 
 void runScheduled(void* context)
@@ -356,6 +358,7 @@ void resonate_scheduler_run_stage(ResonateScheduler* scheduler, ResonateStage st
         run.world = system.desc.world;
         run.commands = system.desc.commands;
         run.delta_seconds = delta_seconds;
+        run.submitted = false;
 
         if (scheduler->jobs == nullptr)
         {
@@ -363,18 +366,36 @@ void resonate_scheduler_run_stage(ResonateScheduler* scheduler, ResonateStage st
             continue;
         }
 
-        /* A system that declares no group claims nothing to share, an exclusive
-           one must not share the stage with anything, and a world-aware one
-           records into the world's slot table, which takes one thread: all three
-           are ordered against every other system rather than assumed
+        /* A world-aware system runs on the stage's thread: it records into the
+           world's slot table and a host may reach main-thread-only platform
+           APIs from it. It is ordered against every other system anyway, so
+           drain the earlier work first and run it inline. */
+        if (system.desc.run_world != nullptr)
+        {
+            for (uint32_t prior = 0; prior < scheduled; ++prior)
+            {
+                if (scheduler->runs[prior].submitted)
+                {
+                    scheduler->jobs->wait(scheduler->runs[prior].handle);
+                }
+            }
+            runScheduled(&run);
+            ++scheduled;
+            continue;
+        }
+
+        /* A system that declares no group claims nothing to share, and an
+           exclusive one must not share the stage with anything: both are
+           ordered against every other system rather than assumed
            independent. */
-        const bool ordered = (system.desc.reads | system.desc.writes) == 0U ||
-                             system.desc.exclusive_stage != 0 || system.desc.run_world != nullptr;
+        const bool ordered =
+            (system.desc.reads | system.desc.writes) == 0U || system.desc.exclusive_stage != 0;
         const ResonateResourceGroup writes = ordered ? ALL_GROUPS : system.desc.writes;
 
         run.handle =
             scheduler->jobs->submitSingle(&runScheduled, &run, system.desc.reads, writes,
                                           resonate::JobPriorityHigh, resonate::JobAffinityLatency);
+        run.submitted = true;
         ++scheduled;
     }
 
@@ -389,7 +410,10 @@ void resonate_scheduler_run_stage(ResonateScheduler* scheduler, ResonateStage st
        participates, so the calling thread runs queued work instead of idling. */
     for (uint32_t index = 0; index < scheduled; ++index)
     {
-        scheduler->jobs->wait(scheduler->runs[index].handle);
+        if (scheduler->runs[index].submitted)
+        {
+            scheduler->jobs->wait(scheduler->runs[index].handle);
+        }
     }
 }
 
