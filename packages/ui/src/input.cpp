@@ -239,6 +239,12 @@ void collectFocusable(ecs::World& world, ecs::Entity entity, std::vector<ecs::En
     }
     for (const ecs::Entity child : hierarchy::children(world, entity))
     {
+        /* Hidden pages and closed popups are not painted or hit-tested, so
+           focus must not land in them either. */
+        if (!detail::childShown(world, entity, child))
+        {
+            continue;
+        }
         collectFocusable(world, child, out, depth + 1U);
     }
 }

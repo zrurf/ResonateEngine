@@ -557,3 +557,51 @@ TEST_CASE("ui input: a state rule on a later field restores and applies",
     REQUIRE(resonate::ui::updateInput(world, root, 250.0F, 250.0F, false));
     CHECK(near(text->text_color.x, 0.2F));
 }
+
+/* Tab moves through what the pointer could reach: a TabPage that is not the
+   active one is not painted, so its fields must not take focus. */
+TEST_CASE("ui input: tab focus skips hidden tab pages", "[ui][input][focus]")
+{
+    const char* const document_text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Panel key="tabs" x="0" y="0" width="200" height="200">
+      <Tabs/>
+      <Panel key="page-0" x="0" y="0" width="200" height="100">
+        <TabPage index="0"/>
+        <Label key="field-0" text="a" width="100" height="30">
+          <Input/>
+        </Label>
+      </Panel>
+      <Panel key="page-1" x="0" y="100" width="200" height="100">
+        <TabPage index="1"/>
+        <Label key="field-1" text="b" width="100" height="30">
+          <Input/>
+        </Label>
+      </Panel>
+    </Panel>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(document_text,
+                                                   &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 200.0F));
+
+    const Entity visible_field = resonate::ui::findByKey(world, root, "field-0");
+    REQUIRE(visible_field.valid());
+    REQUIRE(resonate::ui::focusNext(world, root, false));
+    const PointerState* pointer = world.get<PointerState>(root);
+    REQUIRE(pointer != nullptr);
+    CHECK(pointer->focused == visible_field);
+
+    /* Only one focusable widget is shown, so the next Tab wraps back to it. */
+    REQUIRE(resonate::ui::focusNext(world, root, false));
+    CHECK(pointer->focused == visible_field);
+}
