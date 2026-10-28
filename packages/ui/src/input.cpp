@@ -325,7 +325,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
     move.kind = EventKind::PointerMove;
     move.x = x;
     move.y = y;
-    dispatchEvent(world, canvas, move, routing);
+    (void)dispatchEvent(world, canvas, move, routing);
 
     bool pressed_this_sample = false;
     if (down && !pointer->down)
@@ -333,7 +333,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         pressed_this_sample = true;
         Event pressed = move;
         pressed.kind = EventKind::PointerDown;
-        dispatchEvent(world, canvas, pressed);
+        (void)dispatchEvent(world, canvas, pressed);
         if (pointer->focused != hover && pointer->focused.valid() &&
             world.alive(pointer->focused))
         {
@@ -437,7 +437,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         const ecs::Entity press = pointer->press;
         Event released = move;
         released.kind = EventKind::PointerUp;
-        dispatchEvent(world, canvas, released, routing);
+        (void)dispatchEvent(world, canvas, released, routing);
         if (pointer->capture.valid())
         {
             pointer->capture = ecs::Entity{};
@@ -457,7 +457,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                 }
                 Event clicked = move;
                 clicked.kind = EventKind::Click;
-                dispatchEvent(world, canvas, clicked, routing);
+                (void)dispatchEvent(world, canvas, clicked, routing);
             }
             setState(world, press, press == hover
                                       ? WidgetState::Hovered
