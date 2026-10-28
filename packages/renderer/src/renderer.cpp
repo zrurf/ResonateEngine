@@ -518,6 +518,7 @@ struct RenderSystem::Impl
     std::uint32_t font_atlas_slot = 0U;
     std::uint32_t font_atlas_revision = 0U;
     bool albedo_ready = false;
+    bool albedo_attempted = false;
     bool font_atlas_ready = false;
     /* True when this frame's text came from tgfx; the glyph quads are then
        skipped and the renderer appends the text overlay quad. */
@@ -1895,12 +1896,27 @@ bool RenderSystem::Impl::createAlbedoTextures(const FrameSnapshot& snapshot)
     }
     white_texture_slot = slotOf(white_texture);
     checker_texture_slot = slotOf(checker_texture);
+    /* The atlas is rebuilt here for the same reason as the albedo images: the
+       copy updateFontAtlas made before the first present is the one this
+       driver ignores. */
     if (snapshot.text_atlas != nullptr && snapshot.text_atlas->revision != 0U)
     {
         const UiAtlas& atlas = *snapshot.text_atlas;
         if (atlas.width == 0U || atlas.height == 0U ||
-            atlas.pixels.size() != static_cast<std::size_t>(atlas.width) * atlas.height * 4U ||
-            !createSampledTexture(*device, atlas.width, atlas.height,
+            atlas.pixels.size() != static_cast<std::size_t>(atlas.width) * atlas.height * 4U)
+        {
+            complain("the font atlas page is malformed");
+            return false;
+        }
+        /* The pre-first-present copy updateFontAtlas made is replaced, not
+           leaked; the frame is idle here. */
+        if (font_atlas.value != 0U)
+        {
+            device->destroy_image(device->self, font_atlas);
+            font_atlas = ResonateRenderImage{};
+        }
+        font_atlas_ready = false;
+        if (!createSampledTexture(*device, atlas.width, atlas.height,
                                   RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, atlas.pixels, font_atlas,
                                   true))
         {
@@ -2450,6 +2466,15 @@ void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
     pass.viewport_height = render_height;
     if (device.begin_pass(device.self, &pass) != RESONATE_OK)
     {
+        return;
+    }
+    /* Until the albedo images exist there is no texture slot the scene may
+       sample: the table's free entries are not the white dummy once the graph
+       has taken them, and an unready slot would sample a render target. The
+       pass still clears, so the first frame shows the sky. */
+    if (!albedo_ready)
+    {
+        device.end_pass(device.self);
         return;
     }
     if (device.bind_pipeline(device.self, scene_pipeline) != RESONATE_OK)
@@ -3259,11 +3284,15 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
     {
         complain(error.c_str());
     }
-    if (!albedo_ready)
+    if (!albedo_ready && !albedo_attempted)
     {
-        albedo_ready = true;
+        /* Created after the first frame on purpose: the Mali driver samples an
+           image uploaded before the first present as a constant. A failed
+           creation leaves the scene skipped rather than sampling the frame. */
+        albedo_attempted = true;
         device->wait_idle(device->self);
-        if (!createAlbedoTextures(snapshot))
+        albedo_ready = createAlbedoTextures(snapshot);
+        if (!albedo_ready)
         {
             complain("albedo textures unavailable");
         }

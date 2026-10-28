@@ -84,7 +84,7 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
     const auto cube = world.create();
     world.add(cube, resonate::hierarchy::WorldTransform{translation(0.0F, 2.5F, 0.0F)});
     world.add(cube, resonate::render::MeshInstance{1U, Vec3{1.0F, 1.0F, 1.0F}});
-    world.add(cube, resonate::render::Material{1U, Vec3{1.0F, 1.0F, 1.0F}});
+    world.add(cube, resonate::render::Material{0U, Vec3{1.0F, 1.0F, 1.0F}});
 
     const auto sun = world.create();
     world.add(sun, resonate::render::DirectionalLight{Vec3{0.0F, 0.0F, 1.0F},
@@ -136,6 +136,7 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
     for (int frame = 0; frame < 4; ++frame)
     {
         render_system.run(world);
+        render_system.waitIdle();
     }
     /* The render thread owns the device calls; the readback is a main-thread
        call, so the handoff has to be drained first. */
