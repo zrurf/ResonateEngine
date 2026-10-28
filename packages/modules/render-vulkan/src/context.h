@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <tuple>
 #include <vector>
 
 struct VmaAllocator_T;
@@ -409,8 +410,23 @@ class Context
 
     /* Keyed by the full color and depth handles (generations included — a
        recreated image must not find the framebuffer of its predecessor) plus
-       the pass identity the framebuffer was built against. */
-    std::map<std::pair<uint64_t, uint64_t>, VkFramebuffer> framebuffer_cache_;
+       the pass identity the framebuffer was built against. A canvas entry
+       attaches no image handle: its views belong to the swapchain and the MSAA
+       cache, and `source` keeps it out of the graph key space. */
+    struct FramebufferKey
+    {
+        uint64_t color = 0;
+        uint64_t depth = 0;
+        uint64_t identity = 0;
+        uint32_t source = 0; /* 0 = graph images, 1 = swapchain canvas */
+
+        [[nodiscard]] bool operator<(const FramebufferKey& other) const
+        {
+            return std::tie(source, color, depth, identity) <
+                   std::tie(other.source, other.color, other.depth, other.identity);
+        }
+    };
+    std::map<FramebufferKey, VkFramebuffer> framebuffer_cache_;
 
     /* The resource tables: set 0, bindings 0-4 = kStorageTableSize storage
        buffers each, binding 5 = kImageTableSize combined image samplers, all
@@ -441,6 +457,9 @@ class Context
     VkDescriptorSetLayout table_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool table_pool_ = VK_NULL_HANDLE;
     VkDescriptorSet table_set_ = VK_NULL_HANDLE;
+    /* The buffer bound at the frame block, so a second uniform buffer does not
+       take the binding over. */
+    VkBuffer frame_block_buffer_ = VK_NULL_HANDLE;
     VkBuffer table_dummy_ = VK_NULL_HANDLE;
     VmaAllocation_T* table_dummy_allocation_ = nullptr;
     VkSampler table_sampler_linear_ = VK_NULL_HANDLE;

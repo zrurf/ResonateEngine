@@ -2486,6 +2486,25 @@ Context::MsaaTarget& Context::ensureMsaa(uint32_t width, uint32_t height,
 
 void Context::discardMsaa()
 {
+    /* Canvas framebuffers attach the transient views this call is about to
+       destroy. They go through the graveyard like any other retired object, so
+       a frame still holding one finishes first. */
+    {
+        Frame& frame = frames_[frame_ % kFramesInFlight];
+        for (auto entry = framebuffer_cache_.begin(); entry != framebuffer_cache_.end();)
+        {
+            if (entry->first.source != 0U)
+            {
+                frame.graveyard.push_back(
+                    Retired{kRetiredFramebuffer, static_cast<void*>(entry->second), nullptr});
+                entry = framebuffer_cache_.erase(entry);
+            }
+            else
+            {
+                ++entry;
+            }
+        }
+    }
     for (auto& entry : msaa_cache_)
     {
         MsaaTarget& target = entry.second;
@@ -2564,7 +2583,7 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
                                       (static_cast<uint64_t>(extent_.width) << 16) |
                                       (static_cast<uint64_t>(extent_.height) << 32) |
                                       (static_cast<uint64_t>(image_index_) << 48);
-            const std::pair<uint64_t, uint64_t> key{0x01ULL << 62, identity};
+            const FramebufferKey key{0U, 0U, identity, 1U};
             const auto found = framebuffer_cache_.find(key);
             if (found != framebuffer_cache_.end())
             {
@@ -2615,8 +2634,7 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
         {
             return RESONATE_E_INTERNAL;
         }
-        const std::pair<uint64_t, uint64_t> key{static_cast<uint64_t>(desc.depth.value) << 32,
-                                                pass_identity};
+        const FramebufferKey key{0U, desc.depth.value, pass_identity, 0U};
         const auto found = framebuffer_cache_.find(key);
         if (found != framebuffer_cache_.end())
         {
@@ -2692,9 +2710,7 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
         const uint64_t identity =
             pass_identity | (static_cast<uint64_t>(image->width) << 16) |
             (static_cast<uint64_t>(image->height) << 32);
-        const std::pair<uint64_t, uint64_t> key{
-            static_cast<uint64_t>(desc.color.value) | (static_cast<uint64_t>(desc.depth.value) << 32),
-            identity};
+        const FramebufferKey key{desc.color.value, desc.depth.value, identity, 0U};
         const auto found = framebuffer_cache_.find(key);
         if (found != framebuffer_cache_.end())
         {
