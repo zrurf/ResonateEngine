@@ -94,6 +94,8 @@ struct UiFrame
     ecs::Entity blink_focus{};
     /* The run's clock as the input system sees it: it times double clicks. */
     double input_clock = 0.0;
+    /* The pointer shape last handed to the platform. */
+    ResonateCursorShape cursor = RESONATE_CURSOR_DEFAULT;
 
     static void invoke(void* context, ecs::World& world, ecs::CommandBuffer&, float delta_seconds)
     {
@@ -124,6 +126,37 @@ struct UiFrame
                                  frame->input_clock))
             {
                 return;
+            }
+            /* The pointer's shape follows the widget under it and the gesture
+               in flight; the platform is told only when it changes. */
+            if (frame->input->set_cursor != nullptr)
+            {
+                ResonateCursorShape shape = RESONATE_CURSOR_DEFAULT;
+                switch (ui::cursorShape(world, frame->canvas))
+                {
+                    case ui::CursorShape::Pointer:
+                        shape = RESONATE_CURSOR_POINTER;
+                        break;
+                    case ui::CursorShape::Text:
+                        shape = RESONATE_CURSOR_TEXT;
+                        break;
+                    case ui::CursorShape::ResizeHorizontal:
+                        shape = RESONATE_CURSOR_RESIZE_H;
+                        break;
+                    case ui::CursorShape::ResizeVertical:
+                        shape = RESONATE_CURSOR_RESIZE_V;
+                        break;
+                    case ui::CursorShape::NotAllowed:
+                        shape = RESONATE_CURSOR_NOT_ALLOWED;
+                        break;
+                    case ui::CursorShape::Default:
+                        break;
+                }
+                if (shape != frame->cursor)
+                {
+                    frame->cursor = shape;
+                    frame->input->set_cursor(frame->input->self, shape);
+                }
             }
             if (frame->input->pointer_wheel != nullptr)
             {

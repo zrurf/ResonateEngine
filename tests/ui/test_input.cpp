@@ -453,3 +453,62 @@ TEST_CASE("ui input: dragging the scrollbar thumb moves the scroll", "[ui][input
     REQUIRE(first_row != nullptr);
     CHECK_FALSE(first_row->activated);
 }
+
+TEST_CASE("ui input: the cursor follows the widget and the gesture", "[ui][input]")
+{
+    const char* const document_text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Panel key="panel" x="0" y="0" width="200" height="200"
+           direction="Column" align="Start">
+      <Button key="plain" width="100" height="30"/>
+      <Button key="off" width="100" height="30">
+        <Input focusable="false"/>
+      </Button>
+      <Label key="field" width="100" height="30" text="abc" font_size="12">
+        <Input/>
+      </Label>
+      <Label key="slider" width="100" height="30">
+        <Input/>
+        <Slider min="0" max="10" value="5"/>
+      </Label>
+    </Panel>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(document_text,
+                                                   &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 200.0F));
+
+    /* Nothing under the pointer: the arrow. */
+    REQUIRE(resonate::ui::updateInput(world, root, 250.0F, 250.0F, false));
+    CHECK(resonate::ui::cursorShape(world, root) == resonate::ui::CursorShape::Default);
+
+    /* A plain button: the pointing hand. */
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 15.0F, false));
+    CHECK(resonate::ui::cursorShape(world, root) == resonate::ui::CursorShape::Pointer);
+
+    /* A non-focusable widget shields the pointer without hovering, so the
+       shape falls back to the arrow. */
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 45.0F, false));
+    CHECK(resonate::ui::cursorShape(world, root) == resonate::ui::CursorShape::Default);
+
+    /* A text field: the I-beam. */
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 75.0F, false));
+    CHECK(resonate::ui::cursorShape(world, root) == resonate::ui::CursorShape::Text);
+
+    /* A slider being dragged: the horizontal resize, even though the pointer
+       now sits away from the track. */
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 105.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 55.0F, 105.0F, true));
+    CHECK(resonate::ui::cursorShape(world, root) == resonate::ui::CursorShape::ResizeHorizontal);
+    REQUIRE(resonate::ui::updateInput(world, root, 55.0F, 105.0F, false));
+    CHECK(resonate::ui::cursorShape(world, root) == resonate::ui::CursorShape::Pointer);
+}

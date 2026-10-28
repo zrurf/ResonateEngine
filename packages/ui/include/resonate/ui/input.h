@@ -67,6 +67,23 @@ struct CaretBlink
 [[nodiscard]] bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool down,
                                double seconds = 0.0);
 
+/* The pointer's shape for this frame: the gesture in flight wins (a slider,
+   splitter or scrubber is horizontal, a scrolled thumb vertical, a text
+   selection an I-beam), then the widget under the pointer (a text field an
+   I-beam, a disabled widget not-allowed, anything else clickable a pointing
+   hand). */
+enum class CursorShape : std::uint8_t
+{
+    Default = 0,
+    Pointer,
+    Text,
+    ResizeHorizontal,
+    ResizeVertical,
+    NotAllowed,
+};
+
+[[nodiscard]] CursorShape cursorShape(ecs::World& world, ecs::Entity canvas);
+
 /* Moves focus to the next (or previous) focusable Input in tree order and
    wraps. Non-focusable and disabled widgets are skipped; a canvas with no
    PointerState or no focusable widget answers false. */

@@ -65,6 +65,48 @@ uint32_t getClipboard(void* self, char* out_text, uint32_t capacity)
     return copied;
 }
 
+void setCursor(void* self, ResonateCursorShape shape)
+{
+    auto* state = static_cast<WindowState*>(self);
+    if (state == nullptr)
+    {
+        return;
+    }
+    if (shape > RESONATE_CURSOR_NOT_ALLOWED)
+    {
+        shape = RESONATE_CURSOR_DEFAULT;
+    }
+    if (state->cursors[shape] == nullptr)
+    {
+        SDL_SystemCursor system = SDL_SYSTEM_CURSOR_DEFAULT;
+        switch (shape)
+        {
+            case RESONATE_CURSOR_POINTER:
+                system = SDL_SYSTEM_CURSOR_POINTER;
+                break;
+            case RESONATE_CURSOR_TEXT:
+                system = SDL_SYSTEM_CURSOR_TEXT;
+                break;
+            case RESONATE_CURSOR_RESIZE_H:
+                system = SDL_SYSTEM_CURSOR_EW_RESIZE;
+                break;
+            case RESONATE_CURSOR_RESIZE_V:
+                system = SDL_SYSTEM_CURSOR_NS_RESIZE;
+                break;
+            case RESONATE_CURSOR_NOT_ALLOWED:
+                system = SDL_SYSTEM_CURSOR_NOT_ALLOWED;
+                break;
+            default:
+                break;
+        }
+        state->cursors[shape] = SDL_CreateSystemCursor(system);
+    }
+    if (state->cursors[shape] != nullptr)
+    {
+        (void)SDL_SetCursor(state->cursors[shape]);
+    }
+}
+
 void clearPresses(void* self)
 {
     auto* state = static_cast<WindowState*>(self);
@@ -271,6 +313,7 @@ ResonateInput g_input = {
     &clearPresses,
     &setClipboard,
     &getClipboard,
+    &setCursor,
 };
 
 } // namespace

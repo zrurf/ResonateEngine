@@ -39,6 +39,9 @@ struct WindowState
     uint32_t height = 0;
     InputState input;
     SDL_Gamepad* gamepads[kMaxGamepads] = {};
+    /* The system cursors, created on the first request and destroyed with the
+       window. */
+    SDL_Cursor* cursors[RESONATE_CURSOR_NOT_ALLOWED + 1] = {};
     SDL_JoystickID gamepad_ids[kMaxGamepads] = {};
     int gamepad_count = 0;
 };

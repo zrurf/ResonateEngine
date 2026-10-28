@@ -91,6 +91,15 @@ void destroy(void* self)
     state->gamepad_count = 0;
     SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
 
+    for (SDL_Cursor*& cursor : state->cursors)
+    {
+        if (cursor != nullptr)
+        {
+            SDL_DestroyCursor(cursor);
+            cursor = nullptr;
+        }
+    }
+
     SDL_DestroyWindow(state->handle);
     state->handle = nullptr;
     state->width = 0;

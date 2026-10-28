@@ -557,6 +557,46 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
     return true;
 }
 
+CursorShape cursorShape(ecs::World& world, ecs::Entity canvas)
+{
+    /* A gesture owns the pointer, so it owns the cursor: the widget under the
+       pointer is not what the drag is moving. */
+    if (const DragState* drag = world.get<DragState>(canvas))
+    {
+        if (drag->slider.valid() || drag->scrubber.valid() || drag->splitter.valid())
+        {
+            return CursorShape::ResizeHorizontal;
+        }
+        if (drag->scroll_thumb.valid())
+        {
+            return CursorShape::ResizeVertical;
+        }
+        if (drag->text_field.valid())
+        {
+            return CursorShape::Text;
+        }
+    }
+    const PointerState* pointer = world.get<PointerState>(canvas);
+    if (pointer == nullptr || !pointer->hover.valid() || !world.alive(pointer->hover))
+    {
+        return CursorShape::Default;
+    }
+    const ecs::Entity hover = pointer->hover;
+    if (isTextField(world, hover))
+    {
+        return CursorShape::Text;
+    }
+    if (const Input* input = world.get<Input>(hover))
+    {
+        if (!input->focusable || input->state == WidgetState::Disabled)
+        {
+            return CursorShape::NotAllowed;
+        }
+        return CursorShape::Pointer;
+    }
+    return CursorShape::Default;
+}
+
 bool focusNext(ecs::World& world, ecs::Entity canvas, bool backwards)
 {
     PointerState* pointer = world.get<PointerState>(canvas);

@@ -291,6 +291,18 @@ typedef enum ResonateKey : uint16_t
     RESONATE_KEY_COUNT = 512
 } ResonateKey;
 
+/* The pointer's shape. A windowed backend shows it; a touch platform has no
+   cursor and ignores it. */
+typedef enum ResonateCursorShape : uint8_t
+{
+    RESONATE_CURSOR_DEFAULT = 0, /* an arrow */
+    RESONATE_CURSOR_POINTER,     /* a pointing hand: something clickable */
+    RESONATE_CURSOR_TEXT,        /* an I-beam: a text field */
+    RESONATE_CURSOR_RESIZE_H,    /* a horizontal double arrow: a horizontal drag */
+    RESONATE_CURSOR_RESIZE_V,    /* a vertical double arrow: a vertical drag */
+    RESONATE_CURSOR_NOT_ALLOWED, /* a disabled widget */
+} ResonateCursorShape;
+
 typedef enum ResonateMouseButton : uint8_t
 {
     RESONATE_MOUSE_LEFT = 0,
@@ -417,6 +429,11 @@ typedef struct ResonateInput
        answers the bytes written, 0 when the clipboard holds nothing readable.
        A provider without this answers 0. */
     uint32_t (*get_clipboard)(void* self, char* out_text, uint32_t capacity);
+
+    /* Tail: the pointer's shape. The UI layer decides it per frame from the
+       widget under the pointer and the gesture in flight; the host forwards
+       it. A provider without this keeps its platform cursor. */
+    void (*set_cursor)(void* self, ResonateCursorShape shape);
 } ResonateInput;
 
 #ifdef __cplusplus
