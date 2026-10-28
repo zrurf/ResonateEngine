@@ -179,6 +179,10 @@ int Application::run(const Config& config)
         config.startup();
     }
 
+    /* The loading stage is one shot: modules registered their loading systems
+       while attaching, and runFrame never runs it. */
+    host->runStage(RESONATE_STAGE_LOADING, 0.0F);
+
     /* Cleared so two runs in one process are independent, and restored afterwards
        so a caller that had its own handler gets it back. */
     g_stop_requested = 0;
