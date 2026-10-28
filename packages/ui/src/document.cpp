@@ -1218,8 +1218,12 @@ bool collectStateStyles(World& world, const dom::Document& document, dom::NodeHa
                 value.component = index;
                 value.offset = layout->offset;
                 value.size = layout->size;
+                /* The record keeps the value alone; parse at offset zero, or a
+                   field past the first would write outside value[16]. */
+                dom::ComponentFieldDesc field_layout = *layout;
+                field_layout.offset = 0;
                 std::string error;
-                if (!detail::parseField(*layout, normal_field->value, value.value, error))
+                if (!detail::parseField(field_layout, normal_field->value, value.value, error))
                 {
                     return report(world, document, node,
                                   std::string(component_name) + "." + std::string(field_name) +
@@ -1240,7 +1244,7 @@ bool collectStateStyles(World& world, const dom::Document& document, dom::NodeHa
                 {
                     records.push_back(value);
                 }
-                if (!detail::parseField(*layout, styled_field.value, value.value, error))
+                if (!detail::parseField(field_layout, styled_field.value, value.value, error))
                 {
                     return report(world, document, node,
                                   std::string(component_name) + "." + std::string(field_name) +

@@ -512,3 +512,48 @@ TEST_CASE("ui input: the cursor follows the widget and the gesture", "[ui][input
     REQUIRE(resonate::ui::updateInput(world, root, 55.0F, 105.0F, false));
     CHECK(resonate::ui::cursorShape(world, root) == resonate::ui::CursorShape::Pointer);
 }
+
+/* A state rule on a field past the component's first member: the record keeps
+   the value alone, so the parser must not add the field's component offset. */
+TEST_CASE("ui input: a state rule on a later field restores and applies",
+          "[ui][input][style]")
+{
+    const char* const document_text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <StyleSheet key="styles">
+      <StyleRule selector=".field"><Text text_color="0.2 0.2 0.2 1"/></StyleRule>
+      <StyleRule selector=".field:hover"><Text text_color="0.9 0.1 0.1 1"/></StyleRule>
+    </StyleSheet>
+    <Panel key="panel" x="0" y="0" width="200" height="200"
+           direction="Column" align="Start">
+      <Label key="field" class="field" text="value" width="100" height="40">
+        <Input/>
+      </Label>
+    </Panel>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(document_text,
+                                                   &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 200.0F));
+
+    const auto panel = resonate::hierarchy::children(world, root)[0];
+    const Entity field = resonate::hierarchy::children(world, panel)[0];
+    const auto* text = world.get<resonate::ui::Text>(field);
+    REQUIRE(text != nullptr);
+    CHECK(near(text->text_color.x, 0.2F));
+
+    REQUIRE(resonate::ui::updateInput(world, root, 50.0F, 20.0F, false));
+    CHECK(near(text->text_color.x, 0.9F));
+
+    REQUIRE(resonate::ui::updateInput(world, root, 250.0F, 250.0F, false));
+    CHECK(near(text->text_color.x, 0.2F));
+}
