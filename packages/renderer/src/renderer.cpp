@@ -1848,7 +1848,11 @@ bool RenderSystem::Impl::ensurePipelines()
     if (!ready_noted)
     {
         ready_noted = true;
-        std::fprintf(stderr, "renderer: pipelines ready\n");
+        /* The scene pass's sample count belongs here: the setting may ask for a
+           count this device has to answer for, and the run is otherwise silent
+           about it. */
+        std::fprintf(stderr, "renderer: pipelines ready, scene msaa %u\n",
+                     static_cast<unsigned>(msaa));
     }
     return true;
 }
