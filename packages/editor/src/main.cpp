@@ -1,7 +1,9 @@
 #include <resonate/startup/startup.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <limits>
 #include <string>
@@ -50,6 +52,17 @@ struct EditorState
 
     /* The name field mirrors the selection; a user edit writes back. */
     std::string mirrored_name{};
+
+    /* The position fields mirror the selection's LocalTransform; a field the
+       user typed a number into writes back. */
+    struct AxisField
+    {
+        Entity handle{};
+        std::string mirrored{};
+    };
+    AxisField position_x{};
+    AxisField position_y{};
+    AxisField position_z{};
 
     /* The boxes the opacity scrub dims: one query, built on ready. */
     resonate::ecs::Query boxes{};
@@ -277,6 +290,51 @@ void seedMaterial(const EditorState& state, resonate::ecs::World& world, Entity 
     }
 }
 
+/* One axis of the position: the field shows it, a typed number writes it.
+   A field that does not parse keeps its text and is not retried until the
+   next edit. */
+void applyPositionField(resonate::ecs::World& world, EditorState::AxisField& field,
+                        resonate::hierarchy::LocalTransform* transform, Entity entity,
+                        std::uint32_t axis)
+{
+    const std::string text = resonate::ui::widgetText(world, field.handle);
+    if (text == field.mirrored)
+    {
+        return;
+    }
+    field.mirrored = text;
+    const char* begin = text.c_str();
+    char* end = nullptr;
+    const float value = std::strtof(begin, &end);
+    if (transform == nullptr || end == begin || *end != '\0' || !std::isfinite(value))
+    {
+        return;
+    }
+    float* axes[3] = {&transform->position.x, &transform->position.y, &transform->position.z};
+    *axes[axis] = value;
+    (void)world.markChanged<resonate::hierarchy::LocalTransform>(entity);
+}
+
+/* The position fields follow the selected object; an entity without a
+   transform zeroes them. */
+void seedPosition(EditorState& state, resonate::ecs::World& world,
+                  const resonate::hierarchy::LocalTransform* transform)
+{
+    const float axes[3] = {transform != nullptr ? transform->position.x : 0.0F,
+                           transform != nullptr ? transform->position.y : 0.0F,
+                           transform != nullptr ? transform->position.z : 0.0F};
+    EditorState::AxisField* fields[3] = {&state.position_x, &state.position_y,
+                                         &state.position_z};
+    for (std::uint32_t axis = 0; axis < 3U; ++axis)
+    {
+        char text[32] = {};
+        std::snprintf(text, sizeof(text), "%.2f", static_cast<double>(axes[axis]));
+        std::string error;
+        (void)resonate::ui::setText(world, state.canvas, fields[axis]->handle, text, error);
+        fields[axis]->mirrored = text;
+    }
+}
+
 /* The selected scene row names the inspected object: the name field and the
    status line follow the selection, reshaped only when it changes. */
 void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuffer&, float)
@@ -330,6 +388,15 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
             (void)resonate::ui::setText(world, state->canvas, state->status,
                                         "已选择 " + field_text, error);
         }
+        /* The position fields write the selected object's LocalTransform. */
+        const Entity entity = entityOfRow(*state, selected);
+        resonate::hierarchy::LocalTransform* transform =
+            entity.valid()
+                ? world.get<resonate::hierarchy::LocalTransform>(entity)
+                : nullptr;
+        applyPositionField(world, state->position_x, transform, entity, 0U);
+        applyPositionField(world, state->position_y, transform, entity, 1U);
+        applyPositionField(world, state->position_z, transform, entity, 2U);
     }
 
     if (selected == state->shown_row)
@@ -356,12 +423,18 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         state->mirrored_name = name;
         (void)resonate::ui::setText(world, state->canvas, state->status, "已选择 " + name, error);
         seedMaterial(*state, world, entity);
+        const resonate::hierarchy::LocalTransform* transform =
+            entity.valid()
+                ? world.get<resonate::hierarchy::LocalTransform>(entity)
+                : nullptr;
+        seedPosition(*state, world, transform);
     }
     else
     {
         (void)resonate::ui::setText(world, state->canvas, state->name_field, "", error);
         state->mirrored_name.clear();
         (void)resonate::ui::setText(world, state->canvas, state->status, "未选择", error);
+        seedPosition(*state, world, nullptr);
     }
 }
 
@@ -380,6 +453,9 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->roughness.value_label = resonate::ui::findByKey(world, canvas, "roughness-value");
     state->metallic.handle = resonate::ui::findByKey(world, canvas, "metallic-scrub");
     state->metallic.value_label = resonate::ui::findByKey(world, canvas, "metallic-value");
+    state->position_x.handle = resonate::ui::findByKey(world, canvas, "position-x");
+    state->position_y.handle = resonate::ui::findByKey(world, canvas, "position-y");
+    state->position_z.handle = resonate::ui::findByKey(world, canvas, "position-z");
     state->console = resonate::ui::findByKey(world, canvas, "console-line");
     world.setReportSink(state, &reportSink);
 
