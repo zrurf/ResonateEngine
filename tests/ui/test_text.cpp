@@ -908,3 +908,55 @@ TEST_CASE("ui text: a long field scrolls its own text so the caret stays visible
     CHECK(caret_x >= rect->x);
     CHECK(caret_x <= rect->x + rect->width);
 }
+
+/* A wholesale replacement clears the selection before shaping. The Text row the
+   call cached first is gone by then: the field must still shape with its own
+   font, and the entity that backfilled the row must keep its content. */
+TEST_CASE("ui text: a replacement after a selection keeps the field's own font",
+          "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="big" text="A" font_size="40" width="200" height="60"
+           color="0 0 0 0"/>
+    <Label key="small" text="B" font_size="12" width="200" height="60"
+           color="0 0 0 0"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+    const Entity big = resonate::ui::findByKey(fixture.world, root, "big");
+    const Entity small = resonate::ui::findByKey(fixture.world, root, "small");
+    REQUIRE(big.valid());
+    REQUIRE(small.valid());
+
+    /* Both selections put the labels in one archetype. Clearing big's moves it
+       out and swaps small into the row the cached Text pointer still names. */
+    fixture.world.add(big, resonate::ui::TextSelection{0U});
+    fixture.world.add(small, resonate::ui::TextSelection{0U});
+    REQUIRE(fixture.world.get<resonate::ui::TextSelection>(big) != nullptr);
+
+    std::string error;
+    REQUIRE(runtime.setText(fixture.world, root, big, "AB", error));
+    CHECK(error.empty());
+
+    const TextMetrics* metrics = fixture.world.get<TextMetrics>(big);
+    REQUIRE(metrics != nullptr);
+    /* 40 px against 12 px: a stale read would shape the field at 12. */
+    CHECK(metrics->ascent > 30.0F);
+
+    /* The backfilled entity keeps its own bytes and glyphs. */
+    const Text* small_text = fixture.world.get<Text>(small);
+    REQUIRE(small_text != nullptr);
+    REQUIRE(fixture.world.alive(small_text->content));
+    const Glyphs* small_glyphs = fixture.world.get<Glyphs>(small);
+    REQUIRE(small_glyphs != nullptr);
+    REQUIRE(fixture.world.alive(small_glyphs->records));
+}

@@ -294,6 +294,14 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
         error = "the entity has no Text";
         return false;
     }
+    /* Copied out before the first structural change: clearSelection and the
+       Glyphs swap move the entity, which invalidates `text`. */
+    const float font_size = text->font_size;
+    const float font_weight = static_cast<float>(text->font_weight);
+    const float padding_left = text->padding_left;
+    const std::uint32_t align = static_cast<std::uint32_t>(text->align);
+    const bool wrap = text->wrap;
+    const ecs::BlobHandle old_content = text->content;
     if (TextCaret* caret = world.get<TextCaret>(entity);
         caret != nullptr && caret->offset > utf8.size())
     {
@@ -304,11 +312,10 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
        the old bytes is stale, so it dies with them. */
     clearSelection(world, entity);
     const RectTransform* rect = world.get<RectTransform>(entity);
-    const float width = std::fmax(0.0F, authoredWidth(rect) - text->padding_left);
+    const float width = std::fmax(0.0F, authoredWidth(rect) - padding_left);
     std::vector<detail::GlyphQuad> quads;
     float advance = 0.0F;
-    if (!impl_->atlas.buildRun(utf8, text->font_size, static_cast<float>(text->font_weight), width,
-                               static_cast<std::uint32_t>(text->align), text->wrap, quads, advance,
+    if (!impl_->atlas.buildRun(utf8, font_size, font_weight, width, align, wrap, quads, advance,
                                error))
     {
         return false;
@@ -324,7 +331,6 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
         }
     }
 
-    const ecs::BlobHandle old_content = text->content;
     ecs::BlobHandle content{};
     if (!utf8.empty())
     {
@@ -379,10 +385,9 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
             maximum_y = std::fmax(maximum_y, quad.y + quad.height);
         }
     }
-    float ascent = text->font_size * 0.8F;
-    float descent = -text->font_size * 0.2F;
-    impl_->atlas.lineMetrics(text->font_size, static_cast<float>(text->font_weight), ascent,
-                             descent);
+    float ascent = font_size * 0.8F;
+    float descent = -font_size * 0.2F;
+    impl_->atlas.lineMetrics(font_size, font_weight, ascent, descent);
     if (TextMetrics* metrics = world.get<TextMetrics>(entity))
     {
         metrics->width = maximum_x - minimum_x;
