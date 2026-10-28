@@ -996,6 +996,9 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
        renderer extracts its paint list. */
     UiFrame ui_frame;
     std::unique_ptr<ui::TextRuntime> ui_text;
+    /* Bound to the world inside the systems hook; the frame keeps the raw
+       pointer, so the owner lives as long as the run. */
+    std::unique_ptr<ui::ColorTransitionSystem> ui_transitions;
     const EngineSystemDesc ui_desc{"ui.layout", RESONATE_STAGE_LATE_UPDATE, &UiFrame::invoke,
                                    &ui_frame};
 #if defined(RESONATE_WITH_CSHARP)
@@ -1069,7 +1072,8 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
             }
             render_system.setUiFontPaths(std::move(ui_font_paths));
             ui_text = std::make_unique<ui::TextRuntime>(std::move(ui_fonts));
-            auto ui_transitions = std::make_unique<ui::ColorTransitionSystem>();
+            ui_frame.transitions = nullptr;
+            ui_transitions = std::make_unique<ui::ColorTransitionSystem>();
             if (ui_transitions->bind(world))
             {
                 ui_frame.transitions = ui_transitions.get();
