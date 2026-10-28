@@ -1,5 +1,6 @@
 #include <resonate/application/settings.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -55,7 +56,7 @@ bool parseFloat(const std::string& text, double& out)
     }
     char* end = nullptr;
     const double value = std::strtod(text.c_str(), &end);
-    if (end == text.c_str() || *end != '\0')
+    if (end == text.c_str() || *end != '\0' || !std::isfinite(value))
     {
         return false;
     }

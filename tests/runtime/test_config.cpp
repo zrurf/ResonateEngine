@@ -275,7 +275,12 @@ TEST_CASE("settings schema: a wrong type or range is refused", "[settings]")
                       "key = \"render.width\"\n"
                       "type = \"int\"\n"
                       "range = [1, 4096]\n"
-                      "default = 1280\n");
+                      "default = 1280\n"
+                      "[[setting]]\n"
+                      "key = \"render.scale\"\n"
+                      "type = \"float\"\n"
+                      "range = [0.25, 1.0]\n"
+                      "default = 1.0\n");
     resonate::SettingsSchema schema;
     std::string error;
     REQUIRE(schema.load(schema_file.path(), error));
@@ -292,6 +297,13 @@ TEST_CASE("settings schema: a wrong type or range is refused", "[settings]")
     store.load(config_file.path());
     CHECK_FALSE(schema.validate(store, warnings, error));
     CHECK(error.find("outside the declared range") != std::string::npos);
+
+    /* NaN compares false against both bounds; the finite check refuses it
+       before the range can. */
+    config_file.write("[render]\nscale = nan\n");
+    store.load(config_file.path());
+    CHECK_FALSE(schema.validate(store, warnings, error));
+    CHECK(error.find("expected a number") != std::string::npos);
 }
 
 TEST_CASE("settings schema: bad declarations fail the load", "[settings]")
