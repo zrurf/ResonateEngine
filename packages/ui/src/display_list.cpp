@@ -67,6 +67,11 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
     const std::size_t quad_begin = quads_.size();
 
     Clip clip = outer;
+    /* The thumb is computed under the viewport's clip but painted after the
+       background, or an opaque background would cover it. */
+    bool thumb_visible = false;
+    detail::ScrollThumb thumb{};
+    Vec4 thumb_color{};
     if (const ScrollView* view = world.get<ScrollView>(entity))
     {
         const ComputedRect* rect = world.get<ComputedRect>(entity);
@@ -76,11 +81,9 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         }
         clip = intersect(outer, rect->x, rect->y, rect->width, rect->height);
         /* The thumb geometry is shared with the input system, which drags it. */
-        const detail::ScrollThumb thumb = detail::scrollThumbOf(*rect, *view);
-        if (thumb.visible && visible(clip, thumb.x, thumb.y, thumb.width, thumb.height))
-        {
-            quads_.push_back(Quad{thumb.x, thumb.y, thumb.width, thumb.height, view->color});
-        }
+        thumb = detail::scrollThumbOf(*rect, *view);
+        thumb_visible = thumb.visible;
+        thumb_color = view->color;
     }
 
     if (const Background* background = world.get<Background>(entity))
@@ -114,6 +117,10 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                                       rect->height - 2.0F * width, background->border_color});
             }
         }
+    }
+    if (thumb_visible && visible(clip, thumb.x, thumb.y, thumb.width, thumb.height))
+    {
+        quads_.push_back(Quad{thumb.x, thumb.y, thumb.width, thumb.height, thumb_color});
     }
     if (const Image* image = world.get<Image>(entity))
     {
@@ -372,11 +379,12 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                             continue;
                         }
                         const float start = origin_x + glyph.pen_x;
-                        const float end = index + 1U < count
-                                              ? origin_x + records[index + 1U].pen_x
-                                              : (line != nullptr && line->advance > glyph.pen_x
-                                                     ? origin_x + line->advance
-                                                     : start + glyph.width);
+                        /* pen_x restarts on a new line, so only a glyph on the
+                           same line can give this cell its right edge. */
+                        const bool same_line =
+                            index + 1U < count && records[index + 1U].pen_y == glyph.pen_y;
+                        const float end = same_line ? origin_x + records[index + 1U].pen_x
+                                                    : start + glyph.width;
                         if (end <= start)
                         {
                             continue;
