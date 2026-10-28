@@ -372,6 +372,7 @@ if is_plat("windows", "android") then
     includes("packages/ui-tgfx")
 end
 includes("packages/hierarchy")
+includes("packages/animation")
 includes("packages/renderer")
 includes("packages/runtime")
 includes("packages/modules")

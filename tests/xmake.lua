@@ -66,7 +66,7 @@ target("Resonate.Tests")
     add_files("main.cpp", "render/**.cpp", "core/**.cpp", "module/**.cpp", "pal/**.cpp",
               "runtime/**.cpp", "window/**.cpp", "ecs/**.cpp", "gameplay/**.cpp",
               "hierarchy/**.cpp", "ui/**.cpp", "text/**.cpp", "document/**.cpp", "document/**.c",
-              "schema/**.cpp",
+              "schema/**.cpp", "animation/**.cpp",
               "csharp/**.cpp")
     add_tests("default")
 
@@ -100,7 +100,7 @@ target("Resonate.Tests")
              "Resonate.Core.Container", "Resonate.Core.Math", "Resonate.Core.Job",
              "Resonate.ECS", "Resonate.Gameplay", "Resonate.Hierarchy", "Resonate.UI",
              "Resonate.Document", "Resonate.Renderer", "Resonate.Text", "Resonate.CSharp",
-             "Resonate.Startup")
+             "Resonate.Startup", "Resonate.Animation")
 
     -- The C# host test loads a managed fixture; publishing it is a build step,
     -- so a stale or missing assembly fails the build instead of a test that

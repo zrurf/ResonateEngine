@@ -41,6 +41,56 @@ struct Quat
     float w = 1.0F;
 };
 
+/* The shortest arc between two orientations: the sign flips so dot >= 0, and
+   equal inputs answer `a` rather than dividing by zero. The result is a unit
+   quaternion when both inputs are. */
+inline Quat slerp(const Quat& a, const Quat& b, float alpha) noexcept
+{
+    float cosine = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+    Quat end = b;
+    if (cosine < 0.0F)
+    {
+        cosine = -cosine;
+        end = Quat{-b.x, -b.y, -b.z, -b.w};
+    }
+    if (cosine > 0.9995F)
+    {
+        /* Nearly parallel: the lerp renormalized is slerp to within an
+           epsilon and avoids the sine division. */
+        Quat result{a.x + (end.x - a.x) * alpha, a.y + (end.y - a.y) * alpha,
+                    a.z + (end.z - a.z) * alpha, a.w + (end.w - a.w) * alpha};
+        const float length =
+            std::sqrt(result.x * result.x + result.y * result.y + result.z * result.z +
+                      result.w * result.w);
+        if (length > 0.0F)
+        {
+            return Quat{result.x / length, result.y / length, result.z / length,
+                        result.w / length};
+        }
+        return a;
+    }
+    const float theta0 = std::acos(cosine);
+    const float sine = std::sin(theta0);
+    const float from = std::sin((1.0F - alpha) * theta0) / sine;
+    const float to = std::sin(alpha * theta0) / sine;
+    return Quat{a.x * from + end.x * to, a.y * from + end.y * to, a.z * from + end.z * to,
+                a.w * from + end.w * to};
+}
+
+/* A unit quaternion for `radians` around the (normalized) axis. */
+inline Quat quatFromAxisAngle(const Vec3& axis, float radians) noexcept
+{
+    const float length =
+        std::sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
+    if (length <= 0.0F)
+    {
+        return Quat{};
+    }
+    const float half = 0.5F * radians;
+    const float sine = std::sin(half) / length;
+    return Quat{axis.x * sine, axis.y * sine, axis.z * sine, std::cos(half)};
+}
+
 constexpr Vec3 operator+(const Vec3& a, const Vec3& b) noexcept
 {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
