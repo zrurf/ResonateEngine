@@ -98,4 +98,57 @@ void Clip::sample(float time, bool looping, hierarchy::LocalTransform& transform
     }
 }
 
+void Clip::blend(const Clip& from, const Clip& to, float weight, float time, bool looping,
+                 hierarchy::LocalTransform& transform)
+{
+    hierarchy::LocalTransform from_sample = transform;
+    hierarchy::LocalTransform to_sample = transform;
+    from.sample(time, looping, from_sample);
+    to.sample(time, looping, to_sample);
+
+    const float mixed = weight < 0.0F ? 0.0F : (weight > 1.0F ? 1.0F : weight);
+    /* A field both clips drive blends; a field only one drives comes from
+       that clip whole. */
+    if (!from.position.keys.empty() && !to.position.keys.empty())
+    {
+        transform.position =
+            from_sample.position + (to_sample.position - from_sample.position) * mixed;
+    }
+    else if (!from.position.keys.empty())
+    {
+        transform.position = from_sample.position;
+    }
+    else if (!to.position.keys.empty())
+    {
+        transform.position = to_sample.position;
+    }
+
+    if (!from.rotation.keys.empty() && !to.rotation.keys.empty())
+    {
+        transform.rotation = slerp(from_sample.rotation, to_sample.rotation, mixed);
+    }
+    else if (!from.rotation.keys.empty())
+    {
+        transform.rotation = from_sample.rotation;
+    }
+    else if (!to.rotation.keys.empty())
+    {
+        transform.rotation = to_sample.rotation;
+    }
+
+    if (!from.scale.keys.empty() && !to.scale.keys.empty())
+    {
+        transform.scale =
+            from_sample.scale + (to_sample.scale - from_sample.scale) * mixed;
+    }
+    else if (!from.scale.keys.empty())
+    {
+        transform.scale = from_sample.scale;
+    }
+    else if (!to.scale.keys.empty())
+    {
+        transform.scale = to_sample.scale;
+    }
+}
+
 } // namespace resonate::animation

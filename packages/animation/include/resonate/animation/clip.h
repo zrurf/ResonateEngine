@@ -56,6 +56,13 @@ struct Clip
        keep what they had. Time is taken modulo the duration when the clip
        loops and clamped to it otherwise. */
     void sample(float time, bool looping, hierarchy::LocalTransform& transform) const;
+
+    /* Samples both clips at `time` and blends: position and scale lerp,
+       rotation slerps, `weight` 0 answers `from` and 1 answers `to`. A field
+       only one clip drives comes from that clip whole; a field neither
+       drives keeps what it had. */
+    static void blend(const Clip& from, const Clip& to, float weight, float time,
+                      bool looping, hierarchy::LocalTransform& transform);
 };
 
 } // namespace resonate::animation

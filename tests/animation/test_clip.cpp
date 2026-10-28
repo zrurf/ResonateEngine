@@ -111,3 +111,35 @@ TEST_CASE("animation: the player advances states and writes the transform",
     player.invoke(world, 1.0F);
     CHECK(near(world.get<resonate::animation::AnimationState>(stray)->time, 0.0F));
 }
+
+TEST_CASE("animation: two clips blend per field with the weight", "[animation]")
+{
+    Clip idle;
+    idle.duration = 2.0F;
+    idle.position = positionsOf({{0.0F, Vec3{0.0F, 0.0F, 0.0F}}, {2.0F, Vec3{2.0F, 0.0F, 0.0F}}});
+
+    Clip run;
+    run.duration = 2.0F;
+    run.position = positionsOf({{0.0F, Vec3{0.0F, 1.0F, 0.0F}}, {2.0F, Vec3{2.0F, 3.0F, 0.0F}}});
+    run.rotation = yawOf({{0.0F, resonate::quatFromAxisAngle(Vec3{0.0F, 1.0F, 0.0F}, 0.0F)}});
+
+    resonate::hierarchy::LocalTransform transform;
+    transform.scale = Vec3{2.0F, 2.0F, 2.0F};
+
+    /* Both drive position: the halfway weight mixes them. At t=1 both x
+       tracks read 1.0, and the y tracks differ by 2.0. */
+    Clip::blend(idle, run, 0.5F, 1.0F, false, transform);
+    CHECK(near(transform.position.x, 1.0F));
+    CHECK(near(transform.position.y, 1.0F));
+
+    /* Weight 0 answers from, 1 answers to. */
+    Clip::blend(idle, run, 0.0F, 1.0F, false, transform);
+    CHECK(near(transform.position.x, 1.0F));
+    Clip::blend(idle, run, 1.0F, 1.0F, false, transform);
+    CHECK(near(transform.position.y, 2.0F));
+
+    /* A field only one clip drives comes whole; a field neither drives
+       keeps what it had. */
+    CHECK(near(transform.rotation.y, 0.0F));
+    CHECK(near(transform.scale.x, 2.0F));
+}
