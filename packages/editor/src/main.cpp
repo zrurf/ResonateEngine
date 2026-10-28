@@ -74,16 +74,28 @@ void mirrorScrub(Entity canvas, resonate::ecs::World& world, EditorState::Scrub&
     (void)resonate::ui::setText(world, canvas, scrub.value_label, text, error);
 }
 
-/* The opacity scrub scales every box material's tint: the inspector drives
-   the scene, not just its own labels. */
-void applyOpacity(EditorState& state, resonate::ecs::World& world)
+/* The material pass: the opacity scrub scales every box's tint and the box
+   whose tree row is selected brightens on top, so the selection is visible
+   in the viewport itself. */
+void applyMaterials(EditorState& state, resonate::ecs::World& world,
+                    resonate::ecs::Entity selected_row)
 {
     const float opacity = std::clamp(state.opacity.shown, 0.0F, 1.0F);
+    resonate::ecs::Entity selected_box{};
+    for (const auto& [row, box] : state.box_rows)
+    {
+        if (row == selected_row)
+        {
+            selected_box = box;
+            break;
+        }
+    }
     struct OpacityContext
     {
         resonate::ecs::World* world;
         float value;
-    } context{&world, opacity};
+        resonate::ecs::Entity selected_box;
+    } context{&world, opacity, selected_box};
     state.boxes.forEachChunk(
         [](void* context, resonate::ecs::ChunkView view)
         {
@@ -92,8 +104,9 @@ void applyOpacity(EditorState& state, resonate::ecs::World& world)
                 resonate::ecs::column<resonate::render::Material>(view);
             for (std::uint32_t row = 0; row < view.count; ++row)
             {
-                material.data[row].tint =
-                    resonate::Vec3{state->value, state->value, state->value};
+                const float value =
+                    state->value * (view.entities[row] == state->selected_box ? 2.0F : 1.0F);
+                material.data[row].tint = resonate::Vec3{value, value, value};
                 state->world->markChanged(
                     view.entities[row],
                     resonate::ecs::ComponentTraits<resonate::render::Material>::index);
@@ -221,11 +234,11 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     mirrorConsole(*state, world);
     mirrorScrub(state->canvas, world, state->opacity);
     mirrorScrub(state->canvas, world, state->roughness);
+    const Entity selected = resonate::ui::selectedChild(world, state->scene_list);
     if (!std::isnan(state->opacity.shown) && state->boxes.valid())
     {
-        applyOpacity(*state, world);
+        applyMaterials(*state, world, selected);
     }
-    const Entity selected = resonate::ui::selectedChild(world, state->scene_list);
 
     /* The name field edits the selected row's caption: what the user typed
        lands on the row, while a mirror echo is left alone. */
