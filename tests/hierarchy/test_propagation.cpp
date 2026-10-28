@@ -116,6 +116,34 @@ TEST_CASE("world transforms compose down the tree", "[hierarchy][propagation]")
     REQUIRE(nearlyEqual(translationOf(scene.world, leaf), Vec3{5.0F, 5.0F, 8.0F}));
 }
 
+TEST_CASE("destroying a node leaves a sibling's child list intact", "[hierarchy][tree]")
+{
+    Scene scene;
+    const Entity root = scene.node(Entity{}, Vec3{0.0F, 0.0F, 0.0F});
+    /* Two nodes with the same Parent+Children archetype share a chunk; the
+       first one is destroyed while the second still sits in it. */
+    const Entity first = scene.node(root, Vec3{1.0F, 0.0F, 0.0F});
+    const Entity second = scene.node(root, Vec3{2.0F, 0.0F, 0.0F});
+    const Entity first_child = scene.node(first, Vec3{0.0F, 0.0F, 0.0F});
+    const Entity second_child = scene.node(second, Vec3{0.0F, 0.0F, 0.0F});
+    scene.world.play(scene.commands);
+
+    destroyEntity(scene.commands, first);
+    scene.world.play(scene.commands);
+
+    REQUIRE_FALSE(scene.world.alive(first));
+    /* The destroyed node's children become roots, and the sibling's own list
+       must still point at a live blob holding its child. */
+    REQUIRE(scene.world.alive(first_child));
+    REQUIRE_FALSE(parentOf(scene.world, first_child).valid());
+    const Children* kids = scene.world.get<Children>(second);
+    REQUIRE(kids != nullptr);
+    REQUIRE(scene.world.alive(kids->children));
+    const auto remaining = children(scene.world, second);
+    REQUIRE(remaining.size() == 1U);
+    REQUIRE(remaining[0] == second_child);
+}
+
 TEST_CASE("a rotation and a scale reach the descendants", "[hierarchy][propagation]")
 {
     Scene scene;

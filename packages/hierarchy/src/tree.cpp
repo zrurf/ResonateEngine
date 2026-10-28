@@ -250,9 +250,12 @@ void playDestroy(void*, World& world, const void* payload)
     const Children* kids = world.get<Children>(op->child);
     if (kids != nullptr && world.alive(kids->children))
     {
-        const std::size_t count = world.blobSize(kids->children) / sizeof(Entity);
+        /* Copied out: removing a child's Parent moves entities between
+           chunks, which invalidates `kids` before the blob is released. */
+        const ecs::BlobHandle children_blob = kids->children;
+        const std::size_t count = world.blobSize(children_blob) / sizeof(Entity);
         std::vector<Entity> list(count);
-        std::memcpy(list.data(), world.blobData(kids->children), count * sizeof(Entity));
+        std::memcpy(list.data(), world.blobData(children_blob), count * sizeof(Entity));
 
         for (const Entity child : list)
         {
@@ -268,7 +271,7 @@ void playDestroy(void*, World& world, const void* payload)
         }
 
         (void)world.remove<Children>(op->child);
-        (void)world.destroyBlob(kids->children);
+        (void)world.destroyBlob(children_blob);
     }
 
     detachFromParent(world, op->child);
