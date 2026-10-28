@@ -116,6 +116,12 @@ class RenderSystem
     [[nodiscard]] const std::string& antialiasing() const;
     [[nodiscard]] float bloomThreshold() const;
 
+    /* The presentation mode: "auto" keeps the configuration's vsync bool,
+       "fifo", "mailbox" and "immediate" name one. The swapchain rebuilds on
+       the next frame; an unknown name is reported and ignored. */
+    void setPresentMode(const std::string& name);
+    [[nodiscard]] const std::string& presentModeName() const;
+
     /* Registers the render components; idempotent, and a refusal (a name
        collision) answers false. */
     static bool registerComponents(ecs::World& world);

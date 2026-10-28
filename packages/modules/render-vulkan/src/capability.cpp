@@ -338,6 +338,16 @@ ResonateRenderFormat surfaceFormat(void* self)
                                                          : RESONATE_RENDER_FORMAT_UNKNOWN;
 }
 
+ResonateStatus setPresentMode(void* self, uint32_t mode)
+{
+    auto* state = static_cast<State*>(self);
+    if (state == nullptr || state->context == nullptr)
+    {
+        return RESONATE_E_STATE;
+    }
+    return state->context->setPresentMode(mode);
+}
+
 ResonateRenderDevice g_device = {
     RESONATE_CAPABILITY_HEADER_INIT(ResonateRenderDevice, RESONATE_THREAD_ANY),
     &attachSurface,
@@ -378,6 +388,7 @@ ResonateRenderDevice g_device = {
     &nativeHandles,
     &nativeImage,
     &surfaceFormat,
+    &setPresentMode,
 };
 
 } // namespace

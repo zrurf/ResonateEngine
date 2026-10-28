@@ -1560,24 +1560,34 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
     }
 
     /* FIFO is the only mode the spec guarantees. Vsync off: mailbox trades a
-       frame of latency for never tearing, immediate is the uncapped fallback. */
-    present_mode_ = VK_PRESENT_MODE_FIFO_KHR;
-    if (!vsync_)
+       frame of latency for never tearing, immediate is the uncapped fallback.
+       A named present mode wins over the vsync bool; a preference the surface
+       cannot do falls to the next one and FIFO is the floor. */
+    VkPresentModeKHR preferences[2] = {VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_FIFO_KHR};
+    uint32_t preference_count = 1U;
+    if (present_mode_override_ >= 0)
     {
-        uint32_t mode_count = 0;
-        vkGetPhysicalDeviceSurfacePresentModesKHR(physical_, surface_, &mode_count, nullptr);
-        std::vector<VkPresentModeKHR> modes(mode_count);
-        vkGetPhysicalDeviceSurfacePresentModesKHR(physical_, surface_, &mode_count, modes.data());
-        for (const VkPresentModeKHR mode : modes)
+        preferences[0] = present_mode_override_ == 1   ? VK_PRESENT_MODE_MAILBOX_KHR
+                         : present_mode_override_ == 2 ? VK_PRESENT_MODE_IMMEDIATE_KHR
+                                                       : VK_PRESENT_MODE_FIFO_KHR;
+    }
+    else if (!vsync_)
+    {
+        preferences[0] = VK_PRESENT_MODE_MAILBOX_KHR;
+        preferences[1] = VK_PRESENT_MODE_IMMEDIATE_KHR;
+        preference_count = 2U;
+    }
+    present_mode_ = VK_PRESENT_MODE_FIFO_KHR;
+    uint32_t mode_count = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(physical_, surface_, &mode_count, nullptr);
+    std::vector<VkPresentModeKHR> modes(mode_count);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(physical_, surface_, &mode_count, modes.data());
+    for (uint32_t preference = 0U; preference < preference_count; ++preference)
+    {
+        if (std::find(modes.begin(), modes.end(), preferences[preference]) != modes.end())
         {
-            if (mode == VK_PRESENT_MODE_MAILBOX_KHR || mode == VK_PRESENT_MODE_IMMEDIATE_KHR)
-            {
-                present_mode_ = mode;
-                if (mode == VK_PRESENT_MODE_MAILBOX_KHR)
-                {
-                    break;
-                }
-            }
+            present_mode_ = preferences[preference];
+            break;
         }
     }
 
@@ -2246,6 +2256,33 @@ void Context::drainGraveyard(std::vector<Retired>& graveyard)
         }
     }
     graveyard.clear();
+}
+
+ResonateStatus Context::setPresentMode(uint32_t mode)
+{
+    VkPresentModeKHR requested = VK_PRESENT_MODE_FIFO_KHR;
+    switch (mode)
+    {
+    case RESONATE_RENDER_PRESENT_FIFO:
+        requested = VK_PRESENT_MODE_FIFO_KHR;
+        break;
+    case RESONATE_RENDER_PRESENT_MAILBOX:
+        requested = VK_PRESENT_MODE_MAILBOX_KHR;
+        break;
+    case RESONATE_RENDER_PRESENT_IMMEDIATE:
+        requested = VK_PRESENT_MODE_IMMEDIATE_KHR;
+        break;
+    default:
+        return RESONATE_E_INVALID;
+    }
+    const int named = static_cast<int>(mode);
+    if (named != present_mode_override_)
+    {
+        present_mode_override_ = named;
+        /* The swapchain owns the mode: the next frame builds a new one. */
+        recreate_pending_ = true;
+    }
+    return RESONATE_OK;
 }
 
 ResonateStatus Context::beginFrame()

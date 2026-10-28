@@ -457,6 +457,7 @@ struct RenderSystem::Impl
     /* Settings overrides: an explicit HDR format and shadow extent; "auto"
        and zero keep the tier's choice. */
     std::string hdr_format_name = "auto";
+    std::string present_mode_name = "auto";
     std::uint32_t shadow_size = 0U;
     /* The scene pass's sample count; zero renders 1x (no MSAA). */
     std::uint32_t msaa = 0U;
@@ -594,6 +595,7 @@ struct RenderSystem::Impl
         }
     }
 
+    void applyPresentMode();
     void readRenderScaleOverrides();
     ResonateRenderFormat hdrFormat() const;
     std::uint32_t shadowExtent() const;
@@ -2020,6 +2022,7 @@ void RenderSystem::Impl::resolveCapabilities()
     {
         canvas = static_cast<ResonateRenderCanvas*>(instance);
     }
+    applyPresentMode();
 }
 
 bool RenderSystem::Impl::extract(ecs::World& world)
@@ -2942,6 +2945,43 @@ void RenderSystem::setShadowSize(std::uint32_t size)
     impl_->shadow_size = size;
     /* The shadow maps are graph resources: the next frame recompiles it. */
     impl_->initialized = false;
+}
+
+void RenderSystem::setPresentMode(const std::string& name)
+{
+    if (name != "auto" && name != "fifo" && name != "mailbox" && name != "immediate")
+    {
+        impl_->complain(("unknown present mode '" + name + "'").c_str());
+        return;
+    }
+    impl_->present_mode_name = name;
+    impl_->applyPresentMode();
+}
+
+const std::string& RenderSystem::presentModeName() const
+{
+    return impl_->present_mode_name;
+}
+
+void RenderSystem::Impl::applyPresentMode()
+{
+    if (device == nullptr || present_mode_name == "auto" ||
+        device->header.struct_size <
+            offsetof(ResonateRenderDevice, set_present_mode) + sizeof(device->set_present_mode) ||
+        device->set_present_mode == nullptr)
+    {
+        return;
+    }
+    uint32_t mode = RESONATE_RENDER_PRESENT_FIFO;
+    if (present_mode_name == "mailbox")
+    {
+        mode = RESONATE_RENDER_PRESENT_MAILBOX;
+    }
+    else if (present_mode_name == "immediate")
+    {
+        mode = RESONATE_RENDER_PRESENT_IMMEDIATE;
+    }
+    device->set_present_mode(device->self, mode);
 }
 
 void RenderSystem::setMsaa(std::uint32_t samples)

@@ -110,6 +110,11 @@ class Context
        configuration at attach; restart-to-apply. The canvas is where frame
        sizes come from. */
     Context(bool vsync, bool prefer_srgb, ResonateRenderCanvas* canvas);
+
+    /* The presentation mode the next swapchain is built with (the
+       RESONATE_RENDER_PRESENT_* values); the swapchain recreates on the next
+       frame. RESONATE_E_INVALID for an unknown mode. */
+    ResonateStatus setPresentMode(uint32_t mode);
     ~Context();
 
     Context(const Context&) = delete;
@@ -487,6 +492,9 @@ class Context
     uint32_t image_index_ = 0;
     VkPresentModeKHR present_mode_ = VK_PRESENT_MODE_FIFO_KHR;
     bool vsync_ = true;
+    /* RESONATE_RENDER_PRESENT_* or -1: the configuration's vsync bool decides
+       until a present mode is named. */
+    int present_mode_override_ = -1;
     /* Whether the swapchain should prefer an sRGB surface format; a linear
        surface leaves the transfer function to the final pass. */
     bool prefer_srgb_ = true;

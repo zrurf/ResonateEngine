@@ -450,12 +450,27 @@ typedef struct ResonateRenderDevice
        SRGB format encodes on write, a linear one needs the shader to. An
        older writer stops before this and means SRGB. */
     ResonateRenderFormat (*surface_format)(void* self);
+
+    /* Tail: the presentation mode the next swapchain is built with. The
+       swapchain recreates on the next frame, so a live change costs one
+       drained frame. RESONATE_E_INVALID for an unknown mode; a mode the
+       surface cannot do falls back to FIFO and says so through the trace. An
+       older writer stops before this and the configuration's vsync bool
+       decides. */
+    ResonateStatus (*set_present_mode)(void* self, uint32_t mode);
 } ResonateRenderDevice;
 
 /* The resource table is partially bound and sampled-image indices may differ
    per pixel. Without it, every slot needs a binding and the shaders index the
    image table with push-constant slots only. */
 #define RESONATE_RENDER_FEATURE_DESCRIPTOR_INDEXING (1u << 0)
+
+/* The presentation modes set_present_mode names. FIFO is the only one the
+   spec guarantees; mailbox replaces uns present without tearing, immediate
+   presents uncapped and may tear. */
+#define RESONATE_RENDER_PRESENT_FIFO 0u
+#define RESONATE_RENDER_PRESENT_MAILBOX 1u
+#define RESONATE_RENDER_PRESENT_IMMEDIATE 2u
 
 #ifdef __cplusplus
 } // extern "C"

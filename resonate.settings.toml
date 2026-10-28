@@ -60,6 +60,13 @@ default = 1.0
 description = "Brightness above which bloom picks a pixel up."
 
 [[setting]]
+key = "resonate.render.present-mode"
+type = "enum"
+values = ["auto", "fifo", "mailbox", "immediate"]
+default = "auto"
+description = "How frames reach the display: auto keeps the vsync bool, fifo waits for the refresh, mailbox replaces uns without tearing, immediate presents uncapped. The swapchain rebuilds on the next frame."
+
+[[setting]]
 key = "resonate.render.vsync"
 type = "bool"
 default = true
