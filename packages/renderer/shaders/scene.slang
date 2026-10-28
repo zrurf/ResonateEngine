@@ -133,8 +133,24 @@ uint cascadeOf(float view_depth, FrameData frame)
 // Four-tap PCF against one cascade's shadow map; the map was rendered from the
 // light's view, so the shadow coordinates come from the same matrix. The tap
 // spacing is the pixel's own footprint in the map, which keeps the kernel right
-// at any map resolution.
+// at any map resolution. The non-uniform variant marks the slot at the access
+// site; the compat tier cannot carry that decoration, so it keeps the plain
+// index and the two bodies stay separate.
 float pcfOf(uint slot, float2 uv, float receiver)
+{
+    float sum = 0.0;
+    float2 texel = max(abs(ddx(uv)), abs(ddy(uv)));
+    const float2 TAPS[4] = {float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5),
+                            float2(0.5, 0.5)};
+    for (uint tap = 0; tap < 4; ++tap)
+    {
+        float depth = image_table[slot].Sample(uv + TAPS[tap] * texel).r;
+        sum += receiver - 0.003 > depth ? 0.0 : 1.0;
+    }
+    return sum * 0.25;
+}
+
+float pcfOfNonUniform(uint slot, float2 uv, float receiver)
 {
     float sum = 0.0;
     float2 texel = max(abs(ddx(uv)), abs(ddy(uv)));
@@ -160,9 +176,8 @@ float shadowFactor(float3 world_position, float view_depth, FrameData frame)
     float2 uv = float2(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * 0.5 + 0.5);
     float receiver = shadow_ndc.z;
 
-    // The cascade differs per pixel, so the table lookup does too; the index is
-    // marked at the access site inside pcfOf.
-    return pcfOf(push.slots2[cascade + 1], uv, receiver);
+    // The cascade differs per pixel, so the table lookup does too.
+    return pcfOfNonUniform(push.slots2[cascade + 1], uv, receiver);
 }
 
 // A device without descriptor indexing cannot index the table per pixel. The
