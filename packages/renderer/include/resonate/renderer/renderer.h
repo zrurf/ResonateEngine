@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include <resonate/animation/player.h>
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
 
@@ -156,7 +157,9 @@ class RenderSystem
 
 /* Spawns the demo scene: a camera looking at a ground plane and a field of
    colored boxes, all straight ECS entities. */
-void composeDemoScene(ecs::World& world);
+/* The demo the window shows until scenes load. `player`, when given, receives
+   the demo's clips: the middle box bobs and spins through one. */
+void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player = nullptr);
 
 } // namespace resonate::renderer
 

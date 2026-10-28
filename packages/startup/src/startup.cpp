@@ -27,6 +27,7 @@
 #include <resonate/pal/platform.h>
 #include <resonate/application/systems.h>
 #include <resonate/ecs/world.h>
+#include <resonate/animation/player.h>
 #include <resonate/hierarchy/system.h>
 #include <resonate/hierarchy/tree.h>
 #include <resonate/module/host.hpp>
@@ -986,6 +987,14 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
     const EngineSystemDesc propagation_desc{"resonate.hierarchy.propagation",
                                             RESONATE_STAGE_LATE_UPDATE,
                                             &hierarchy::PropagationSystem::invoke, &propagation};
+    animation::AnimationPlayer animation_player;
+    /* The descriptor needs a plain function: a shim forwards the frame's
+       delta to the player. */
+    const EngineSystemDesc animation_desc{
+        "animation.player", RESONATE_STAGE_UPDATE,
+        [](void* context, ecs::World& world, ecs::CommandBuffer&, float delta)
+        { static_cast<animation::AnimationPlayer*>(context)->invoke(world, delta); },
+        &animation_player};
     renderer::RenderSystem render_system;
     /* Resolution trades against frame time; a handheld GPU cannot afford the
        full 2400-wide target for this pipeline, so the budget adapts the scale
@@ -1168,6 +1177,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
     config.systems = [&](ModuleHost& host, ecs::World& world)
     {
         if (!hierarchy::registerComponents(world) ||
+            !animation::AnimationPlayer::registerComponents(world) ||
             !renderer::RenderSystem::registerComponents(world) || !ui::registerComponents(world))
         {
             return RESONATE_E_INVALID;
@@ -1278,7 +1288,8 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
         render_system.setRegistry(host.capabilities());
         if (addEngineSystem(host, propagation_desc) != RESONATE_OK ||
             addEngineSystem(host, ui_desc) != RESONATE_OK ||
-            addEngineSystem(host, render_desc) != RESONATE_OK)
+            addEngineSystem(host, render_desc) != RESONATE_OK ||
+            addEngineSystem(host, animation_desc) != RESONATE_OK)
         {
             return RESONATE_E_INVALID;
         }
@@ -1311,7 +1322,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
 #endif
         /* The demo scene is what the window shows until scenes load from disk;
            it is plain ECS entities, created before the frame loop starts. */
-        renderer::composeDemoScene(world);
+        renderer::composeDemoScene(world, &animation_player);
         /* The host's own schedule entries come after the engine's, so they see
            this frame's layout results; the ready hook runs once the document
            exists. */

@@ -3442,7 +3442,7 @@ const char* const kBoxNames[3] = {
     "ç®±å­ C",
 };
 
-void composeDemoScene(ecs::World& world)
+void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player)
 {
     /* The demo's objects carry display names; the editor's scene tree shows
        them. A failed blob attach is ignored: an unnamed entity is legal. */
@@ -3484,6 +3484,20 @@ void composeDemoScene(ecs::World& world)
             world.add(box, render::Material{1U, Vec3{1.0F, 1.0F, 1.0F}});
             /* The tree rows name the boxes A/B/C left to right. */
             name(box, kBoxNames[x]);
+            /* The middle row's box is the demo's animated one: a bob and a
+               yaw spin the sampler drives through the frame's UPDATE. */
+            if (player != nullptr && x == 1 && z == 1)
+            {
+                animation::Clip bob;
+                bob.duration = 2.0F;
+                bob.position.keys = {{0.0F, position},
+                                     {1.0F, Vec3{position.x, position.y + 1.0F, position.z}},
+                                     {2.0F, position}};
+                bob.rotation.keys = {
+                    {0.0F, resonate::quatFromAxisAngle(Vec3{0.0F, 1.0F, 0.0F}, 0.0F)},
+                    {2.0F, resonate::quatFromAxisAngle(Vec3{0.0F, 1.0F, 0.0F}, 6.2831853F)}};
+                world.add(box, animation::AnimationState{player->addClip(std::move(bob))});
+            }
         }
     }
 
