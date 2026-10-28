@@ -26,6 +26,16 @@
       ]
     },
     {
+      "name": "Name",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Name version 1",
+        "  size 8 align 4",
+        "  field text blob @0 size 8"
+      ]
+    },
+    {
       "name": "Parent",
       "kind": "component",
       "version": 1,

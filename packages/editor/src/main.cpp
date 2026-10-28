@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <resonate/ecs/world.h>
+#include <resonate/hierarchy/name.h>
 #include <resonate/hierarchy/tree.h>
 #include "resonate.render/components.gen.h"
 #include <resonate/ui/document.h>
@@ -228,6 +229,20 @@ void mirrorConsole(EditorState& state, resonate::ecs::World& world)
     (void)resonate::ui::setText(world, state.canvas, state.console, joined, error);
 }
 
+/* The entity a tree row stands for, or an invalid one for the authored rows
+   the document ships (the camera and the sun have no box behind them). */
+Entity entityOfRow(const EditorState& state, Entity row)
+{
+    for (const auto& [tree_row, box] : state.box_rows)
+    {
+        if (tree_row == row)
+        {
+            return box;
+        }
+    }
+    return Entity{};
+}
+
 /* The selected scene row names the inspected object: the name field and the
    status line follow the selection, reshaped only when it changes. */
 void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuffer&, float)
@@ -246,13 +261,20 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         applyMaterials(*state, world, selected);
     }
 
-    /* The name field edits the selected row's caption: what the user typed
-       lands on the row, while a mirror echo is left alone. */
+    /* The name field edits the selected object: a box row writes the entity's
+       Name and its caption follows, an authored row renames the caption only.
+       A mirror echo is left alone. */
     if (selected.valid())
     {
         const std::string field_text = resonate::ui::widgetText(world, state->name_field);
         if (field_text != state->mirrored_name)
         {
+            std::string error;
+            const Entity entity = entityOfRow(*state, selected);
+            if (entity.valid())
+            {
+                (void)resonate::hierarchy::setName(world, entity, field_text, error);
+            }
             Entity caption;
             for (const Entity child : resonate::hierarchy::children(world, selected))
             {
@@ -264,14 +286,11 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
             }
             if (caption.valid())
             {
-                std::string error;
-                if (resonate::ui::setText(world, state->canvas, caption, field_text, error))
-                {
-                    state->mirrored_name = field_text;
-                    (void)resonate::ui::setText(world, state->canvas, state->status,
-                                                "已选择 " + field_text, error);
-                }
+                (void)resonate::ui::setText(world, state->canvas, caption, field_text, error);
             }
+            state->mirrored_name = field_text;
+            (void)resonate::ui::setText(world, state->canvas, state->status,
+                                        "已选择 " + field_text, error);
         }
     }
 
@@ -283,7 +302,18 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     std::string error;
     if (selected.valid())
     {
-        const std::string name = resonate::ui::widgetText(world, selected);
+        /* A box row shows the entity's Name; an authored row shows its
+           caption. */
+        std::string name;
+        const Entity entity = entityOfRow(*state, selected);
+        if (entity.valid())
+        {
+            name = resonate::hierarchy::nameOf(world, entity);
+        }
+        if (name.empty())
+        {
+            name = resonate::ui::widgetText(world, selected);
+        }
         (void)resonate::ui::setText(world, state->canvas, state->name_field, name, error);
         state->mirrored_name = name;
         (void)resonate::ui::setText(world, state->canvas, state->status, "已选择 " + name, error);
@@ -340,7 +370,14 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
                 for (std::uint32_t row = 0; row < view.count; ++row)
                 {
                     ++list->index;
-                    const std::string name = "箱子 " + std::to_string(list->index);
+                    /* The row carries the entity's Name; an unnamed entity
+                       falls back to its position in the list. */
+                    std::string name =
+                        resonate::hierarchy::nameOf(*list->world, view.entities[row]);
+                    if (name.empty())
+                    {
+                        name = "箱子 " + std::to_string(list->index);
+                    }
                     const resonate::ecs::Entity tree_row = cloneRow(
                         *list->state, *list->world, list->template_row, list->list, name);
                     list->state->box_rows.emplace_back(tree_row, view.entities[row]);

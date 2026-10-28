@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <schema module="resonate.hierarchy">
 
+  <!-- The entity's display name: UTF-8 bytes in the blob store. Optional; the
+       editor and the scene tools fall back to the entity id when absent. -->
+  <component name="Name" version="1">
+    <field name="text" type="blob"/>
+  </component>
+
   <!-- The entity's parent. An entity without the component is a root; the handle
        is maintained together with the parent's child list by the tree edits. -->
   <component name="Parent" version="1">

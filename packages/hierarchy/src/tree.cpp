@@ -290,7 +290,8 @@ bool registerComponents(ecs::World& world)
 {
     /* Every call has to run: registration is idempotent, but it is also what
        reports a name collision. */
-    bool ok = world.registerComponent<Parent>() != ecs::kInvalidComponent;
+    bool ok = world.registerComponent<Name>() != ecs::kInvalidComponent;
+    ok = world.registerComponent<Parent>() != ecs::kInvalidComponent && ok;
     ok = world.registerComponent<Children>() != ecs::kInvalidComponent && ok;
     ok = world.registerComponent<LocalTransform>() != ecs::kInvalidComponent && ok;
     ok = world.registerComponent<WorldTransform>() != ecs::kInvalidComponent && ok;

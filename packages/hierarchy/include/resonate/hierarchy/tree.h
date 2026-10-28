@@ -27,9 +27,10 @@ namespace resonate::hierarchy
    keeps a corrupted tree from turning a walk into an endless one. */
 inline constexpr std::uint32_t kMaxDepth = 64;
 
-/* Registers the tree's four components in a world. Call it once per world
-   before anything else here; registering again is harmless, and a refusal
-   (a name collision or a full type table) is reported and answers false. */
+/* Registers the tree's components (Name, Parent, Children and the two
+   transforms) in a world. Call it once per world before anything else here;
+   registering again is harmless, and a refusal (a name collision or a full
+   type table) is reported and answers false. */
 bool registerComponents(ecs::World& world);
 
 /* Records making `child` a child of `parent`, moving it out of any current
