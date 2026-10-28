@@ -157,9 +157,11 @@ ResonateStatus Context::createBuffer(const ResonateRenderBufferDesc& desc,
     {
         writeBufferSlot(slot->table_slot, slot->buffer, desc.size_bytes);
     }
-    if ((desc.usage & RESONATE_RENDER_BUFFER_UNIFORM) != 0U)
+    if ((desc.usage & RESONATE_RENDER_BUFFER_UNIFORM) != 0U &&
+        frame_block_buffer_ == VK_NULL_HANDLE)
     {
-        /* The frame block at its fixed binding: one uniform buffer per run. */
+        /* The frame block at its fixed binding: the first uniform buffer claims
+           it, so a later one cannot silently become every shader's frame data. */
         VkDescriptorBufferInfo frame_info{};
         frame_info.buffer = slot->buffer;
         frame_info.offset = 0;
@@ -171,7 +173,8 @@ ResonateStatus Context::createBuffer(const ResonateRenderBufferDesc& desc,
         frame.descriptorCount = 1;
         frame.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         frame.pBufferInfo = &frame_info;
-        vkUpdateDescriptorSets(device_, 1, &frame, 0, nullptr);
+        updateTable(&frame, 1);
+        frame_block_buffer_ = slot->buffer;
     }
     *out = ResonateRenderBuffer{handle};
     return RESONATE_OK;
@@ -187,6 +190,11 @@ void Context::destroyBuffer(ResonateRenderBuffer handle)
     if (slot == nullptr)
     {
         return;
+    }
+    if (slot->buffer == frame_block_buffer_)
+    {
+        /* The frame block is gone; a replacement uniform buffer may claim it. */
+        frame_block_buffer_ = VK_NULL_HANDLE;
     }
     frames_[frame_ % kFramesInFlight].graveyard.push_back(
         Retired{kRetiredBuffer, static_cast<void*>(slot->buffer), slot->allocation});
@@ -313,7 +321,7 @@ void Context::destroyImage(ResonateRenderImage handle)
        deferred batch as the view and the image. */
     for (auto entry = framebuffer_cache_.begin(); entry != framebuffer_cache_.end();)
     {
-        if (entry->first.first == handle.value || entry->first.second == handle.value)
+        if (entry->first.color == handle.value || entry->first.depth == handle.value)
         {
             frame.graveyard.push_back(
                 Retired{kRetiredFramebuffer, static_cast<void*>(entry->second), nullptr});
