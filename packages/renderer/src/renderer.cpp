@@ -1540,9 +1540,12 @@ bool RenderSystem::Impl::ensurePipelines()
         (device->feature_bits(device->self) & RESONATE_RENDER_FEATURE_DESCRIPTOR_INDEXING) == 0U;
     const std::vector<char> vertex_spirv =
         readFile(std::filesystem::path(directory) / "scene.sceneVertex.spv");
+    /* The bindless fragment lives in its own file: slangc carries every
+       function of a source into each module, and the NonUniform decoration it
+       holds would make a no-descriptor-indexing driver refuse the pipeline. */
     const std::vector<char> fragment_spirv = readFile(
         std::filesystem::path(directory) /
-        (compat_shadows ? "scene.sceneFragmentCompat.spv" : "scene.sceneFragment.spv"));
+        (compat_shadows ? "scene.sceneFragmentCompat.spv" : "scene_lit.sceneFragment.spv"));
     const std::vector<char> shadow_vertex_spirv =
         readFile(std::filesystem::path(directory) / "shadow.shadowVertex.spv");
     const std::vector<char> shadow_fragment_spirv =
