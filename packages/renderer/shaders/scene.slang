@@ -22,7 +22,7 @@ struct FrameData
     float4 camera_and_near;             // xyz = world position, w = near
     float4 direction_and_far;           // xyz = directional direction, w = far
     float4 directional_color_intensity; // rgb = color, a = intensity
-    float4 light_count_and_pad;         // x = light count
+    float4 light_count_and_pad;         // x = count, yz = render tile, w = proj y
     float4x4 light_view_proj[3];
     float4 split_distances; // far view-space depth per cascade
     // Flat point lights for a device that cannot read the cluster storage
@@ -102,15 +102,18 @@ VertexOutput sceneVertex(VertexInput input)
     return output;
 }
 
-// The pixel's cluster: CLUSTERS_X x CLUSTERS_Y tiles of the target's extent,
-// and the depth slice by inverting the exponential spacing the build pass used.
+// The pixel's cluster: CLUSTERS_X x CLUSTERS_Y tiles of the scene's render
+// viewport (the scaled sub-rectangle under dynamic resolution), and the depth
+// slice by inverting the exponential spacing the build pass used.
 uint clusterOf(float2 pixel, float view_depth, FrameData frame)
 {
     float2 tile_size = frame.light_count_and_pad.yz;
     uint2 tile = min(uint2(pixel / tile_size), uint2(CLUSTERS_X - 1, CLUSTERS_Y - 1));
     float slice_t = log(view_depth / frame.camera_and_near.w) /
                     log(frame.direction_and_far.w / frame.camera_and_near.w);
-    uint slice = uint(saturate(slice_t) * float(CLUSTERS_Z));
+    /* saturate() pins far-plane fragments to slice CLUSTERS_Z, one past the
+       last one; the grid is indexed [0, CLUSTERS_Z). */
+    uint slice = min(uint(saturate(slice_t) * float(CLUSTERS_Z)), CLUSTERS_Z - 1U);
     return tile.x + tile.y * CLUSTERS_X + slice * CLUSTERS_X * CLUSTERS_Y;
 }
 
@@ -128,15 +131,18 @@ uint cascadeOf(float view_depth, FrameData frame)
 }
 
 // Four-tap PCF against one cascade's shadow map; the map was rendered from the
-// light's view, so the shadow coordinates come from the same matrix.
-float pcfOf(uint slot, float2 uv, float receiver, float texel)
+// light's view, so the shadow coordinates come from the same matrix. The tap
+// spacing is the pixel's own footprint in the map, which keeps the kernel right
+// at any map resolution.
+float pcfOf(uint slot, float2 uv, float receiver)
 {
     float sum = 0.0;
+    float2 texel = max(abs(ddx(uv)), abs(ddy(uv)));
     const float2 TAPS[4] = {float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5),
                             float2(0.5, 0.5)};
     for (uint tap = 0; tap < 4; ++tap)
     {
-        float depth = image_table[slot].Sample(uv + TAPS[tap] * texel).r;
+        float depth = image_table[NonUniformResourceIndex(slot)].Sample(uv + TAPS[tap] * texel).r;
         sum += receiver - 0.003 > depth ? 0.0 : 1.0;
     }
     return sum * 0.25;
@@ -153,11 +159,10 @@ float shadowFactor(float3 world_position, float view_depth, FrameData frame)
     }
     float2 uv = float2(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * 0.5 + 0.5);
     float receiver = shadow_ndc.z;
-    float texel = 1.0 / 2048.0;
 
-    // The cascade differs per pixel, so the table lookup does too.
-    uint shadow_slot = NonUniformResourceIndex(push.slots2[cascade + 1]);
-    return pcfOf(shadow_slot, uv, receiver, texel);
+    // The cascade differs per pixel, so the table lookup does too; the index is
+    // marked at the access site inside pcfOf.
+    return pcfOf(push.slots2[cascade + 1], uv, receiver);
 }
 
 // A device without descriptor indexing cannot index the table per pixel. The
@@ -176,8 +181,7 @@ float shadowFactorCompat(float3 world_position, float view_depth, FrameData fram
     }
     float2 uv = float2(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * 0.5 + 0.5);
     float receiver = shadow_ndc.z;
-    float texel = 1.0 / 2048.0;
-    return pcfOf(push.slots2[1], uv, receiver, texel);
+    return pcfOf(push.slots2[1], uv, receiver);
 }
 
 static const float PI = 3.14159265;

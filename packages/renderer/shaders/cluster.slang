@@ -14,7 +14,7 @@ struct FrameData
     float4 camera_and_near;             // xyz = world position, w = near
     float4 direction_and_far;           // xyz = directional direction, w = far
     float4 directional_color_intensity; // rgb = color, a = intensity
-    float4 light_count_and_pad;         // x = light count
+    float4 light_count_and_pad;         // x = count, yz = render tile, w = proj y
 };
 
 struct Light
@@ -72,11 +72,9 @@ float sliceDepth(uint slice)
 
 float3 viewToWorld(float3 view_point, FrameData frame)
 {
-    // The camera world matrix is rigid: the point rotates then translates.
-    float3 world = frame.camera_world._m00_m01_m02 * view_point.x +
-                   frame.camera_world._m10_m11_m12 * view_point.y +
-                   frame.camera_world._m20_m21_m22 * view_point.z;
-    return world + frame.camera_and_near.xyz;
+    // camera_world is the inverse of the view: the full transform, not rows
+    // alone (row extraction would apply its transpose).
+    return mul(frame.camera_world, float4(view_point, 1.0)).xyz;
 }
 
 [shader("compute")]
@@ -93,8 +91,13 @@ void clusterBuild(uint3 tid : SV_DispatchThreadID)
     float near = sliceDepth(tid.z);
     float far = sliceDepth(tid.z + 1);
 
-    float width_scale = frame.view_proj._m00;
-    float height_scale = frame.view_proj._m11;
+    // The projection's scales, not view_proj's: those carry the camera's
+    // rotation. yz is the tile in render pixels, so their ratio is the scene
+    // viewport's aspect even under dynamic resolution.
+    float2 tile = frame.light_count_and_pad.yz;
+    float aspect = (tile.x * float(CLUSTERS_X)) / (tile.y * float(CLUSTERS_Y));
+    float height_scale = frame.light_count_and_pad.w;
+    float width_scale = -height_scale / aspect;
 
     float3 minimum = float3(1e30, 1e30, 1e30);
     float3 maximum = float3(-1e30, -1e30, -1e30);

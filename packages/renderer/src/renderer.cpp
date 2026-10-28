@@ -81,7 +81,7 @@ struct ShaderFrameData
     Vec4 camera_and_near;             /* xyz = camera position, w = near_z */
     Vec4 direction_and_far;           /* xyz = directional direction, w = far_z */
     Vec4 directional_color_intensity; /* rgb = color, w = intensity */
-    Vec4 light_count_and_pad;         /* x = light count, yz = cluster tile pixels */
+    Vec4 light_count_and_pad;         /* x = light count, yz = render tile, w = proj y */
     Mat4 light_view_proj[3];
     Vec4 split_distances; /* far view-space depth per cascade */
     std::uint32_t uniform_light_count = 0;
@@ -318,13 +318,14 @@ bool createSampledTexture(ResonateRenderDevice& device, std::uint32_t width, std
                                static_cast<std::uint64_t>(width) * 4U) == RESONATE_OK;
 }
 
-/* The three frustum-corner world positions of one cascade slice: the light's
-   ortho box fits their bounds. */
-void cascadeBounds(const Mat4& view_proj, const Mat4& camera_world, float near_depth,
+/* The frustum corners of one cascade slice in view space, mapped to world:
+   the light's ortho box fits their bounds. `projection` is the camera's
+   projection alone; its x/y scales unproject NDC at a given view depth. */
+void cascadeBounds(const Mat4& projection, const Mat4& camera_world, float near_depth,
                    float far_depth, Vec3& out_min, Vec3& out_max)
 {
-    const float width_scale = view_proj.m[0][0];
-    const float height_scale = view_proj.m[1][1];
+    const float width_scale = projection.m[0][0];
+    const float height_scale = projection.m[1][1];
     out_min = Vec3{1e30F, 1e30F, 1e30F};
     out_max = Vec3{-1e30F, -1e30F, -1e30F};
     for (std::uint32_t corner = 0; corner < 16U; ++corner)
@@ -2157,12 +2158,13 @@ bool RenderSystem::Impl::extract(ecs::World& world)
         Vec4{directional_direction.x, directional_direction.y, directional_direction.z, far_z};
     scratch.frame_data.directional_color_intensity =
         Vec4{directional_color.x, directional_color.y, directional_color.z, directional_intensity};
-    /* The cluster grid's pixel tile size travels with the frame data, so the
-       fragment shader's lookup follows the target's extent. */
+    /* x = light count, yz = the cluster tile in render pixels, w = the
+       projection's y scale. The tile follows the scaled sub-viewport, which
+       the render thread knows at draw time, so it fills yz there; the cluster
+       pass needs the projection scale alone (view_proj carries the camera's
+       rotation and cannot be unprojected with it). */
     scratch.frame_data.light_count_and_pad =
-        Vec4{static_cast<float>(scratch.lights.size()),
-             static_cast<float>(scratch.target_width) / static_cast<float>(kClustersX),
-             static_cast<float>(scratch.target_height) / static_cast<float>(kClustersY), 0.0F};
+        Vec4{static_cast<float>(scratch.lights.size()), 0.0F, 0.0F, projection.m[1][1]};
 
     /* CSM: three logarithmic splits, ascending, the last at 35% of the view
        distance — shadow range trades against texel density. Each cascade's
@@ -2185,7 +2187,10 @@ bool RenderSystem::Impl::extract(ecs::World& world)
         split_values[cascade] = split;
         Vec3 minimum;
         Vec3 maximum;
-        cascadeBounds(projection * view, camera_world, previous_split, split, minimum, maximum);
+        /* The unprojection divides by the projection's own x/y scales; with
+           view_proj they would carry the camera's rotation, and a yaw near 90
+           degrees would divide by zero. */
+        cascadeBounds(projection, camera_world, previous_split, split, minimum, maximum);
         const Vec3 center = (minimum + maximum) * 0.5F;
         const Vec3 extents = (maximum - minimum) * 0.5F;
         const float box_width = std::fmax(std::fmax(extents.x, extents.y), extents.z) * 2.0F;
@@ -3256,6 +3261,12 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
                                     static_cast<float>(target_width) * render_scale + 0.5F));
     render_height = std::max(1U, static_cast<std::uint32_t>(
                                      static_cast<float>(target_height) * render_scale + 0.5F));
+    /* The cluster tile is a share of the scene's viewport, not of the output:
+       the fragment's position spans the scaled sub-rectangle. */
+    snapshot.frame_data.light_count_and_pad.y =
+        static_cast<float>(render_width) / static_cast<float>(kClustersX);
+    snapshot.frame_data.light_count_and_pad.z =
+        static_cast<float>(render_height) / static_cast<float>(kClustersY);
 #if defined(RESONATE_WITH_TGFX)
     /* The text layer is uploaded outside the frame; the UI pass only samples
        it. A failed overlay leaves the atlas glyph quads in place. */
