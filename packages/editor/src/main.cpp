@@ -150,7 +150,13 @@ resonate::ecs::Entity cloneRow(EditorState& state, resonate::ecs::World& world, 
             const std::uint64_t size = world.blobSize(state_styles->records);
             if (bytes != nullptr && size > 0U)
             {
-                world.createBlob(row, size, bytes);
+                /* The record blob is per entity: the clone copies the bytes and
+                   points its own StateStyles at the copy. */
+                const resonate::ecs::BlobHandle records = world.createBlob(row, size, bytes);
+                if (records.valid())
+                {
+                    world.add(row, resonate::ui::StateStyles{records});
+                }
             }
         }
     }
