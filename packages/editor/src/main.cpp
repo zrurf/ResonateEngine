@@ -7,6 +7,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <system_error>
 #include <limits>
 #include <string>
@@ -100,6 +101,8 @@ struct EditorState
     Entity command_field{};
     bool command_pending = false;
     bool save_pending = false;
+    bool undo_pending = false;
+    bool redo_pending = false;
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -119,6 +122,27 @@ struct EditorState
        the layout file and written back when it changes. */
     Layout layout{};
     float save_delay = 0.0F;
+
+    /* Reversible edits. Closures borrow the world through the editor state and
+       run only from the tick, the same discipline as the command latch. */
+    struct UndoEntry
+    {
+        std::string name;
+        std::function<void(resonate::ecs::World&)> undo;
+        std::function<void(resonate::ecs::World&)> redo;
+    };
+    std::vector<UndoEntry> undo_stack;
+    std::vector<UndoEntry> redo_stack;
+
+    /* The material scrub's undo coalescing: one drag is one entry, so the
+       value before the press is snapshotted and pushed on release. */
+    struct ScrubUndo
+    {
+        bool dragging = false;
+        float before = 0.0F;
+    };
+    ScrubUndo roughness_undo{};
+    ScrubUndo metallic_undo{};
 };
 
 /* The run's CVars: startup copies the engine's bindings in through the host
@@ -338,6 +362,53 @@ Entity entityOfRow(const EditorState& state, Entity row)
         }
     }
     return Entity{};
+}
+
+/* One reversible edit per push; a push clears the redo stack, and the stacks
+   cap so a long session cannot grow without bound. Executed only from the
+   tick: the closures read the world through the editor state. */
+constexpr std::size_t kUndoDepth = 64U;
+
+void pushUndo(EditorState& state, std::string name, std::function<void(resonate::ecs::World&)> undo,
+              std::function<void(resonate::ecs::World&)> redo)
+{
+    state.undo_stack.push_back(
+        EditorState::UndoEntry{std::move(name), std::move(undo), std::move(redo)});
+    state.redo_stack.clear();
+    while (state.undo_stack.size() > kUndoDepth)
+    {
+        state.undo_stack.erase(state.undo_stack.begin());
+    }
+}
+
+void runUndo(EditorState& state, resonate::ecs::World& world)
+{
+    if (state.undo_stack.empty())
+    {
+        return;
+    }
+    EditorState::UndoEntry entry = std::move(state.undo_stack.back());
+    state.undo_stack.pop_back();
+    entry.undo(world);
+    state.redo_stack.push_back(std::move(entry));
+    std::string status_error;
+    (void)resonate::ui::setText(world, state.canvas, state.status,
+                                "撤销 " + state.redo_stack.back().name, status_error);
+}
+
+void runRedo(EditorState& state, resonate::ecs::World& world)
+{
+    if (state.redo_stack.empty())
+    {
+        return;
+    }
+    EditorState::UndoEntry entry = std::move(state.redo_stack.back());
+    state.redo_stack.pop_back();
+    entry.redo(world);
+    state.undo_stack.push_back(std::move(entry));
+    std::string status_error;
+    (void)resonate::ui::setText(world, state.canvas, state.status,
+                                "重做 " + state.undo_stack.back().name, status_error);
 }
 
 std::string layoutPath()
@@ -621,6 +692,28 @@ bool saveScene(void* context, resonate::ecs::World& world, resonate::ecs::Entity
     return true;
 }
 
+bool undoEdit(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+              resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->undo_pending = true;
+    return true;
+}
+
+bool redoEdit(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+              resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->redo_pending = true;
+    return true;
+}
+
 /* A pane toggle flips its flag, re-derives the geometry and records the result
    at once: a click is deliberate, unlike a drag that settles first. */
 void togglePane(EditorState& state, resonate::ecs::World& world, bool Layout::*flag)
@@ -665,8 +758,10 @@ bool toggleConsole(void* context, resonate::ecs::World& world, resonate::ecs::En
 
 /* One axis of the position: the field shows it, a typed number writes it.
    A field that does not parse keeps its text and is not retried until the
-   next edit. */
-void applyPositionField(resonate::ecs::World& world, EditorState::AxisField& field,
+   next edit. Each accepted write pushes one undo entry whose closures also
+   refresh the field, so an undo does not fight the text still standing in it. */
+void applyPositionField(resonate::ecs::World& world, EditorState& state,
+                        EditorState::AxisField& field,
                         resonate::hierarchy::LocalTransform* transform, Entity entity,
                         std::uint32_t axis)
 {
@@ -684,8 +779,38 @@ void applyPositionField(resonate::ecs::World& world, EditorState::AxisField& fie
         return;
     }
     float* axes[3] = {&transform->position.x, &transform->position.y, &transform->position.z};
+    const float previous = *axes[axis];
+    if (previous == value)
+    {
+        return;
+    }
     *axes[axis] = value;
     (void)world.markChanged<resonate::hierarchy::LocalTransform>(entity);
+
+    /* The closures re-resolve the transform at execution time: a component
+       pointer would dangle across the structural changes in between. */
+    const auto apply = [&state, &field, entity,
+                        axis](float amount, resonate::ecs::World& world_ref)
+    {
+        if (auto* target = world_ref.get<resonate::hierarchy::LocalTransform>(entity);
+            target != nullptr)
+        {
+            float* target_axes[3] = {&target->position.x, &target->position.y,
+                                     &target->position.z};
+            *target_axes[axis] = amount;
+            (void)world_ref.markChanged<resonate::hierarchy::LocalTransform>(entity);
+        }
+        char text[32] = {};
+        std::snprintf(text, sizeof(text), "%.2f", static_cast<double>(amount));
+        std::string field_error;
+        (void)resonate::ui::setText(world_ref, state.canvas, field.handle, text, field_error);
+        field.mirrored = text;
+    };
+    static const char* const kAxisNames[3] = {"位置 X", "位置 Y", "位置 Z"};
+    pushUndo(state, kAxisNames[axis],
+             [apply, previous](resonate::ecs::World& world_ref)
+             { apply(previous, world_ref); },
+             [apply, value](resonate::ecs::World& world_ref) { apply(value, world_ref); });
 }
 
 /* The position fields follow the selected object; an entity without a
@@ -717,6 +842,16 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     if (!world.alive(state->canvas))
     {
         return;
+    }
+    if (state->undo_pending)
+    {
+        state->undo_pending = false;
+        runUndo(*state, world);
+    }
+    if (state->redo_pending)
+    {
+        state->redo_pending = false;
+        runRedo(*state, world);
     }
     if (state->save_pending)
     {
@@ -878,6 +1013,39 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
        defaults on the first call). */
     if (!std::isnan(state->metallic.shown) && state->boxes.valid())
     {
+        /* A material drag coalesces into one undo entry: the value before the
+           press is snapshotted, the entry is pushed on release. The closures
+           only restore the scrubber -- applyMaterials writes the material from
+           it on the next tick, which is also what keeps a later selection from
+           being overwritten by a stale pointer. */
+        if (const auto* pointer = world.get<resonate::ui::PointerState>(state->canvas);
+            pointer != nullptr)
+        {
+            const auto track = [&](EditorState::ScrubUndo& undo, const EditorState::Scrub& scrub,
+                                   const float current, const char* name)
+            {
+                const bool dragging = pointer->down && pointer->press == scrub.handle;
+                if (dragging && !undo.dragging)
+                {
+                    undo.before = current;
+                }
+                if (!dragging && undo.dragging && std::fabs(current - undo.before) > 1.0e-6F)
+                {
+                    const float before = undo.before;
+                    const float after = current;
+                    const Entity handle = scrub.handle;
+                    pushUndo(*state, name,
+                             [state, handle, before](resonate::ecs::World& world_ref)
+                             { (void)resonate::ui::setScrubValue(world_ref, handle, before); },
+                             [state, handle, after](resonate::ecs::World& world_ref)
+                             { (void)resonate::ui::setScrubValue(world_ref, handle, after); });
+                }
+                undo.dragging = dragging;
+            };
+            track(state->roughness_undo, state->roughness, state->roughness.shown, "粗糙度");
+            track(state->metallic_undo, state->metallic, state->metallic.shown, "金属度");
+        }
+
         applyMaterials(*state, world, selected);
     }
 
@@ -893,6 +1061,44 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
             const Entity entity = entityOfRow(*state, selected);
             if (entity.valid())
             {
+                /* The rename is reversible down to the caption and the field's
+                   mirror, or the field's next edit would re-apply the undone
+                   text. */
+                const std::string previous = state->mirrored_name;
+                const std::string current = field_text;
+                const Entity row = selected;
+                auto apply_name = [state, entity, row](const std::string& name,
+                                                       resonate::ecs::World& world_ref)
+                {
+                    if (!world_ref.alive(entity))
+                    {
+                        return;
+                    }
+                    std::string name_error;
+                    (void)resonate::hierarchy::setName(world_ref, entity, name, name_error);
+                    Entity caption;
+                    for (const Entity child : resonate::hierarchy::children(world_ref, row))
+                    {
+                        if (world_ref.get<resonate::ui::Text>(child) != nullptr)
+                        {
+                            caption = child;
+                            break;
+                        }
+                    }
+                    if (caption.valid())
+                    {
+                        (void)resonate::ui::setText(world_ref, state->canvas, caption, name,
+                                                    name_error);
+                    }
+                    (void)resonate::ui::setText(world_ref, state->canvas, state->name_field,
+                                                name, name_error);
+                    state->mirrored_name = name;
+                };
+                pushUndo(*state, "名称",
+                         [apply_name, previous](resonate::ecs::World& world_ref)
+                         { apply_name(previous, world_ref); },
+                         [apply_name, current](resonate::ecs::World& world_ref)
+                         { apply_name(current, world_ref); });
                 (void)resonate::hierarchy::setName(world, entity, field_text, error);
             }
             Entity caption;
@@ -918,9 +1124,9 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
             entity.valid()
                 ? world.get<resonate::hierarchy::LocalTransform>(entity)
                 : nullptr;
-        applyPositionField(world, state->position_x, transform, entity, 0U);
-        applyPositionField(world, state->position_y, transform, entity, 1U);
-        applyPositionField(world, state->position_z, transform, entity, 2U);
+        applyPositionField(world, *state, state->position_x, transform, entity, 0U);
+        applyPositionField(world, *state, state->position_y, transform, entity, 1U);
+        applyPositionField(world, *state, state->position_z, transform, entity, 2U);
     }
 
     if (selected == state->shown_row)
@@ -1021,13 +1227,19 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
                                   resonate::ui::eventBit(resonate::ui::EventKind::Click)});
         }
     };
-    const Entity file_button = resonate::ui::findByKey(world, canvas, "file");
-    if (file_button.valid())
+    const auto attachClick = [&](const char* key, resonate::ui::EventHandler handler)
     {
-        world.add(file_button,
-                  resonate::ui::Listener{&saveScene, state,
-                                         resonate::ui::eventBit(resonate::ui::EventKind::Click)});
-    }
+        const Entity button = resonate::ui::findByKey(world, canvas, key);
+        if (button.valid())
+        {
+            world.add(button, resonate::ui::Listener{
+                                  handler, state,
+                                  resonate::ui::eventBit(resonate::ui::EventKind::Click)});
+        }
+    };
+    attachClick("file", &saveScene);
+    attachClick("tb-undo", &undoEdit);
+    attachClick("tb-redo", &redoEdit);
     attachToggle("tb-scene-pane", &toggleScene);
     attachToggle("tb-inspector", &toggleInspector);
     attachToggle("tb-console", &toggleConsole);
