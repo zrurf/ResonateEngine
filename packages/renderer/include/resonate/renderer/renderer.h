@@ -11,7 +11,7 @@
  *
  * `setRegistry` hands over the run's capability registry, which is where the
  * device is found; call it before the frame loop starts. The scene the demo
- * draws is seeded by `composeDemoScene` until scenes load from disk.
+ * draws is seeded by the demo scene document (content/scene/demo.rscene).
  */
 
 #include <memory>
@@ -159,7 +159,7 @@ class RenderSystem
    colored boxes, all straight ECS entities. */
 /* The demo the window shows until scenes load. `player`, when given, receives
    the demo's clips: the middle box bobs and spins through one. */
-void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player = nullptr);
+
 
 } // namespace resonate::renderer
 

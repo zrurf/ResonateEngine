@@ -37,6 +37,7 @@
 #include <resonate/render/offscreen.hpp>
 #include <resonate/renderer/renderer.h>
 #include <resonate/text/font.h>
+#include <resonate/scene/document.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/binding.h>
 #include <resonate/ui/document_schema.h>
@@ -55,6 +56,7 @@
 #include "resonate.gameplay/nodes.gen.h"
 #include "resonate.hierarchy/nodes.gen.h"
 #include "resonate.render/nodes.gen.h"
+#include "resonate.scene/nodes.gen.h"
 #include "resonate.ui/components.gen.h"
 #include "resonate.ui/nodes.gen.h"
 
@@ -528,8 +530,13 @@ const dom::SchemaRegistry& contentSchema()
                                                 gameplay::generated::kNodeTypeCount),
         resonate::Span<const char* const>(gameplay::generated::kComponents,
                                           gameplay::generated::kComponentCount));
-    static const std::array<const dom::SchemaRegistry*, 4> tables{
-        &ui::documentSchema(), &hierarchy_table, &render_table, &gameplay_table};
+    static const dom::TableSchemaRegistry scene_table(
+        resonate::Span<const dom::NodeTypeDesc>(scene::generated::kNodeTypes,
+                                                scene::generated::kNodeTypeCount),
+        resonate::Span<const char* const>(scene::generated::kComponents,
+                                          scene::generated::kComponentCount));
+    static const std::array<const dom::SchemaRegistry*, 5> tables{
+        &ui::documentSchema(), &hierarchy_table, &render_table, &gameplay_table, &scene_table};
     static const dom::CompositeSchemaRegistry registry(
         resonate::Span<const dom::SchemaRegistry* const>(tables.data(), tables.size()));
     return registry;
@@ -638,6 +645,114 @@ bool readTextFile(const std::string& path, std::string& out)
     }
     out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     return true;
+}
+
+/* The demo scene: content/scene/demo.rscene instantiated through the scene
+   adapter. The middle box's state machine and the ceiling light grid stay
+   procedural: animation authoring and stress fixtures are not content yet. */
+void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player)
+{
+    /* A host that stages its assets elsewhere (Android) names the document
+       directly; the setting and the content walk cover desktop runs. */
+    const char* const staged = std::getenv("RESONATE_SCENE_DOCUMENT");
+    const std::string path = staged != nullptr && *staged != ' '
+                                 ? std::string(staged)
+                                 : findContentFile("content/scene/demo.rscene");
+    if (path.empty())
+    {
+        std::fprintf(stderr, "resonate: scene: content/scene/demo.rscene is missing\n");
+        return;
+    }
+    std::string text;
+    if (!readTextFile(path, text))
+    {
+        std::fprintf(stderr, "resonate: scene: cannot read %s\n", path.c_str());
+        return;
+    }
+    std::vector<dom::Diagnostic> diagnostics;
+    auto document = dom::Document::parse(text, &contentSchema(), diagnostics);
+    if (document == nullptr)
+    {
+        for (const dom::Diagnostic& diagnostic : diagnostics)
+        {
+            std::fprintf(stderr, "resonate: scene: %s:%u:%u: %s\n", path.c_str(),
+                         diagnostic.line, diagnostic.column, diagnostic.message.c_str());
+        }
+        return;
+    }
+
+    ecs::Entity root{};
+    std::string error;
+    if (!scene::instantiate(world, *document, &contentComponents(), root, error))
+    {
+        std::fprintf(stderr, "resonate: scene: %s: %s\n", path.c_str(), error.c_str());
+        return;
+    }
+
+    /* The middle box is the demo's animated one: a bob and a yaw spin, each
+       held to its end, cross-faded by the two at-end edges. */
+    if (player != nullptr)
+    {
+        const ecs::Entity box = scene::findByKey(world, root, "box-center");
+        if (box.valid())
+        {
+            const auto* transform = world.get<hierarchy::LocalTransform>(box);
+            const Vec3 position =
+                transform != nullptr ? transform->position : Vec3{0.0F, 0.5F, 2.5F};
+
+            animation::Clip bob;
+            bob.duration = 2.0F;
+            bob.position.keys = {{0.0F, position},
+                                 {1.0F, Vec3{position.x, position.y + 1.0F, position.z}},
+                                 {2.0F, position}};
+            animation::Clip spin;
+            spin.duration = 3.0F;
+            spin.rotation.keys = {
+                {0.0F, resonate::quatFromAxisAngle(Vec3{0.0F, 1.0F, 0.0F}, 0.0F)},
+                {1.5F, resonate::quatFromAxisAngle(Vec3{0.0F, 1.0F, 0.0F}, 3.1415927F)},
+                {3.0F, resonate::quatFromAxisAngle(Vec3{0.0F, 1.0F, 0.0F}, 6.2831853F)}};
+
+            animation::StateMachine machine;
+            machine.states.push_back(
+                animation::State{player->addClip(std::move(bob)), 2.0F, false});
+            machine.states.push_back(
+                animation::State{player->addClip(std::move(spin)), 3.0F, false});
+            animation::Transition to_spin;
+            to_spin.from = 0U;
+            to_spin.to = 1U;
+            to_spin.at_end_only = true;
+            to_spin.fade_seconds = 0.4F;
+            machine.transitions.push_back(to_spin);
+            animation::Transition to_bob;
+            to_bob.from = 1U;
+            to_bob.to = 0U;
+            to_bob.at_end_only = true;
+            to_bob.fade_seconds = 0.4F;
+            machine.transitions.push_back(to_bob);
+
+            world.add(box, animation::AnimationState{});
+            world.add(box, animation::MachineState{player->addMachine(std::move(machine)),
+                                                   animation::MachineRuntime{}});
+        }
+    }
+
+    /* The cluster acceptance wants a hundred lights and change: a ceiling grid
+       of warm and cool points over the field. */
+    for (int x = 0; x < 12; ++x)
+    {
+        for (int z = 0; z < 12; ++z)
+        {
+            const ecs::Entity light = world.create();
+            const Vec3 position{static_cast<float>(x - 5) * 2.2F, 2.2F,
+                                static_cast<float>(z - 5) * 2.2F};
+            const float mix = (x + z) % 2 == 0 ? 1.0F : 0.0F;
+            const Vec3 color{0.30F + 0.65F * mix, 0.45F, 0.85F - 0.45F * mix};
+            world.add(light, hierarchy::LocalTransform{position, resonate::Quat{},
+                                                       Vec3{1.0F, 1.0F, 1.0F}});
+            world.add(light, hierarchy::WorldTransform{});
+            world.add(light, render::PointLight{color, 1.4F, 5.0F});
+        }
+    }
 }
 
 /* The configured UI document, instantiated into the world. A missing default
@@ -1345,7 +1460,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
 #endif
         /* The demo scene is what the window shows until scenes load from disk;
            it is plain ECS entities, created before the frame loop starts. */
-        renderer::composeDemoScene(world, &animation_player);
+        composeDemoScene(world, &animation_player);
         /* The host's own schedule entries come after the engine's, so they see
            this frame's layout results; the ready hook runs once the document
            exists. */

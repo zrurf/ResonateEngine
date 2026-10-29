@@ -1,0 +1,26 @@
+{
+  "format": 1,
+  "tool": "0.1.0",
+  "module": "resonate.scene",
+  "types": [
+    {
+      "name": "Object",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Object version 1",
+        "  uses LocalTransform expose position rotation scale",
+        "  uses Material expose metallic roughness tint",
+        "  uses Camera expose far_z fov_y_degrees near_z"
+      ]
+    },
+    {
+      "name": "Scene",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Scene version 1"
+      ]
+    }
+  ]
+}

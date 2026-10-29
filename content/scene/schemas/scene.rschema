@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<schema module="resonate.scene">
+  <import module="resonate.hierarchy"/>
+  <import module="resonate.render"/>
+
+  <!-- The scene document's node types: what a .rscene file may contain. The
+       components an object carries come from the owning modules' schemas
+       (hierarchy, render) and are authored as component elements; this schema
+       names no component layout of its own. -->
+
+  <!-- A scene document's root. It is not an entity; its Object children are
+       the scene's roots. -->
+  <node name="Scene" version="1"/>
+
+  <!-- One entity. Nesting is parenting: an Object inside an Object is its
+       child. `key` is the stable id applications resolve, `name` the display
+       name. -->
+  <!-- Fields two components share (color, intensity) are not exposed: a node
+       attribute cannot say which one it means, so those components are authored
+       as component elements instead. -->
+  <node name="Object" version="1">
+    <uses component="LocalTransform" expose="position rotation scale"/>
+    <uses component="Material" expose="tint roughness metallic"/>
+    <uses component="Camera" expose="fov_y_degrees near_z far_z"/>
+  </node>
+
+</schema>

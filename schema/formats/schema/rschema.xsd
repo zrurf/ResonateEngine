@@ -172,6 +172,11 @@
   <xs:element name="schema">
     <xs:complexType>
       <xs:choice minOccurs="0" maxOccurs="unbounded">
+        <xs:element name="import">
+          <xs:complexType>
+            <xs:attribute name="module" type="ModuleId" use="required"/>
+          </xs:complexType>
+        </xs:element>
         <xs:element name="enum" type="Enum"/>
         <xs:element name="bitmask" type="Bitmask"/>
         <xs:element name="struct" type="Struct"/>

@@ -13,6 +13,8 @@ internal sealed class SchemaFile(string path, string module, int moduleLine, int
     internal int ModuleLine { get; } = moduleLine;
     internal int ModuleColumn { get; } = moduleColumn;
     internal List<TypeDecl> Types { get; } = [];
+    /* The modules whose components this schema's node types compose. */
+    internal List<string> Imports { get; } = [];
 }
 
 /* Turns one .rschema file into declarations. What is checked here is the shape
@@ -65,6 +67,12 @@ internal static class SchemaParser
         SchemaFile file = new(path, module.Value, module.Line, module.Column);
         foreach (XmlElement element in root.Children)
         {
+            System.Console.Error.WriteLine($"DBG {path} child <{element.Name}>");
+            if (element.Name == "import")
+            {
+                ParseImport(element, file, diagnostics);
+                continue;
+            }
             TypeDecl? type = element.Name switch
             {
                 "enum" => ParseEnum(element, module.Value, diagnostics),
@@ -88,6 +96,30 @@ internal static class SchemaParser
                           $"'{element.Name}' is not a type declaration; a schema declares enum, "
                               + "bitmask, struct, component or node");
         return null;
+    }
+
+    private static void ParseImport(XmlElement element, SchemaFile file, Diagnostics diagnostics)
+    {
+        CheckAttributes(element, SchemaAttributes, diagnostics, "an import");
+        XmlAttribute? module = Required(element, "module", diagnostics, "an import");
+        if (module is null)
+        {
+            return;
+        }
+        if (!Names.IsModuleId(module.Value))
+        {
+            diagnostics.Error(file.Path, element.Line, element.Column,
+                              $"'{module.Value}' is not a module id: lowercase reverse-DNS with at "
+                                  + "least two segments, as in resonate.gameplay");
+            return;
+        }
+        if (module.Value == file.Module)
+        {
+            diagnostics.Error(file.Path, element.Line, element.Column,
+                              "a schema does not import itself");
+            return;
+        }
+        file.Imports.Add(module.Value);
     }
 
     private static TypeDecl? ParseEnum(XmlElement element, string module, Diagnostics diagnostics)

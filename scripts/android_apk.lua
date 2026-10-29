@@ -166,6 +166,15 @@ if #ui_images > 0 then
     end
 end
 
+-- The demo scene document: source text like the UI documents.
+local scene_documents = os.files(path.join(os.projectdir(), "content", "scene", "*.rscene"))
+if #scene_documents > 0 then
+    os.mkdir(path.join(staging, "assets", "scene"))
+    for _, document in ipairs(scene_documents) do
+        os.cp(document, path.join(staging, "assets", "scene"))
+    end
+end
+
 local base = path.join(staging, "base.apk")
 local aligned = path.join(staging, "aligned.apk")
 local output = path.join(build, "resonate.apk")

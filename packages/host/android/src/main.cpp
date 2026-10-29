@@ -346,6 +346,16 @@ void android_main(android_app* app)
         setenv("RESONATE_IMAGE_PATH", images.c_str(), 1);
     }
 
+    const std::string scene = stageAssets(app, "scene");
+    if (!scene.empty())
+    {
+        const std::string document = scene + "/demo.rscene";
+        if (access(document.c_str(), R_OK) == 0)
+        {
+            setenv("RESONATE_SCENE_DOCUMENT", document.c_str(), 1);
+        }
+    }
+
     const std::string ui = stageAssets(app, "ui");
     if (!ui.empty())
     {

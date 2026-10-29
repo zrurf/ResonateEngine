@@ -10,6 +10,8 @@ internal sealed class ModuleUnit
     internal List<SchemaFile> Files { get; } = [];
     internal List<TypeDecl> Types { get; } = [];
     internal Dictionary<string, TypeDecl> ByName { get; } = new(StringComparer.Ordinal);
+    /* The modules whose components this module's node types may compose. */
+    internal List<string> Imports { get; } = [];
 }
 
 /* The pass between parsing and emitting: groups files by owner module, resolves
@@ -32,17 +34,24 @@ internal static class SchemaCompiler
             }
             module.Files.Add(file);
             module.Types.AddRange(file.Types);
+            foreach (string import in file.Imports)
+            {
+                if (!module.Imports.Contains(import))
+                {
+                    module.Imports.Add(import);
+                }
+            }
         }
-
         foreach (ModuleUnit module in modules)
         {
+            System.Console.Error.WriteLine($"DBG {module.Id} imports=[{string.Join(",", module.Imports)}] files={module.Files.Count}");
             IndexTypes(module, diagnostics);
             foreach (TypeDecl type in module.Types)
             {
                 ResolveFields(module, type, diagnostics);
                 if (type.Kind == TypeKind.Node)
                 {
-                    ResolveNodeUses(module, type, diagnostics);
+                    ResolveNodeUses(module, type, diagnostics, byId);
                 }
                 CheckVersioning(type, diagnostics);
             }
@@ -57,11 +66,12 @@ internal static class SchemaCompiler
         return modules;
     }
 
-    /* A node type composes components of its own module. The composition is
-       flat: every used component must exist, exposed/defaulted field names must
-       exist on it, and one attribute cannot be exposed by two components. */
-    private static void ResolveNodeUses(ModuleUnit module, TypeDecl type,
-                                        Diagnostics diagnostics)
+    /* A node type composes components of its own module and of the modules it
+       imports. The composition is flat: every used component must exist,
+       exposed/defaulted field names must exist on it, and one attribute cannot
+       be exposed by two components. */
+    private static void ResolveNodeUses(ModuleUnit module, TypeDecl type, Diagnostics diagnostics,
+                                        Dictionary<string, ModuleUnit> byId)
     {
         HashSet<string> exposedNames = new(StringComparer.Ordinal);
         HashSet<string> authoringNames = new(StringComparer.Ordinal);
@@ -81,11 +91,11 @@ internal static class SchemaCompiler
         }
         foreach (NodeUse use in type.Uses)
         {
-            if (!module.ByName.TryGetValue(use.Component, out TypeDecl? component)
-                || component.Kind != TypeKind.Component)
+            if (!TryFindComponent(module, use.Component, byId, out TypeDecl? component))
             {
                 diagnostics.Error(type.File, use.Line, use.Column,
-                                  $"'{use.Component}' is not a component in module '{module.Id}'");
+                                  $"'{use.Component}' is not a component of module '{module.Id}'"
+                                  + " or of a module it imports");
                 continue;
             }
             if (component.Derived)
@@ -148,6 +158,32 @@ internal static class SchemaCompiler
                                       + "field");
             }
         }
+    }
+
+    /* The module first, then its imports in declaration order. An import that
+       names no compiled module simply never resolves, which the use's own
+       diagnostic reports. */
+    private static bool TryFindComponent(ModuleUnit module, string name,
+                                         Dictionary<string, ModuleUnit> byId,
+                                         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+                                         out TypeDecl? component)
+    {
+        if (module.ByName.TryGetValue(name, out component) &&
+            component.Kind == TypeKind.Component)
+        {
+            return true;
+        }
+        foreach (string import in module.Imports)
+        {
+            if (byId.TryGetValue(import, out ModuleUnit? unit) &&
+                unit.ByName.TryGetValue(name, out component) &&
+                component.Kind == TypeKind.Component)
+            {
+                return true;
+            }
+        }
+        component = null;
+        return false;
     }
 
     /* A type is owned by the module that declares it, so a second declaration of
