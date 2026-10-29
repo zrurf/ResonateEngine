@@ -232,13 +232,15 @@ TEST_CASE("offscreen: the editor shell renders", "[render][editor]")
         const int green = pixels[index + 1U];
         const int blue = pixels[index + 2U];
         /* The render quantizes the linear tokens to the UI target's 8 bits:
-           panel #242424 lands on 34, the header tier on 38. */
+           panel #242424 lands on 34. The header tier lands on 38 through the
+           tgfx layer and on 42 through the vertex path, which quantizes before
+           the composite encodes, so the band spans both. */
         panel_pixels += red >= 32 && red <= 36 && green >= 32 && green <= 36 && blue >= 32 &&
                                 blue <= 36
                             ? 1U
                             : 0U;
-        header_pixels += red >= 36 && red <= 40 && green >= 36 && green <= 40 && blue >= 36 &&
-                                 blue <= 40
+        header_pixels += red >= 36 && red <= 43 && green >= 36 && green <= 43 && blue >= 36 &&
+                                 blue <= 43
                              ? 1U
                              : 0U;
         selected_pixels += red > 78 && red < 90 && green > 78 && green < 90 && blue > 78 &&
@@ -255,7 +257,9 @@ TEST_CASE("offscreen: the editor shell renders", "[render][editor]")
     CHECK(bright_text > 300U);
 
     /* A toolbar icon samples the atlas and takes its class's tint: the strokes
-       land between the header tone and the bright text tone. */
+       land between the header tone and the bright text tone. The vertex path
+       draws no images, so a run with RESONATE_UI_NO_TGFX skips this. */
+    if (std::getenv("RESONATE_UI_NO_TGFX") == nullptr)
     {
         const resonate::ecs::Entity icon =
             resonate::ui::findByKey(world, canvas, "tb-save-icon");

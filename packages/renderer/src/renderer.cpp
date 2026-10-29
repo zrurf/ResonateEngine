@@ -1207,6 +1207,12 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
     }
     if (tgfx_ui == nullptr)
     {
+        /* The vertex path is the portable rasterizer, and a host bisecting a UI
+           bug needs to see it without rebuilding. */
+        if (std::getenv("RESONATE_UI_NO_TGFX") != nullptr)
+        {
+            return false;
+        }
         if (device->native_handles == nullptr || ui_font_paths.empty())
         {
             return false;
