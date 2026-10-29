@@ -37,6 +37,8 @@ struct EditorState
     Entity scene_list{};
     Entity name_field{};
     Entity status{};
+    Entity status_count{};
+    Entity status_fps{};
     Entity console{};
     Entity shown_row{};
 
@@ -79,6 +81,10 @@ struct EditorState
        dispatch has finished. */
     Entity command_field{};
     bool command_pending = false;
+
+    /* The status bar's segments, rewritten only when their text changes. */
+    std::string shown_count{};
+    std::string shown_fps{};
 };
 
 /* The run's CVars: startup copies the engine's bindings in through the host
@@ -449,7 +455,8 @@ void seedPosition(EditorState& state, resonate::ecs::World& world,
 
 /* The selected scene row names the inspected object: the name field and the
    status line follow the selection, reshaped only when it changes. */
-void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuffer&, float)
+void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuffer&,
+          float delta_seconds)
 {
     auto* state = static_cast<EditorState*>(context);
     if (!world.alive(state->canvas))
@@ -460,6 +467,29 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         state->command_pending = false;
         executeCommand(*state, world, resonate::ui::widgetText(world, state->command_field));
+    }
+    /* The status bar's second and third segments: the object count and a
+       smoothed frame rate, reshaped only when the shown text changes. */
+    char bar_text[32] = {};
+    std::snprintf(bar_text, sizeof(bar_text), "%u 个对象",
+                  static_cast<unsigned>(state->box_rows.size()));
+    if (state->shown_count != bar_text)
+    {
+        state->shown_count = bar_text;
+        std::string error;
+        (void)resonate::ui::setText(world, state->canvas, state->status_count, bar_text, error);
+    }
+    static float fps_average = 60.0F;
+    if (delta_seconds > 0.0F)
+    {
+        fps_average = fps_average * 0.9F + (1.0F / delta_seconds) * 0.1F;
+    }
+    std::snprintf(bar_text, sizeof(bar_text), "%d fps", static_cast<int>(fps_average + 0.5F));
+    if (state->shown_fps != bar_text)
+    {
+        state->shown_fps = bar_text;
+        std::string error;
+        (void)resonate::ui::setText(world, state->canvas, state->status_fps, bar_text, error);
     }
     mirrorConsole(*state, world);
     mirrorScrub(state->canvas, world, state->opacity);
@@ -582,6 +612,8 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
                                          resonate::ui::eventBit(resonate::ui::EventKind::Click)});
     }
     state->console = resonate::ui::findByKey(world, canvas, "console-line");
+    state->status_count = resonate::ui::findByKey(world, canvas, "status-count");
+    state->status_fps = resonate::ui::findByKey(world, canvas, "status-fps");
     world.setReportSink(state, &reportSink);
 
     resonate::ecs::QueryDesc desc{};

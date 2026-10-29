@@ -3,166 +3,200 @@
   <!-- The editor's shell: a toolbar over a scene tree, a viewport that shows the
        3D scene through it, and an inspector. Panes are laid out absolutely;
        the viewport keeps a transparent background so the renderer's frame
-       shows through. -->
+       shows through. Colors and the density rhythm come from the theme (see
+       dev-note/research/sbox-ue5-editor.md); rows and controls are 24 px. -->
   <Screen key="editor" name="Editor">
     <StyleSheet key="theme" src="content/ui/theme.rcss"/>
 
-    <Box key="backdrop" x="0" y="0" width="0" height="0"
-         anchor_min="0 0" anchor_max="1 1" color="0.05 0.055 0.075 1"/>
-
-    <Panel key="toolbar" class="header" x="0" y="0" width="0" height="36"
+    <Panel key="toolbar" class="toolbar" x="0" y="0" width="0" height="36"
            anchor_min="0 0" anchor_max="1 0"
            direction="Row" align="Center" gap="4"
-           padding_left="10" padding_top="6" padding_right="10" padding_bottom="6">
-      <Label key="brand" width="180" height="24" text="Resonate Editor"
-             font_size="15" font_weight="700" text_color="0.90 0.93 0.97 1"/>
-      <Button key="file" class="tool" width="64" height="24">
-        <Label key="file-label" x="10" y="2" width="44" height="20" text="文件"
-               font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+           padding_left="12" padding_top="6" padding_right="12" padding_bottom="6">
+      <Label key="brand" class="label" width="150" height="24" text="Resonate Editor"
+             font_size="13" font_weight="600" v_align="Middle"/>
+      <Box key="tb-sep-1" class="separator" width="1" height="18"/>
+      <Button key="file" class="tool" width="56" height="24">
+        <Label key="file-label" class="label" width="56" height="24" text="文件"
+               font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
       </Button>
-      <Button key="edit" class="tool" width="64" height="24">
-        <Label key="edit-label" x="10" y="2" width="44" height="20" text="编辑"
-               font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+      <Button key="edit" class="tool" width="56" height="24">
+        <Label key="edit-label" class="label" width="56" height="24" text="编辑"
+               font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
       </Button>
-      <Button key="view" class="tool" width="64" height="24">
-        <Label key="view-label" x="10" y="2" width="44" height="20" text="视图"
-               font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+      <Button key="view" class="tool" width="56" height="24">
+        <Label key="view-label" class="label" width="56" height="24" text="视图"
+               font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
       </Button>
     </Panel>
+    <Box key="toolbar-line" class="separator" x="0" y="36" width="0" height="1"
+         anchor_min="0 0" anchor_max="1 0"/>
 
-    <Panel key="scene-pane" class="panel" x="0" y="36" width="280" height="-52"
+    <Panel key="scene-pane" class="panel" x="0" y="37" width="280" height="-63"
            anchor_min="0 0" anchor_max="0 1"
            direction="Column" align="Stretch" gap="0">
-      <Label key="scene-header" class="header" height="28" text="场景"
-             font_size="13" font_weight="700" text_color="0.85 0.88 0.92 1"/>
-      <Scroll key="scene-list" height="836" step="26"
+      <Label key="scene-header" class="pane-title" height="28" text="场景"
+             font_size="12" font_weight="600" v_align="Middle" padding_left="12"/>
+      <Box key="scene-header-line" class="separator" height="1"/>
+      <Scroll key="scene-list" position="Absolute" x="0" y="29" width="0" height="-29"
+              step="24" anchor_min="0 0" anchor_max="1 1"
               direction="Column" align="Stretch" gap="0"
               padding_left="0" padding_top="0" padding_right="0" padding_bottom="0">
-        <Button key="camera" class="row" height="26">
-          <Selectable selected="false"/>
-          <Label key="camera-label" x="10" y="4" width="240" height="18" text="主相机"
-                 font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
-        </Button>
-        <Button key="sun" class="row" height="26">
-          <Selectable selected="false"/>
-          <Label key="sun-label" x="10" y="4" width="240" height="18" text="平行光"
-                 font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
-        </Button>
-        <Button key="ground" class="row" height="26">
-          <Selectable selected="false"/>
-          <Label key="ground-label" x="10" y="4" width="240" height="18" text="地面"
-                 font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
-        </Button>
-        <Button key="crate-a" class="row selected" height="26">
-          <Selectable selected="true"/>
-          <Label key="crate-a-label" x="10" y="4" width="240" height="18" text="箱子 A"
-                 font_size="13" text_color="1 1 1 1" color="0 0 0 0"/>
-        </Button>
-        <Button key="crate-b" class="row" height="26">
-          <Selectable selected="false"/>
-          <Label key="crate-b-label" x="10" y="4" width="240" height="18" text="箱子 B"
-                 font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
-        </Button>
-        <Button key="crate-c" class="row" height="26">
-          <Selectable selected="false"/>
-          <Label key="crate-c-label" x="10" y="4" width="240" height="18" text="箱子 C"
-                 font_size="13" text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
-        </Button>
+        <Row key="camera" class="outliner-row" height="24" selected="false">
+          <Label key="camera-label" class="label" x="20" y="3" width="240" height="18"
+                 text="主相机" font_size="12" v_align="Middle"/>
+        </Row>
+        <Row key="sun" class="outliner-row" height="24" selected="false">
+          <Label key="sun-label" class="label" x="20" y="3" width="240" height="18"
+                 text="平行光" font_size="12" v_align="Middle"/>
+        </Row>
+        <Row key="ground" class="outliner-row" height="24" selected="false">
+          <Label key="ground-label" class="label" x="20" y="3" width="240" height="18"
+                 text="地面" font_size="12" v_align="Middle"/>
+        </Row>
+        <Row key="crate-a" class="outliner-row" height="24" selected="true">
+          <Label key="crate-a-label" class="label" x="20" y="3" width="240" height="18"
+                 text="箱子 A" font_size="12" v_align="Middle"/>
+        </Row>
+        <Row key="crate-b" class="outliner-row" height="24" selected="false">
+          <Label key="crate-b-label" class="label" x="20" y="3" width="240" height="18"
+                 text="箱子 B" font_size="12" v_align="Middle"/>
+        </Row>
+        <Row key="crate-c" class="outliner-row" height="24" selected="false">
+          <Label key="crate-c-label" class="label" x="20" y="3" width="240" height="18"
+                 text="箱子 C" font_size="12" v_align="Middle"/>
+        </Row>
       </Scroll>
     </Panel>
 
-    <Box key="viewport" x="280" y="36" width="-560" height="-292"
+    <Box key="viewport" x="280" y="37" width="-560" height="-303"
          anchor_min="0 0" anchor_max="1 1" color="0 0 0 0"/>
-    <Label key="viewport-hint" x="296" y="52" width="220" height="20" text="视口"
-           font_size="13" text_color="0.70 0.75 0.82 1"/>
+    <Label key="viewport-hint" class="prop-label" x="296" y="52" width="220" height="20"
+           text="视口" font_size="12" v_align="Middle"/>
 
-    <Panel key="console" class="panel" x="280" y="-256" width="-560" height="240"
+    <Panel key="console" class="panel" x="280" y="-266" width="-560" height="240"
            anchor_min="0 1" anchor_max="1 1"
            direction="Column" align="Stretch" gap="0">
-      <Label key="console-header" class="header" height="28" text="控制台"
-             font_size="13" font_weight="700" text_color="0.85 0.88 0.92 1"/>
-      <Label key="console-line" height="22" text="就绪。"
-             font_size="12" text_color="0.65 0.70 0.78 1"/>
-      <Panel key="command-row" height="28" direction="Row" gap="4"
-             padding_left="0" padding_top="2" padding_right="6" padding_bottom="0">
-        <Label key="command-field" class="field" text="" font_size="13" height="24">
+      <Label key="console-header" class="pane-title" height="28" text="控制台"
+             font_size="12" font_weight="600" v_align="Middle" padding_left="12"/>
+      <Box key="console-header-line" class="separator" height="1"/>
+      <Label key="console-line" class="label-dim" height="22" text="就绪。"
+             font_size="12" v_align="Middle" padding_left="12"/>
+      <Panel key="command-row" height="28" direction="Row" align="Center" gap="4"
+             padding_left="12" padding_top="2" padding_right="12" padding_bottom="2">
+        <Label key="command-field" class="field label" text="" font_size="12" height="24"
+               v_align="Middle" padding_left="6">
           <Input/>
           <LayoutItem grow="1"/>
         </Label>
-        <Button key="command-run" class="tool" width="56" height="24">
-          <Label key="command-run-label" width="56" height="20" text="运行"
-                 font_size="12" v_align="Middle" align="Center"
-                 text_color="0.80 0.84 0.90 1" color="0 0 0 0"/>
+        <Button key="command-run" class="button" width="56" height="24">
+          <Label key="command-run-label" class="label" width="56" height="24" text="运行"
+                 font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
         </Button>
       </Panel>
     </Panel>
 
-    <Panel key="inspector" class="panel" x="-280" y="36" width="280" height="-52"
+    <Panel key="inspector" class="panel" x="-280" y="37" width="280" height="-63"
            anchor_min="1 0" anchor_max="1 1"
-           direction="Column" align="Stretch" gap="8"
-           padding_left="12" padding_top="0" padding_right="12" padding_bottom="12">
-      <Label key="inspector-header" class="header" height="28" text="检查器"
-             font_size="13" font_weight="700" text_color="0.85 0.88 0.92 1"/>
-      <Label key="name-row" height="18" text="名称"
-             font_size="12" text_color="0.65 0.70 0.78 1"/>
-      <Label key="name-field" class="field" text="箱子 A" font_size="14" height="24">
-        <Input/>
-      </Label>
-      <Label key="position-row" height="18" text="位置"
-             font_size="12" text_color="0.65 0.70 0.78 1"/>
-      <Label key="position-x" class="field" text="0.0" font_size="14" height="22">
-        <Input/>
-      </Label>
-      <Label key="position-y" class="field" text="0.0" font_size="14" height="22">
-        <Input/>
-      </Label>
-      <Label key="position-z" class="field" text="0.0" font_size="14" height="22">
-        <Input/>
-      </Label>
-      <Label key="opacity-title" height="18" text="不透明度" font_size="12"
-             text_color="0.65 0.70 0.78 1"/>
-      <Box key="opacity-line" width="256" height="20">
-        <Label key="opacity-scrub" class="scrub" x="0" y="0" width="150" height="20"
-               text="拖动调值" font_size="12" v_align="Middle" padding_left="4"
-               text_color="0.80 0.83 0.87 1" color="0.07 0.08 0.11 1">
+           direction="Column" align="Stretch" gap="0"
+           padding_left="0" padding_top="0" padding_right="0" padding_bottom="12">
+      <Label key="inspector-header" class="pane-title" height="28" text="检查器"
+             font_size="12" font_weight="600" v_align="Middle" padding_left="12"/>
+      <Box key="inspector-header-line" class="separator" height="1"/>
+      <Box key="gap-object" height="8"/>
+      <Label key="section-object" class="section-title" height="24" text="对象"
+             font_size="11" font_weight="600" v_align="Middle" padding_left="12"/>
+      <Panel key="name-row" height="24" direction="Row" align="Center" gap="8" padding_left="12" padding_right="12">
+        <Label key="name-label" class="prop-label" width="76" height="24" text="名称"
+               font_size="12" v_align="Middle"/>
+        <Label key="name-field" class="field label" text="箱子 A" font_size="12" height="24"
+               v_align="Middle" padding_left="6">
+          <Input/>
+          <LayoutItem grow="1"/>
+        </Label>
+      </Panel>
+      <Box key="gap-transform" height="8"/>
+      <Label key="section-transform" class="section-title" height="24" text="变换"
+             font_size="11" font_weight="600" v_align="Middle" padding_left="12"/>
+      <Panel key="position-x-row" height="24" direction="Row" align="Center" gap="8" padding_left="12" padding_right="12">
+        <Label key="position-x-label" class="prop-label" width="76" height="24" text="位置 X"
+               font_size="12" v_align="Middle"/>
+        <Label key="position-x" class="field label" text="0.00" font_size="12" height="24"
+               v_align="Middle" padding_left="6">
+          <Input/>
+          <LayoutItem grow="1"/>
+        </Label>
+      </Panel>
+      <Panel key="position-y-row" height="24" direction="Row" align="Center" gap="8" padding_left="12" padding_right="12">
+        <Label key="position-y-label" class="prop-label" width="76" height="24" text="位置 Y"
+               font_size="12" v_align="Middle"/>
+        <Label key="position-y" class="field label" text="0.00" font_size="12" height="24"
+               v_align="Middle" padding_left="6">
+          <Input/>
+          <LayoutItem grow="1"/>
+        </Label>
+      </Panel>
+      <Panel key="position-z-row" height="24" direction="Row" align="Center" gap="8" padding_left="12" padding_right="12">
+        <Label key="position-z-label" class="prop-label" width="76" height="24" text="位置 Z"
+               font_size="12" v_align="Middle"/>
+        <Label key="position-z" class="field label" text="0.00" font_size="12" height="24"
+               v_align="Middle" padding_left="6">
+          <Input/>
+          <LayoutItem grow="1"/>
+        </Label>
+      </Panel>
+      <Box key="gap-material" height="8"/>
+      <Label key="section-material" class="section-title" height="24" text="材质"
+             font_size="11" font_weight="600" v_align="Middle" padding_left="12"/>
+      <Panel key="opacity-row" height="24" direction="Row" align="Center" gap="8" padding_left="12" padding_right="12">
+        <Label key="opacity-title" class="prop-label" width="76" height="24" text="不透明度"
+               font_size="12" v_align="Middle"/>
+        <Label key="opacity-scrub" class="field scrub label" text="拖动调值" font_size="12"
+               height="24" v_align="Middle" padding_left="6">
           <Input/>
           <Scrubber step="0.01" value="1.0"/>
+          <LayoutItem grow="1"/>
         </Label>
-        <Label key="opacity-value" x="156" y="0" width="100" height="20" text="1.00"
-               font_size="12" v_align="Middle" align="End" padding_left="0"
-               text_color="0.85 0.88 0.92 1"/>
-      </Box>
-      <Label key="roughness-title" height="18" text="粗糙度" font_size="12"
-             text_color="0.65 0.70 0.78 1"/>
-      <Box key="roughness-line" width="256" height="20">
-        <Label key="roughness-scrub" class="scrub" x="0" y="0" width="150" height="20"
-               text="拖动调值" font_size="12" v_align="Middle" padding_left="4"
-               text_color="0.80 0.83 0.87 1" color="0.07 0.08 0.11 1">
+        <Label key="opacity-value" class="prop-value" width="44" height="24" text="1.00"
+               font_size="12" v_align="Middle" align="End"/>
+      </Panel>
+      <Panel key="roughness-row" height="24" direction="Row" align="Center" gap="8" padding_left="12" padding_right="12">
+        <Label key="roughness-title" class="prop-label" width="76" height="24" text="粗糙度"
+               font_size="12" v_align="Middle"/>
+        <Label key="roughness-scrub" class="field scrub label" text="拖动调值" font_size="12"
+               height="24" v_align="Middle" padding_left="6">
           <Input/>
           <Scrubber step="0.01" value="0.5"/>
+          <LayoutItem grow="1"/>
         </Label>
-        <Label key="roughness-value" x="156" y="0" width="100" height="20" text="0.50"
-               font_size="12" v_align="Middle" align="End" padding_left="0"
-               text_color="0.85 0.88 0.92 1"/>
-      </Box>
-      <Label key="metallic-title" height="18" text="金属度" font_size="12"
-             text_color="0.65 0.70 0.78 1"/>
-      <Box key="metallic-line" width="256" height="20">
-        <Label key="metallic-scrub" class="scrub" x="0" y="0" width="150" height="20"
-               text="拖动调值" font_size="12" v_align="Middle" padding_left="4"
-               text_color="0.80 0.83 0.87 1" color="0.07 0.08 0.11 1">
+        <Label key="roughness-value" class="prop-value" width="44" height="24" text="0.50"
+               font_size="12" v_align="Middle" align="End"/>
+      </Panel>
+      <Panel key="metallic-row" height="24" direction="Row" align="Center" gap="8" padding_left="12" padding_right="12">
+        <Label key="metallic-title" class="prop-label" width="76" height="24" text="金属度"
+               font_size="12" v_align="Middle"/>
+        <Label key="metallic-scrub" class="field scrub label" text="拖动调值" font_size="12"
+               height="24" v_align="Middle" padding_left="6">
           <Input/>
           <Scrubber step="0.01" value="0.0"/>
+          <LayoutItem grow="1"/>
         </Label>
-        <Label key="metallic-value" x="156" y="0" width="100" height="20" text="0.00"
-               font_size="12" v_align="Middle" align="End" padding_left="0"
-               text_color="0.85 0.88 0.92 1"/>
-      </Box>
+        <Label key="metallic-value" class="prop-value" width="44" height="24" text="0.00"
+               font_size="12" v_align="Middle" align="End"/>
+      </Panel>
     </Panel>
 
-    <Label key="status" x="0" y="-16" width="0" height="16"
-           anchor_min="0 1" anchor_max="1 1" text="已选择 箱子 A"
-           font_size="11" text_color="0.60 0.65 0.72 1"
-           color="0.07 0.08 0.11 1"/>
+    <Box key="status-line" class="separator" x="0" y="-27" width="0" height="1"
+         anchor_min="0 1" anchor_max="1 1"/>
+    <Panel key="status-bar" class="status-bar" x="0" y="-26" width="0" height="26"
+           anchor_min="0 1" anchor_max="1 1"
+           direction="Row" align="Center" gap="16"
+           padding_left="12" padding_top="0" padding_right="12" padding_bottom="0">
+      <Label key="status" class="label-dim" width="360" height="24" text="已选择 箱子 A"
+             font_size="11" v_align="Middle"/>
+      <Label key="status-count" class="label-dim" width="160" height="24" text="4 个对象"
+             font_size="11" v_align="Middle"/>
+      <Label key="status-fps" class="label-dim" width="120" height="24" text="60 fps"
+             font_size="11" v_align="Middle"/>
+    </Panel>
   </Screen>
 </document>

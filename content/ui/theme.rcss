@@ -2,27 +2,89 @@
 <document version="1" schemas="resonate.ui">
   <!-- The shared theme: palette tokens and the widget rules both the game HUD
        and the editor use. Colors are linear; the hex in each comment is the
-       sRGB value the display shows. Documents override any of these by
-       declaring their own rules after the sheet that references this file. -->
+       sRGB value the display shows. The ramp and the density numbers follow the
+       s&box-verified editor palette (see dev-note/research/sbox-ue5-editor.md);
+       documents override any of these by declaring their own rules after the
+       sheet that references this file. -->
   <StyleSheet key="theme">
-    <Variable token="--bg" value="0.0106 0.0106 0.0113 1"/>          <!-- #1b1b1c -->
-    <Variable token="--panel" value="0.0176 0.0195 0.0243 1"/>       <!-- #242428 -->
-    <Variable token="--header" value="0.0246 0.0273 0.0331 1"/>      <!-- #2b2b2f -->
-    <Variable token="--surface" value="0.0331 0.0362 0.0430 1"/>     <!-- #333338 -->
-    <Variable token="--field" value="0.0132 0.0132 0.0148 1"/>       <!-- #1e1e1f -->
-    <Variable token="--hover" value="0.0452 0.0497 0.0578 1"/>       <!-- #3c3c41 -->
-    <Variable token="--pressed" value="0.0080 0.0090 0.0110 1"/>     <!-- #151517 -->
-    <Variable token="--select" value="0.0257 0.0684 0.1559 1"/>      <!-- #2c4a6e -->
-    <Variable token="--accent" value="0.7454 0.3813 0.0423 1"/>      <!-- #e0a63a -->
-    <Variable token="--text" value="0.6317 0.6400 0.6600 1"/>        <!-- #d0d1d4 -->
-    <Variable token="--text-dim" value="0.3515 0.3600 0.3800 1"/>    <!-- #a0a1a4 -->
-    <Variable token="--text-muted" value="0.2158 0.2200 0.2350 1"/>  <!-- #808184 -->
+    <Variable token="--bg" value="0.0091 0.0091 0.0091 1"/>          <!-- #181818 -->
+    <Variable token="--panel" value="0.0176 0.0176 0.0176 1"/>          <!-- #242424 -->
+    <Variable token="--header" value="0.0232 0.0232 0.0232 1"/>          <!-- #2a2a2a -->
+    <Variable token="--surface" value="0.0343 0.0343 0.0343 1"/>          <!-- #343434 -->
+    <Variable token="--field" value="0.0091 0.0091 0.0091 1"/>          <!-- #181818 -->
+    <Variable token="--hover" value="0.0482 0.0482 0.0482 1"/>          <!-- #3e3e3e -->
+    <Variable token="--pressed" value="0.0056 0.0056 0.0056 1"/>          <!-- #111111 -->
+    <Variable token="--select" value="0.0844 0.0844 0.0844 1"/>          <!-- #525252 -->
+    <Variable token="--border" value="0.0482 0.0482 0.0482 1"/>          <!-- #3e3e3e -->
+    <Variable token="--border-strong" value="0.0648 0.0648 0.0648 1"/>          <!-- #484848 -->
+    <Variable token="--accent" value="0.7454 0.3813 0.0423 1"/>          <!-- #e0a63a -->
+    <Variable token="--accent-hover" value="0.8714 0.4678 0.0742 1"/>          <!-- #f0b64d -->
+    <Variable token="--accent-soft" value="0.7454 0.3813 0.0423 0.14"/>          <!-- #e0a63a at 14% -->
+    <Variable token="--text" value="0.7991 0.8070 0.8228 1"/>          <!-- #e7e8ea -->
+    <Variable token="--text-strong" value="1.0000 1.0000 1.0000 1"/>          <!-- #ffffff -->
+    <Variable token="--text-dim" value="0.3419 0.3419 0.3419 1"/>          <!-- #9e9e9e -->
+    <Variable token="--text-muted" value="0.1559 0.1620 0.1812 1"/>          <!-- #6e7076 -->
+    <Variable token="--info" value="0.1022 0.2664 0.8308 1"/>          <!-- #5a8deb -->
+    <Variable token="--success" value="0.4342 0.7605 0.0742 1"/>          <!-- #b0e24d -->
+    <Variable token="--warning" value="0.7913 0.7084 0.1746 1"/>          <!-- #e6db74 -->
+    <Variable token="--error" value="0.9647 0.1022 0.1022 1"/>          <!-- #fb5a5a -->
+    <Variable token="--pink" value="0.7379 0.2831 0.2961 1"/>          <!-- #df9194 -->
 
+    <!-- Density and type scale. Unitless numbers: a style rule may read them
+         through var(), and the documented node metrics live in editor.rui. -->
+    <Variable token="--radius-sm" value="2"/>
+    <Variable token="--radius" value="4"/>
+    <Variable token="--radius-lg" value="6"/>
+    <Variable token="--row" value="24"/>
+    <Variable token="--pane-header" value="28"/>
+    <Variable token="--toolbar" value="36"/>
+    <Variable token="--status" value="26"/>
+    <Variable token="--space-1" value="2"/>
+    <Variable token="--space-2" value="4"/>
+    <Variable token="--space-3" value="8"/>
+    <Variable token="--space-4" value="12"/>
+    <Variable token="--space-5" value="16"/>
+    <Variable token="--space-6" value="24"/>
+    <Variable token="--font-meta" value="11"/>
+    <Variable token="--font-ui" value="12"/>
+    <Variable token="--font-body" value="13"/>
+    <Variable token="--font-title" value="15"/>
+
+    <StyleRule selector=".window">
+      <Background color="var(--bg)"/>
+    </StyleRule>
     <StyleRule selector=".panel">
       <Background color="var(--panel)"/>
     </StyleRule>
+    <StyleRule selector=".label">
+      <Text text_color="var(--text)"/>
+    </StyleRule>
+    <StyleRule selector=".label-dim">
+      <Text text_color="var(--text-dim)"/>
+    </StyleRule>
+    <StyleRule selector=".card">
+      <Background color="var(--panel)"/>
+    </StyleRule>
+    <StyleRule selector=".card-header">
+      <Background color="var(--header)"/>
+    </StyleRule>
     <StyleRule selector=".header">
       <Background color="var(--header)"/>
+    </StyleRule>
+    <StyleRule selector=".toolbar">
+      <Background color="var(--header)"/>
+    </StyleRule>
+    <StyleRule selector=".status-bar">
+      <Background color="var(--header)"/>
+    </StyleRule>
+    <StyleRule selector=".separator">
+      <Background color="var(--border)"/>
+    </StyleRule>
+    <StyleRule selector=".hairline">
+      <Background color="var(--border)"/>
+    </StyleRule>
+    <StyleRule selector=".accent-rail">
+      <Background color="var(--accent)"/>
     </StyleRule>
     <StyleRule selector=".title">
       <Background color="var(--header)"/>
@@ -30,16 +92,42 @@
     <StyleRule selector=".title">
       <Text text_color="var(--text)"/>
     </StyleRule>
+    <StyleRule selector=".pane-title">
+      <Background color="var(--header)"/>
+      <Text text_color="var(--text)"/>
+    </StyleRule>
+    <StyleRule selector=".section-title">
+      <Text text_color="var(--text-dim)"/>
+    </StyleRule>
+    <StyleRule selector=".prop-label">
+      <Text text_color="var(--text-dim)"/>
+    </StyleRule>
+    <StyleRule selector=".prop-value">
+      <Text text_color="var(--text)"/>
+    </StyleRule>
     <StyleRule selector=".field">
-      <Background color="var(--field)"/>
-      <Transition duration_ms="120"/>
+      <Background color="var(--field)" border_color="var(--border)" border_width="0"/>
+      <Transition duration_ms="100"/>
+    </StyleRule>
+    <StyleRule selector=".field:hover">
+      <Background border_color="var(--border-strong)"/>
     </StyleRule>
     <StyleRule selector=".field:focus">
-      <Background color="var(--select)"/>
+      <Background border_color="var(--accent)" border_width="1"/>
+    </StyleRule>
+    <StyleRule selector=".button">
+      <Background color="var(--surface)" border_color="var(--border)" border_width="1"/>
+      <Transition duration_ms="100"/>
+    </StyleRule>
+    <StyleRule selector=".button:hover">
+      <Background color="var(--hover)"/>
+    </StyleRule>
+    <StyleRule selector=".button:pressed">
+      <Background color="var(--pressed)"/>
     </StyleRule>
     <StyleRule selector=".tool">
-      <Background color="var(--header)"/>
-      <Transition duration_ms="120"/>
+      <Background color="0 0 0 0" border_color="var(--border)" border_width="0"/>
+      <Transition duration_ms="100"/>
     </StyleRule>
     <StyleRule selector=".tool:hover">
       <Background color="var(--hover)"/>
@@ -49,12 +137,22 @@
     </StyleRule>
     <StyleRule selector=".row">
       <Background color="var(--panel)"/>
-      <Transition duration_ms="120"/>
+      <Transition duration_ms="100"/>
     </StyleRule>
     <StyleRule selector=".row:hover">
       <Background color="var(--hover)"/>
     </StyleRule>
     <StyleRule selector=".row:pressed">
+      <Background color="var(--pressed)"/>
+    </StyleRule>
+    <StyleRule selector=".outliner-row">
+      <Background color="var(--panel)"/>
+      <Transition duration_ms="100"/>
+    </StyleRule>
+    <StyleRule selector=".outliner-row:hover">
+      <Background color="var(--hover)"/>
+    </StyleRule>
+    <StyleRule selector=".outliner-row:pressed">
       <Background color="var(--pressed)"/>
     </StyleRule>
     <StyleRule selector=".selected">
@@ -82,14 +180,14 @@
     <StyleRule selector=".scrub:pressed">
       <Background color="var(--pressed)"/>
     </StyleRule>
-    <StyleRule selector="Selectable">
+    <StyleRule selector="Row">
       <Selectable color="var(--select)"/>
     </StyleRule>
     <StyleRule selector=".splitter">
-      <Background color="var(--header)"/>
+      <Background color="var(--border)"/>
     </StyleRule>
     <StyleRule selector=".splitter:hover">
-      <Background color="var(--hover)"/>
+      <Background color="var(--accent)"/>
     </StyleRule>
   </StyleSheet>
 </document>

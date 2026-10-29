@@ -445,6 +445,21 @@
     <field name="bind-height" type="binding"/>
   </node>
 
+  <!-- A selectable list row: the outliner and the scene tree are rows. The
+       selection paint is the Selectable component's, so a `Row` rule in the
+       theme colors every list in one place. -->
+  <node name="Row" version="1">
+    <uses component="RectTransform"
+          expose="x y width height anchor_min anchor_max pivot z position"/>
+    <uses component="Background" expose="color border_color border_width"/>
+    <uses component="Input"/>
+    <uses component="Selectable" expose="selected"/>
+    <field name="bind-x" type="binding"/>
+    <field name="bind-y" type="binding"/>
+    <field name="bind-width" type="binding"/>
+    <field name="bind-height" type="binding"/>
+  </node>
+
   <node name="Button" version="1">
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>

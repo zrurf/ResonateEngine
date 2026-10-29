@@ -297,6 +297,22 @@
       ]
     },
     {
+      "name": "Row",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Row version 1",
+        "  field bind-x binding",
+        "  field bind-y binding",
+        "  field bind-width binding",
+        "  field bind-height binding",
+        "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
+        "  uses Background expose border_color border_width color",
+        "  uses Input",
+        "  uses Selectable expose selected"
+      ]
+    },
+    {
       "name": "Screen",
       "kind": "node",
       "version": 1,

@@ -723,7 +723,7 @@ TEST_CASE("ui editor: the editor document instantiates", "[ui][text]")
         CHECK(std::fabs(edge - expected) < 0.5F);
     };
     check_edge("inspector", true, 1920.0F);
-    check_edge("status", false, 1200.0F);
+    check_edge("status-bar", false, 1200.0F);
 }
 
 TEST_CASE("ui gallery: the widget gallery instantiates", "[ui][text]")

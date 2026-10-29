@@ -208,8 +208,10 @@ TEST_CASE("offscreen: the widget gallery renders", "[render][gallery]")
         const int red = pixels[index];
         const int green = pixels[index + 1U];
         const int blue = pixels[index + 2U];
-        panel_pixels += red > 28 && red < 48 && green > 30 && green < 50 && blue > 36 &&
-                                blue < 56
+        /* The theme's panel grey (#242424, neutral): the window admits the
+           neighbouring header and surface steps too. */
+        panel_pixels += red > 30 && red < 46 && green > 30 && green < 46 && blue > 30 &&
+                                blue < 46
                             ? 1U
                             : 0U;
         accent_pixels += red > 190 && green > 120 && green < 175 && blue < 80 ? 1U : 0U;
