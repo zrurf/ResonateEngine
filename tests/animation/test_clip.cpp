@@ -143,3 +143,85 @@ TEST_CASE("animation: two clips blend per field with the weight", "[animation]")
     CHECK(near(transform.rotation.y, 0.0F));
     CHECK(near(transform.scale.x, 2.0F));
 }
+
+TEST_CASE("animation: a machine-driven entity cross-fades its two clips", "[animation]")
+{
+    World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(world));
+
+    resonate::animation::AnimationPlayer player;
+    /* Rise and fall share the same path; only their direction differs, so a
+       blended transform reads back as a plain height. */
+    Clip rise;
+    rise.duration = 2.0F;
+    rise.position.keys = {{0.0F, Vec3{}}, {2.0F, Vec3{0.0F, 2.0F, 0.0F}}};
+    Clip fall;
+    fall.duration = 2.0F;
+    fall.position.keys = {{0.0F, Vec3{0.0F, 2.0F, 0.0F}}, {2.0F, Vec3{}}};
+
+    resonate::animation::StateMachine machine;
+    machine.states.push_back(resonate::animation::State{player.addClip(std::move(rise)), 2.0F,
+                                                        false});
+    machine.states.push_back(resonate::animation::State{player.addClip(std::move(fall)), 2.0F,
+                                                        false});
+    resonate::animation::Transition to_fall;
+    to_fall.from = 0U;
+    to_fall.to = 1U;
+    to_fall.at_end_only = true;
+    to_fall.fade_seconds = 1.0F;
+    machine.transitions.push_back(to_fall);
+    resonate::animation::Transition to_rise;
+    to_rise.from = 1U;
+    to_rise.to = 0U;
+    to_rise.at_end_only = true;
+    to_rise.fade_seconds = 1.0F;
+    machine.transitions.push_back(to_rise);
+
+    const Entity entity = world.create();
+    world.add(entity, resonate::hierarchy::LocalTransform{});
+    world.add(entity, resonate::animation::AnimationState{});
+    world.add(entity, resonate::animation::MachineState{player.addMachine(std::move(machine)),
+                                                        resonate::animation::MachineRuntime{}});
+
+    const auto height = [&world, entity]()
+    {
+        const auto* transform = world.get<resonate::hierarchy::LocalTransform>(entity);
+        REQUIRE(transform != nullptr);
+        return transform->position.y;
+    };
+    auto* playback = world.get<resonate::animation::AnimationState>(entity);
+    REQUIRE(playback != nullptr);
+
+    /* The first frame enters the initial state and samples it. */
+    player.invoke(world, 1.0F);
+    CHECK(near(height(), 1.0F));
+    CHECK(playback->driven);
+
+    /* At the end of the rise the machine switches and starts its fade: the
+       incoming weight is 0, so the outgoing clip is what paints. */
+    player.invoke(world, 1.0F);
+    CHECK(playback->clip == 1U);
+    CHECK(playback->previous_clip == 0U);
+    CHECK(near(playback->blend, 0.0F));
+    CHECK(near(height(), 2.0F));
+
+    /* Halfway through the fade the two samples mix: the outgoing holds 2.0,
+       the incoming is at 0.5 s of its fall (1.5). */
+    player.invoke(world, 0.5F);
+    CHECK(near(playback->blend, 0.5F));
+    CHECK(near(height(), 1.75F));
+
+    /* The fade settles and the current clip alone paints. */
+    player.invoke(world, 1.0F);
+    CHECK(near(playback->blend, 1.0F));
+    CHECK(near(height(), 0.5F));
+
+    /* A paused state is not advanced by its machine either. */
+    playback->playing = false;
+    const float held = playback->time;
+    const float kept = height();
+    player.invoke(world, 1.0F);
+    CHECK(near(playback->time, held));
+    CHECK(near(height(), kept));
+}

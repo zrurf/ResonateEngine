@@ -63,6 +63,13 @@ struct Clip
        drives keeps what it had. */
     static void blend(const Clip& from, const Clip& to, float weight, float time,
                       bool looping, hierarchy::LocalTransform& transform);
+
+    /* The same blend with each clip sampled at its own time, which is what a
+       cross-fade between two states of a machine needs: the outgoing clip is
+       where it stopped, the incoming one where it started. */
+    static void blend(const Clip& from, const Clip& to, float weight, float from_time,
+                      float to_time, bool from_looping, bool to_looping,
+                      hierarchy::LocalTransform& transform);
 };
 
 } // namespace resonate::animation

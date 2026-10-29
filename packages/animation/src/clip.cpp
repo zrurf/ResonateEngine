@@ -101,10 +101,16 @@ void Clip::sample(float time, bool looping, hierarchy::LocalTransform& transform
 void Clip::blend(const Clip& from, const Clip& to, float weight, float time, bool looping,
                  hierarchy::LocalTransform& transform)
 {
+    blend(from, to, weight, time, time, looping, looping, transform);
+}
+
+void Clip::blend(const Clip& from, const Clip& to, float weight, float from_time, float to_time,
+                 bool from_looping, bool to_looping, hierarchy::LocalTransform& transform)
+{
     hierarchy::LocalTransform from_sample = transform;
     hierarchy::LocalTransform to_sample = transform;
-    from.sample(time, looping, from_sample);
-    to.sample(time, looping, to_sample);
+    from.sample(from_time, from_looping, from_sample);
+    to.sample(to_time, to_looping, to_sample);
 
     const float mixed = weight < 0.0F ? 0.0F : (weight > 1.0F ? 1.0F : weight);
     /* A field both clips drive blends; a field only one drives comes from

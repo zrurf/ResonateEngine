@@ -3504,8 +3504,9 @@ void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player)
             world.add(box, render::Material{1U, Vec3{1.0F, 1.0F, 1.0F}});
             /* The tree rows name the boxes A/B/C left to right. */
             name(box, kBoxNames[x]);
-            /* The middle row's box is the demo's animated one: a bob and a
-               yaw spin the sampler drives through the frame's UPDATE. */
+            /* The middle row's box is the demo's animated one: a state machine
+               alternates between a bob and a yaw spin, each held to its end,
+               and the player cross-fades across the edges. */
             if (player != nullptr && x == 1 && z == 1)
             {
                 animation::Clip bob;
@@ -3513,10 +3514,34 @@ void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player)
                 bob.position.keys = {{0.0F, position},
                                      {1.0F, Vec3{position.x, position.y + 1.0F, position.z}},
                                      {2.0F, position}};
-                bob.rotation.keys = {
+                animation::Clip spin;
+                spin.duration = 3.0F;
+                spin.rotation.keys = {
                     {0.0F, resonate::quatFromAxisAngle(Vec3{0.0F, 1.0F, 0.0F}, 0.0F)},
-                    {2.0F, resonate::quatFromAxisAngle(Vec3{0.0F, 1.0F, 0.0F}, 6.2831853F)}};
-                world.add(box, animation::AnimationState{player->addClip(std::move(bob))});
+                    {1.5F, resonate::quatFromAxisAngle(Vec3{0.0F, 1.0F, 0.0F}, 3.1415927F)},
+                    {3.0F, resonate::quatFromAxisAngle(Vec3{0.0F, 1.0F, 0.0F}, 6.2831853F)}};
+
+                animation::StateMachine machine;
+                machine.states.push_back(
+                    animation::State{player->addClip(std::move(bob)), 2.0F, false});
+                machine.states.push_back(
+                    animation::State{player->addClip(std::move(spin)), 3.0F, false});
+                animation::Transition to_spin;
+                to_spin.from = 0U;
+                to_spin.to = 1U;
+                to_spin.at_end_only = true;
+                to_spin.fade_seconds = 0.4F;
+                machine.transitions.push_back(to_spin);
+                animation::Transition to_bob;
+                to_bob.from = 1U;
+                to_bob.to = 0U;
+                to_bob.at_end_only = true;
+                to_bob.fade_seconds = 0.4F;
+                machine.transitions.push_back(to_bob);
+
+                world.add(box, animation::AnimationState{});
+                world.add(box, animation::MachineState{player->addMachine(std::move(machine)),
+                                                       animation::MachineRuntime{}});
             }
         }
     }
