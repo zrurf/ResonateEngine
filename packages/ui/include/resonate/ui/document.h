@@ -69,6 +69,15 @@ class TextRuntime;
    when the two are kept in sync. */
 [[nodiscard]] bool setScrubValue(ecs::World& world, ecs::Entity entity, float value);
 
+/* Whether the widget paints, hit-tests and takes focus: its explicit toggle
+   when it carries one, else true. */
+[[nodiscard]] bool isShown(ecs::World& world, ecs::Entity entity);
+
+/* Hides or shows the widget without destroying it, so its state survives the
+   toggle. Layout still places a hidden widget: an application that hides a
+   pane collapses its geometry itself. */
+void setShown(ecs::World& world, ecs::Entity entity, bool shown);
+
 } // namespace resonate::ui
 
 #endif /* RESONATE_UI_DOCUMENT_H */

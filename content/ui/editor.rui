@@ -42,6 +42,19 @@
         <Label key="view-label" class="label" width="56" height="24" text="视图"
                font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
       </Button>
+      <Box key="tb-sep-4" class="separator" width="1" height="18"/>
+      <Button key="tb-scene-pane" class="tool" width="24" height="24">
+        <Icon key="tb-scene-pane-icon" class="icon" x="4" y="4" width="16" height="16"
+              icon="panel-left"/>
+      </Button>
+      <Button key="tb-inspector" class="tool" width="24" height="24">
+        <Icon key="tb-inspector-icon" class="icon" x="4" y="4" width="16" height="16"
+              icon="sliders-horizontal"/>
+      </Button>
+      <Button key="tb-console" class="tool" width="24" height="24">
+        <Icon key="tb-console-icon" class="icon" x="4" y="4" width="16" height="16"
+              icon="terminal"/>
+      </Button>
     </Panel>
     <Box key="toolbar-line" class="separator" x="0" y="36" width="0" height="1"
          anchor_min="0 0" anchor_max="1 0"/>
@@ -94,7 +107,7 @@
          anchor_min="0 0" anchor_max="0 1">
       <Splitter axis="0"/>
     </Box>
-    <Box key="viewport" x="286" y="37" width="-572" height="-303"
+    <Box key="viewport" x="286" y="37" width="-572" height="-309"
          anchor_min="0 0" anchor_max="1 1" color="0 0 0 0"/>
     <Label key="viewport-hint" class="prop-label" x="302" y="52" width="220" height="20"
            text="视口" font_size="12" v_align="Middle"/>
@@ -124,6 +137,13 @@
         </Button>
       </Panel>
     </Panel>
+
+    <!-- The console's edge: dragging it sizes the console, whose height the
+         editor re-derives from this divider's position. -->
+    <Box key="splitter-console" class="splitter" x="286" y="-272" width="-572" height="6"
+         anchor_min="0 1" anchor_max="1 1">
+      <Splitter axis="1"/>
+    </Box>
 
     <Panel key="inspector" class="panel" x="-280" y="37" width="280" height="-63"
            anchor_min="1 0" anchor_max="1 1"

@@ -334,6 +334,14 @@
     <field name="axis" type="u32" default="0"/>
   </component>
 
+  <!-- A widget subtree that paints, hit-tests and takes focus only while
+       `shown`. Hiding keeps the widgets and their state; layout still places
+       them, so an application that hides a pane collapses its geometry
+       itself. -->
+  <component name="Shown" version="1">
+    <field name="shown" type="bool" default="true"/>
+  </component>
+
   <!-- A list row that highlights while selected: a click selects it and clears
        its siblings, so a list behaves like one choice. -->
   <component name="Selectable" version="1">

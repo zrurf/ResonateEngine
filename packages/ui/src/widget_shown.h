@@ -47,12 +47,18 @@ inline ScrollThumb scrollThumbOf(const ComputedRect& rect, const ScrollView& vie
     return thumb;
 }
 
-/* Whether a child takes part in painting and hit testing, given the widget
-   state its parent carries: a Dropdown's popup only while open, a Tabs
+/* Whether a child takes part in painting, hit testing and focus, given the
+   widget state its parent carries: a Dropdown's popup only while open, a Tabs
    container only the page whose index is active. Layout still places hidden
-   children; only their paint and their hits are dropped. */
+   children; only their paint and their hits are dropped. A child's own Shown
+   overrides the parent's state: a hidden pane keeps its widgets, their state
+   and their place. */
 inline bool childShown(ecs::World& world, ecs::Entity parent, ecs::Entity child)
 {
+    if (const Shown* shown = world.get<Shown>(child))
+    {
+        return shown->shown;
+    }
     if (world.get<DropdownList>(child) != nullptr)
     {
         const Dropdown* dropdown = world.get<Dropdown>(parent);

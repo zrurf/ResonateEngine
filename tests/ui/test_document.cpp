@@ -13,6 +13,7 @@
 #include <resonate/hierarchy/tree.h>
 #include <resonate/ui/display_list.h>
 #include <resonate/ui/document.h>
+#include <resonate/ui/hit_test.h>
 #include <resonate/ui/binding.h>
 #include <resonate/ui/image_registry.h>
 
@@ -391,4 +392,52 @@ TEST_CASE("ui document: a nine-sliced Picture emits the nine regions", "[ui][doc
     CHECK(near(quads[8].y, 80.0F));
     CHECK(near(quads[8].width, 25.0F));
     CHECK(near(quads[8].height, 20.0F));
+}
+
+TEST_CASE("ui document: a hidden subtree paints nothing and takes no hits", "[ui][document]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Panel key="left" x="0" y="0" width="100" height="100">
+      <Background color="0.2 0.3 0.4 1"/>
+      <Label key="caption" x="0" y="0" width="100" height="20" text="left"/>
+    </Panel>
+    <Panel key="right" x="120" y="0" width="100" height="100">
+      <Background color="0.4 0.3 0.2 1"/>
+    </Panel>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(text, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 400.0F, 200.0F));
+    const Entity left = resonate::ui::findByKey(fixture.world, root, "left");
+    REQUIRE(left.valid());
+
+    const auto quads = [&]()
+    {
+        resonate::ui::DisplayList list;
+        REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+        return list.quads().size();
+    };
+    CHECK(quads() == 2U);
+    CHECK(resonate::ui::hitTest(fixture.world, root, 50.0F, 50.0F) == left);
+
+    /* Hiding the pane keeps its widgets and their geometry; the paint and the
+       hit go away. */
+    CHECK(resonate::ui::isShown(fixture.world, left));
+    resonate::ui::setShown(fixture.world, left, false);
+    CHECK_FALSE(resonate::ui::isShown(fixture.world, left));
+    CHECK(quads() == 1U);
+    CHECK(resonate::ui::hitTest(fixture.world, root, 50.0F, 50.0F) != left);
+
+    resonate::ui::setShown(fixture.world, left, true);
+    CHECK(quads() == 2U);
+    CHECK(resonate::ui::hitTest(fixture.world, root, 50.0F, 50.0F) == left);
 }

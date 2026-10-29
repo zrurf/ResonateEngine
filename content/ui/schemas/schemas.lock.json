@@ -390,6 +390,16 @@
       ]
     },
     {
+      "name": "Shown",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Shown version 1",
+        "  size 1 align 1",
+        "  field shown bool @0 size 1 default=true"
+      ]
+    },
+    {
       "name": "Slider",
       "kind": "component",
       "version": 1,

@@ -30,6 +30,19 @@ namespace
 
 using resonate::ecs::Entity;
 
+/* The editor's pane geometry, beside the executable: the splitters own the
+   three sizes, the toolbar owns the three visibility flags. A missing or
+   malformed file keeps the authored defaults. */
+struct Layout
+{
+    float scene_width = 280.0F;
+    float inspector_width = 280.0F;
+    float console_height = 240.0F;
+    bool scene_shown = true;
+    bool inspector_shown = true;
+    bool console_shown = true;
+};
+
 /* The editor's own state: the widgets it addresses by key and what the
    inspector currently shows. */
 struct EditorState
@@ -94,10 +107,12 @@ struct EditorState
     Entity viewport{};
     Entity viewport_hint{};
     Entity splitter_right{};
+    Entity splitter_console{};
     Entity inspector{};
     Entity console_pane{};
-    float shown_scene_width = 280.0F;
-    float shown_inspector_width = 280.0F;
+    /* The geometry the splitters and the visibility toggles own, mirrored from
+       the layout file and written back when it changes. */
+    Layout layout{};
     float save_delay = 0.0F;
 };
 
@@ -298,20 +313,19 @@ Entity entityOfRow(const EditorState& state, Entity row)
     return Entity{};
 }
 
-/* The editor's pane widths, beside the executable: two numbers the splitters
-   own. A missing or malformed file keeps the authored defaults. */
 std::string layoutPath()
 {
     const char* directory = resonate_pal_io_executable_directory();
     return std::string(directory != nullptr ? directory : ".") + "/resonate.editor.layout";
 }
 
-void loadLayout(float& scene_width, float& inspector_width)
+Layout loadLayout()
 {
+    Layout layout;
     std::FILE* file = std::fopen(layoutPath().c_str(), "rb");
     if (file == nullptr)
     {
-        return;
+        return layout;
     }
     char line[128] = {};
     while (std::fgets(line, sizeof(line), file) != nullptr)
@@ -323,36 +337,60 @@ void loadLayout(float& scene_width, float& inspector_width)
             const std::string name = key;
             if (name == "scene-width" && value > 0.0F)
             {
-                scene_width = value;
+                layout.scene_width = value;
             }
             else if (name == "inspector-width" && value > 0.0F)
             {
-                inspector_width = value;
+                layout.inspector_width = value;
+            }
+            else if (name == "console-height" && value > 0.0F)
+            {
+                layout.console_height = value;
+            }
+            else if (name == "scene-shown")
+            {
+                layout.scene_shown = value != 0.0F;
+            }
+            else if (name == "inspector-shown")
+            {
+                layout.inspector_shown = value != 0.0F;
+            }
+            else if (name == "console-shown")
+            {
+                layout.console_shown = value != 0.0F;
             }
         }
     }
     std::fclose(file);
+    return layout;
 }
 
-void saveLayout(float scene_width, float inspector_width)
+void saveLayout(const Layout& layout)
 {
     std::FILE* file = std::fopen(layoutPath().c_str(), "wb");
     if (file == nullptr)
     {
         return;
     }
-    std::fprintf(file, "scene-width=%.0f", static_cast<double>(scene_width));
-    std::fputc('\n', file);
-    std::fprintf(file, "inspector-width=%.0f", static_cast<double>(inspector_width));
-    std::fputc('\n', file);
+    std::fprintf(file, "scene-width=%.0f\n", static_cast<double>(layout.scene_width));
+    std::fprintf(file, "inspector-width=%.0f\n", static_cast<double>(layout.inspector_width));
+    std::fprintf(file, "console-height=%.0f\n", static_cast<double>(layout.console_height));
+    std::fprintf(file, "scene-shown=%d\n", layout.scene_shown ? 1 : 0);
+    std::fprintf(file, "inspector-shown=%d\n", layout.inspector_shown ? 1 : 0);
+    std::fprintf(file, "console-shown=%d\n", layout.console_shown ? 1 : 0);
     std::fclose(file);
 }
 
-/* Places the panes around two widths: the scene pane on the left, the
-   inspector on the right, the viewport and the console between them. */
-void applyLayout(EditorState& state, resonate::ecs::World& world, float scene_width,
-                 float inspector_width)
+/* Places the panes around the geometry the splitters own: the scene pane on
+   the left, the inspector on the right, the console at the bottom above the
+   status bar, and the viewport filling what is left. A hidden pane collapses
+   to nothing and takes its divider with it. Every pane is written whole, so a
+   divider's own drag damage is corrected on the same tick. */
+void applyLayout(const EditorState& state, resonate::ecs::World& world, const Layout& layout)
 {
+    const float scene_width = layout.scene_shown ? layout.scene_width : 0.0F;
+    const float inspector_width = layout.inspector_shown ? layout.inspector_width : 0.0F;
+    const float console_height = layout.console_shown ? layout.console_height : 0.0F;
     const auto place = [&](Entity entity, float x, float width)
     {
         if (resonate::ui::RectTransform* rect = world.get<resonate::ui::RectTransform>(entity))
@@ -362,19 +400,60 @@ void applyLayout(EditorState& state, resonate::ecs::World& world, float scene_wi
             (void)world.markChanged<resonate::ui::RectTransform>(entity);
         }
     };
+    /* A pane's y is measured from the top when its anchor starts at 0, and
+       from the bottom (negative) when it ends at 1. */
+    const auto placeVertical = [&](Entity entity, bool from_bottom, float y, float height)
+    {
+        if (resonate::ui::RectTransform* rect = world.get<resonate::ui::RectTransform>(entity))
+        {
+            const float value = from_bottom ? -y : y;
+            if (rect->y == value && rect->height == height)
+            {
+                return;
+            }
+            rect->y = value;
+            rect->height = height;
+            (void)world.markChanged<resonate::ui::RectTransform>(entity);
+        }
+    };
+
     place(state.scene_pane, 0.0F, scene_width);
-    place(state.splitter_left, scene_width, 6.0F);
-    place(state.viewport, scene_width + 6.0F, -(scene_width + inspector_width + 12.0F));
-    if (resonate::ui::RectTransform* hint = world.get<resonate::ui::RectTransform>(state.viewport_hint))
+    place(state.splitter_left, scene_width, layout.scene_shown ? 6.0F : 0.0F);
+    const float middle_width = -(scene_width + inspector_width + 12.0F);
+    place(state.viewport, scene_width + 6.0F, middle_width);
+    place(state.console_pane, scene_width + 6.0F, middle_width);
+    place(state.splitter_console, scene_width + 6.0F, middle_width);
+    place(state.splitter_right, -(inspector_width + 6.0F), layout.inspector_shown ? 6.0F : 0.0F);
+    place(state.inspector, -inspector_width, inspector_width);
+    if (resonate::ui::RectTransform* hint =
+            world.get<resonate::ui::RectTransform>(state.viewport_hint))
     {
         hint->x = scene_width + 22.0F;
         (void)world.markChanged<resonate::ui::RectTransform>(state.viewport_hint);
     }
-    place(state.console_pane, scene_width + 6.0F, -(scene_width + inspector_width + 12.0F));
-    place(state.splitter_right, -(inspector_width + 6.0F), 6.0F);
-    place(state.inspector, -inspector_width, inspector_width);
-    state.shown_scene_width = scene_width;
-    state.shown_inspector_width = inspector_width;
+
+    /* Between the toolbar (37) and the status bar (26): the console takes its
+       height off the bottom, its divider sits on top of it, and the viewport
+       keeps the rest. */
+    constexpr float kToolbarHeight = 37.0F;
+    constexpr float kStatusHeight = 26.0F;
+    const float divider_height = layout.console_shown ? 6.0F : 0.0F;
+    placeVertical(state.console_pane, true, console_height + kStatusHeight, console_height);
+    placeVertical(state.splitter_console, true,
+                  console_height + kStatusHeight + divider_height, divider_height);
+    placeVertical(state.viewport, false, kToolbarHeight,
+                  -(kToolbarHeight + console_height + kStatusHeight + divider_height));
+    placeVertical(state.scene_pane, false, kToolbarHeight, -(kToolbarHeight + kStatusHeight));
+    placeVertical(state.splitter_left, false, kToolbarHeight, -(kToolbarHeight + kStatusHeight));
+    placeVertical(state.splitter_right, false, kToolbarHeight, -(kToolbarHeight + kStatusHeight));
+    placeVertical(state.inspector, false, kToolbarHeight, -(kToolbarHeight + kStatusHeight));
+
+    resonate::ui::setShown(world, state.scene_pane, layout.scene_shown);
+    resonate::ui::setShown(world, state.splitter_left, layout.scene_shown);
+    resonate::ui::setShown(world, state.inspector, layout.inspector_shown);
+    resonate::ui::setShown(world, state.splitter_right, layout.inspector_shown);
+    resonate::ui::setShown(world, state.console_pane, layout.console_shown);
+    resonate::ui::setShown(world, state.splitter_console, layout.console_shown);
 }
 
 /* The material scrubs follow the selected object: the scrubber takes the
@@ -501,6 +580,48 @@ bool runCommand(void* context, resonate::ecs::World&, resonate::ecs::Entity,
     return true;
 }
 
+/* A pane toggle flips its flag, re-derives the geometry and records the result
+   at once: a click is deliberate, unlike a drag that settles first. */
+void togglePane(EditorState& state, resonate::ecs::World& world, bool Layout::*flag)
+{
+    state.layout.*flag = !(state.layout.*flag);
+    applyLayout(state, world, state.layout);
+    saveLayout(state.layout);
+}
+
+bool toggleScene(void* context, resonate::ecs::World& world, resonate::ecs::Entity,
+                 resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    togglePane(*static_cast<EditorState*>(context), world, &Layout::scene_shown);
+    return true;
+}
+
+bool toggleInspector(void* context, resonate::ecs::World& world, resonate::ecs::Entity,
+                     resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    togglePane(*static_cast<EditorState*>(context), world, &Layout::inspector_shown);
+    return true;
+}
+
+bool toggleConsole(void* context, resonate::ecs::World& world, resonate::ecs::Entity,
+                   resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    togglePane(*static_cast<EditorState*>(context), world, &Layout::console_shown);
+    return true;
+}
+
 /* One axis of the position: the field shows it, a typed number writes it.
    A field that does not parse keeps its text and is not retried until the
    next edit. */
@@ -585,25 +706,52 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         (void)resonate::ui::setText(world, state->canvas, state->status_fps, bar_text, error);
     }
     /* The splitters move the panes' RectTransforms directly; the geometry is
-       saved once the drag has settled. */
+       read back, re-applied so every pane agrees, and saved once the drag has
+       settled. A hidden pane is collapsed, so its divider is what a drag
+       would move and there is nothing to read. */
     {
-        float scene_width = state->shown_scene_width;
-        float inspector_width = state->shown_inspector_width;
-        if (const resonate::ui::RectTransform* scene =
-                world.get<resonate::ui::RectTransform>(state->scene_pane))
+        Layout next = state->layout;
+        if (next.scene_shown)
         {
-            scene_width = scene->width;
+            if (const resonate::ui::RectTransform* scene =
+                    world.get<resonate::ui::RectTransform>(state->scene_pane))
+            {
+                next.scene_width = scene->width;
+            }
         }
-        if (const resonate::ui::RectTransform* inspector =
-                world.get<resonate::ui::RectTransform>(state->inspector))
+        if (next.inspector_shown)
         {
-            inspector_width = inspector->width;
+            if (const resonate::ui::RectTransform* inspector =
+                    world.get<resonate::ui::RectTransform>(state->inspector))
+            {
+                next.inspector_width = inspector->width;
+            }
         }
-        if (std::fabs(scene_width - state->shown_scene_width) > 0.5F ||
-            std::fabs(inspector_width - state->shown_inspector_width) > 0.5F)
+        /* The console's divider is bottom-anchored, so its y is the distance
+           from the bottom to its top edge; the status bar and the divider sit
+           below the console. */
+        if (next.console_shown)
         {
-            state->shown_scene_width = scene_width;
-            state->shown_inspector_width = inspector_width;
+            if (const resonate::ui::RectTransform* divider =
+                    world.get<resonate::ui::RectTransform>(state->splitter_console))
+            {
+                float available = 800.0F;
+                if (const resonate::ui::ComputedRect* canvas_rect =
+                        world.get<resonate::ui::ComputedRect>(state->canvas))
+                {
+                    available = canvas_rect->height;
+                }
+                next.console_height = std::clamp(-divider->y - 32.0F, 96.0F,
+                                                 std::fmax(available - 37.0F - 32.0F - 120.0F,
+                                                           96.0F));
+            }
+        }
+        if (std::fabs(next.scene_width - state->layout.scene_width) > 0.5F ||
+            std::fabs(next.inspector_width - state->layout.inspector_width) > 0.5F ||
+            std::fabs(next.console_height - state->layout.console_height) > 0.5F)
+        {
+            state->layout = next;
+            applyLayout(*state, world, state->layout);
             state->save_delay = 0.3F;
         }
         else if (state->save_delay > 0.0F)
@@ -611,7 +759,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
             state->save_delay -= delta_seconds;
             if (state->save_delay <= 0.0F)
             {
-                saveLayout(state->shown_scene_width, state->shown_inspector_width);
+                saveLayout(state->layout);
             }
         }
     }
@@ -742,14 +890,35 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->viewport = resonate::ui::findByKey(world, canvas, "viewport");
     state->viewport_hint = resonate::ui::findByKey(world, canvas, "viewport-hint");
     state->splitter_right = resonate::ui::findByKey(world, canvas, "splitter-right");
+    state->splitter_console = resonate::ui::findByKey(world, canvas, "splitter-console");
     state->inspector = resonate::ui::findByKey(world, canvas, "inspector");
     state->console_pane = resonate::ui::findByKey(world, canvas, "console");
+    /* The pane toggles flip a component field, so every pane carries one from
+       the start and a click never adds a component mid-frame. */
+    for (const Entity pane : {state->scene_pane, state->splitter_left, state->inspector,
+                              state->splitter_right, state->console_pane,
+                              state->splitter_console})
     {
-        float scene_width = 280.0F;
-        float inspector_width = 280.0F;
-        loadLayout(scene_width, inspector_width);
-        applyLayout(*state, world, scene_width, inspector_width);
+        if (pane.valid())
+        {
+            (void)world.add(pane, resonate::ui::Shown{true});
+        }
     }
+    state->layout = loadLayout();
+    applyLayout(*state, world, state->layout);
+    const auto attachToggle = [&](const char* key, resonate::ui::EventHandler listener)
+    {
+        const Entity button = resonate::ui::findByKey(world, canvas, key);
+        if (button.valid())
+        {
+            world.add(button, resonate::ui::Listener{
+                                  listener, state,
+                                  resonate::ui::eventBit(resonate::ui::EventKind::Click)});
+        }
+    };
+    attachToggle("tb-scene-pane", &toggleScene);
+    attachToggle("tb-inspector", &toggleInspector);
+    attachToggle("tb-console", &toggleConsole);
     state->status_fps = resonate::ui::findByKey(world, canvas, "status-fps");
     world.setReportSink(state, &reportSink);
 

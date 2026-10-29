@@ -358,6 +358,62 @@ TEST_CASE("ui input: dragging a splitter resizes the panes beside it", "[ui][inp
     CHECK(near(width_of(left), 320.0F));
 }
 
+TEST_CASE("ui input: a vertical splitter resizes the panes above and below it", "[ui][input]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Box key="column" x="0" y="0" width="400" height="600">
+      <Panel key="top" x="0" y="0" width="400" height="300" color="0.1 0.1 0.1 1"/>
+      <Box key="handle" x="0" y="300" width="400" height="6" color="0.2 0.2 0.2 1">
+        <Splitter axis="1"/>
+      </Box>
+      <Panel key="bottom" x="0" y="306" width="400" height="294" color="0.1 0.1 0.1 1"/>
+    </Box>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(text, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 400.0F, 600.0F));
+    const auto children =
+        resonate::hierarchy::children(world, resonate::hierarchy::children(world, root)[0]);
+    REQUIRE(children.size() == 3U);
+    const Entity top = children[0];
+    const Entity handle = children[1];
+    const Entity bottom = children[2];
+
+    const auto height_of = [&](Entity entity)
+    {
+        const resonate::ui::RectTransform* rect =
+            world.get<resonate::ui::RectTransform>(entity);
+        REQUIRE(rect != nullptr);
+        return rect->height;
+    };
+
+    /* A press on the divider owns the drag; moving down grows the pane above,
+       moves the one below and the divider travels with the edge. */
+    REQUIRE(resonate::ui::updateInput(world, root, 200.0F, 303.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 200.0F, 343.0F, true));
+    CHECK(near(height_of(top), 340.0F));
+    CHECK(near(height_of(bottom), 254.0F));
+    const resonate::ui::RectTransform* handle_rect = world.get<resonate::ui::RectTransform>(handle);
+    REQUIRE(handle_rect != nullptr);
+    CHECK(near(handle_rect->y, 340.0F));
+    const resonate::ui::RectTransform* bottom_rect = world.get<resonate::ui::RectTransform>(bottom);
+    REQUIRE(bottom_rect != nullptr);
+    CHECK(near(bottom_rect->y, 346.0F));
+
+    REQUIRE(resonate::ui::updateInput(world, root, 200.0F, 343.0F, false));
+    CHECK(near(height_of(top), 340.0F));
+}
+
 TEST_CASE("ui input: dragging a property label scrubs its value", "[ui][input]")
 {
     const char* const text = R"xml(<document version="1" schemas="resonate.ui">

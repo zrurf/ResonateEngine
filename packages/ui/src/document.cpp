@@ -1746,6 +1746,29 @@ bool setScrubValue(ecs::World& world, ecs::Entity entity, float value)
     return true;
 }
 
+bool isShown(ecs::World& world, ecs::Entity entity)
+{
+    const Shown* shown = world.get<Shown>(entity);
+    return shown == nullptr || shown->shown;
+}
+
+void setShown(ecs::World& world, ecs::Entity entity, bool shown)
+{
+    if (Shown* component = world.get<Shown>(entity))
+    {
+        if (component->shown == shown)
+        {
+            return;
+        }
+        component->shown = shown;
+    }
+    else
+    {
+        world.add(entity, Shown{shown});
+    }
+    (void)world.markChanged<Shown>(entity);
+}
+
 ecs::Entity selectedChild(ecs::World& world, ecs::Entity container)
 {
     if (!world.alive(container))

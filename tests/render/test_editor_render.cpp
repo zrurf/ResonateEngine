@@ -1,6 +1,7 @@
 #include <catch2/catch_all.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <cstdint>
@@ -190,6 +191,25 @@ TEST_CASE("offscreen: the editor shell renders", "[render][editor]")
         CHECK(std::fabs(viewport_rect->x - 326.0F) < 0.5F);
     }
 
+    /* The console's divider closes the viewport from below and opens the
+       console, so the three rects share two edges. */
+    {
+        const resonate::ecs::Entity divider =
+            resonate::ui::findByKey(world, canvas, "splitter-console");
+        REQUIRE(divider.valid());
+        const auto* divider_rect = world.get<resonate::ui::ComputedRect>(divider);
+        const auto* viewport_rect =
+            world.get<resonate::ui::ComputedRect>(resonate::ui::findByKey(world, canvas, "viewport"));
+        const auto* console_rect =
+            world.get<resonate::ui::ComputedRect>(resonate::ui::findByKey(world, canvas, "console"));
+        REQUIRE(divider_rect != nullptr);
+        REQUIRE(viewport_rect != nullptr);
+        REQUIRE(console_rect != nullptr);
+        CHECK(std::fabs(viewport_rect->y + viewport_rect->height - divider_rect->y) < 0.5F);
+        CHECK(std::fabs(divider_rect->y + divider_rect->height - console_rect->y) < 0.5F);
+        CHECK(std::fabs(console_rect->height - 240.0F) < 0.5F);
+    }
+
     resonate::renderer::RenderSystem render_system;
     render_system.setRegistry(host->capabilities());
     render_system.setUiFontPaths(std::move(font_paths));
@@ -359,6 +379,34 @@ TEST_CASE("offscreen: the editor shell renders", "[render][editor]")
             CHECK(changed * 100U < count * 2U);
             CHECK(mean < 3.0);
         }
+    }
+
+    /* Hiding a pane drops its paint — what the editor's toolbar toggles do —
+       so the frame behind the UI shows where the panel grey was. */
+    {
+        const resonate::ecs::Entity scene = resonate::ui::findByKey(world, canvas, "scene-pane");
+        REQUIRE(scene.valid());
+        const auto* rect = world.get<resonate::ui::ComputedRect>(scene);
+        REQUIRE(rect != nullptr);
+        const auto x = static_cast<std::uint32_t>(rect->x + rect->width * 0.5F);
+        const auto y = static_cast<std::uint32_t>(rect->y + 400.0F);
+        const auto red_at = [&pixels, width](std::uint32_t px, std::uint32_t py)
+        { return static_cast<int>(pixels[(static_cast<std::size_t>(py) * width + px) * 4U]); };
+        INFO("scene tone before hiding=" << red_at(x, y));
+        CHECK(red_at(x, y) >= 32);
+        resonate::ui::setShown(world, scene, false);
+        for (int frame = 0; frame < 4; ++frame)
+        {
+            render_system.run(world);
+            render_system.waitIdle();
+        }
+        REQUIRE(device->readback_canvas(device->self, pixels.data(),
+                                        static_cast<std::uint64_t>(pixels.size()), &width,
+                                        &height) == RESONATE_OK);
+        const int after = red_at(x, y);
+        INFO("scene tone after hiding=" << after);
+        CHECK_FALSE((after >= 32 && after <= 36));
+        resonate::ui::setShown(world, scene, true);
     }
 
     /* The renderer owns the render thread and the device calls; it releases
