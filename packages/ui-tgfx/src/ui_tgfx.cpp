@@ -1,5 +1,6 @@
 #include <resonate/ui_tgfx.h>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -11,6 +12,7 @@
 
 #include <tgfx/core/Canvas.h>
 #include <tgfx/core/Color.h>
+#include <tgfx/core/ColorFilter.h>
 #include <tgfx/core/Data.h>
 #include <tgfx/core/Font.h>
 #include <tgfx/core/Image.h>
@@ -244,7 +246,18 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
         /* The registered file has no mip chain; the default MipmapMode::Linear
            would sample nothing. */
         const tgfx::SamplingOptions sampling(tgfx::FilterMode::Linear, tgfx::MipmapMode::None);
-        canvas->drawImageRect(image, source, destination, sampling);
+        tgfx::Paint paint;
+        if (draw.r != 1.0F || draw.g != 1.0F || draw.b != 1.0F || draw.a != 1.0F)
+        {
+            /* A scale matrix tints the unpremultiplied sample: the icon atlas is
+               white, so multiplying its channels is exactly the ink color. */
+            const std::array<float, 20> tint{draw.r, 0.0F, 0.0F, 0.0F, 0.0F,
+                                             0.0F, draw.g, 0.0F, 0.0F, 0.0F,
+                                             0.0F, 0.0F, draw.b, 0.0F, 0.0F,
+                                             0.0F, 0.0F, 0.0F, draw.a, 0.0F};
+            paint.setColorFilter(tgfx::ColorFilter::Matrix(tint));
+        }
+        canvas->drawImageRect(image, source, destination, sampling, &paint);
         endClip(draw.clip_width, draw.clip_height);
     }
     /* RESONATE_TGFX_SYNC waits for the layer's own GPU work before returning; a

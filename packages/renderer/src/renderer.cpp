@@ -1271,8 +1271,9 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         {
             ui_draw_images.push_back(ResonateTgfxImageDraw{
                 quad.texture, quad.x, quad.y, quad.width, quad.height, quad.uv_min.x,
-                quad.uv_min.y, quad.uv_max.x, quad.uv_max.y, quad.clip.x, quad.clip.y,
-                quad.clip.width, quad.clip.height});
+                quad.uv_min.y, quad.uv_max.x, quad.uv_max.y, quad.color.x, quad.color.y,
+                quad.color.z, quad.color.w, quad.clip.x, quad.clip.y, quad.clip.width,
+                quad.clip.height});
             continue;
         }
         ui_draw_rects.push_back(ResonateTgfxRect{quad.x, quad.y, quad.width, quad.height,

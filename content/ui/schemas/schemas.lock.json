@@ -149,6 +149,21 @@
       ]
     },
     {
+      "name": "Icon",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Icon version 1",
+        "  field icon string",
+        "  field bind-x binding",
+        "  field bind-y binding",
+        "  field bind-width binding",
+        "  field bind-height binding",
+        "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
+        "  uses Image expose texture tint uv_max uv_min"
+      ]
+    },
+    {
       "name": "Image",
       "kind": "component",
       "version": 1,

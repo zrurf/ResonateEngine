@@ -23,6 +23,8 @@
 #include <resonate/ui/document.h>
 #include <resonate/ui/document_schema.h>
 #include <resonate/ui/hit_test.h>
+#include <resonate/ui/icon_registry.h>
+#include <resonate/ui/image_registry.h>
 #include <resonate/ui/input.h>
 #include <resonate/ui/layout.h>
 #include <resonate/ui/style.h>
@@ -143,8 +145,20 @@ TEST_CASE("offscreen: the editor shell renders", "[render][editor]")
     REQUIRE(resonate::ui::registerComponents(world));
 
     resonate::ui::TextRuntime runtime(fonts);
+    /* The icon atlas registers like any shipped image; the map names the
+       sub-rect each icon occupies, so both must agree on one texture id. */
+    resonate::ui::ImageRegistry images;
+    const std::uint32_t icon_atlas = images.registerImage("icons.png");
+    resonate::ui::IconRegistry icons;
+    {
+        std::string map_text;
+        REQUIRE(readSourceFile("content/ui/icons.icons", map_text));
+        std::string icon_error;
+        REQUIRE(icons.load(map_text, icon_error));
+        icons.setTexture(icon_atlas);
+    }
     const resonate::ecs::Entity canvas =
-        resonate::ui::instantiate(world, *document, nullptr, runtime);
+        resonate::ui::instantiate(world, *document, nullptr, runtime, nullptr, &images, &icons);
     REQUIRE(canvas.valid());
     REQUIRE(resonate::ui::layout(world, canvas, static_cast<float>(kWidth),
                                  static_cast<float>(kHeight)));
@@ -178,6 +192,8 @@ TEST_CASE("offscreen: the editor shell renders", "[render][editor]")
     resonate::renderer::RenderSystem render_system;
     render_system.setRegistry(host->capabilities());
     render_system.setUiFontPaths(std::move(font_paths));
+    render_system.setUiImageTexture(
+        icon_atlas, std::string(RESONATE_SOURCE_DIR) + "/content/ui/images/icons.png");
     for (int frame = 0; frame < 8; ++frame)
     {
         render_system.run(world);
@@ -237,6 +253,30 @@ TEST_CASE("offscreen: the editor shell renders", "[render][editor]")
     CHECK(header_pixels > 20000U);
     CHECK(selected_pixels > 2000U);
     CHECK(bright_text > 300U);
+
+    /* A toolbar icon samples the atlas and takes its class's tint: the strokes
+       land between the header tone and the bright text tone. */
+    {
+        const resonate::ecs::Entity icon =
+            resonate::ui::findByKey(world, canvas, "tb-save-icon");
+        REQUIRE(icon.valid());
+        const auto* rect = world.get<resonate::ui::ComputedRect>(icon);
+        REQUIRE(rect != nullptr);
+        std::uint32_t strokes = 0U;
+        for (int y = static_cast<int>(rect->y); y < static_cast<int>(rect->y + rect->height); ++y)
+        {
+            for (int x = static_cast<int>(rect->x); x < static_cast<int>(rect->x + rect->width);
+                 ++x)
+            {
+                const std::size_t offset =
+                    (static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)) * 4U;
+                const int red = pixels[offset];
+                strokes += red > 120 && red < 200 ? 1U : 0U;
+            }
+        }
+        INFO("icon strokes=" << strokes);
+        CHECK(strokes > 20U);
+    }
 
     /* The renderer owns the render thread and the device calls; it releases
        before the host detaches, or the teardown blocks. */

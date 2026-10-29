@@ -449,6 +449,20 @@
     <field name="bind-height" type="binding"/>
   </node>
 
+  <!-- A monochrome glyph from the shipped icon atlas. `icon` names an entry in
+       content/ui/icons.icons; the resolution fills the texture and the UV rect,
+       and the tint colors the mask. The size comes from the RectTransform. -->
+  <node name="Icon" version="1">
+    <uses component="RectTransform"
+          expose="x y width height anchor_min anchor_max pivot z position"/>
+    <uses component="Image" expose="texture uv_min uv_max tint"/>
+    <field name="icon" type="string"/>
+    <field name="bind-x" type="binding"/>
+    <field name="bind-y" type="binding"/>
+    <field name="bind-width" type="binding"/>
+    <field name="bind-height" type="binding"/>
+  </node>
+
   <!-- A selectable list row: the outliner and the scene tree are rows. The
        selection paint is the Selectable component's, so a `Row` rule in the
        theme colors every list in one place. -->

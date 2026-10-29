@@ -342,6 +342,22 @@ task("texcook")
         description = "Cook the source textures into the runtime KTX2 container.",
     }
 
+task("icons")
+    set_category("plugin")
+    on_run(function ()
+        os.execv(os.programfile(), {"build", "-y", "Resonate.Tools.IconCook"})
+        local project = os.projectdir()
+        os.execv(os.programfile(),
+                 {"run", "Resonate.Tools.IconCook",
+                  path.join(project, "content", "ui", "icons"),
+                  path.join(project, "content", "ui", "images", "icons.png"),
+                  path.join(project, "content", "ui", "icons.icons")})
+    end)
+    set_menu {
+        usage = "xmake icons",
+        description = "Cook content/ui/icons into the shipped icon atlas and its UV map.",
+    }
+
 task("android-apk")
     set_category("plugin")
     on_run(function ()
@@ -388,6 +404,7 @@ end
 if not get_config("engine_only") then
     includes("packages/csharp")
     includes("packages/tools/texcook")
+    includes("packages/tools/iconcook")
     includes("packages/editor")
     includes("packages/launcher")
     includes("tests")

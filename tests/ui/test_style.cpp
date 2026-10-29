@@ -12,6 +12,8 @@
 #include <resonate/ui/display_list.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/document_schema.h>
+#include <resonate/ui/icon_registry.h>
+#include <resonate/ui/image_registry.h>
 #include <resonate/ui/layout.h>
 #include <resonate/ui/input.h>
 #include <resonate/ui/style.h>
@@ -235,6 +237,53 @@ TEST_CASE("ui style: a background's radius reaches the display list and its bord
     CHECK(std::fabs(quads[2].radius - 25.0F) < 0.001F);
     CHECK(std::fabs(quads[3].radius - 25.0F) < 0.001F);
     CHECK(std::fabs(quads[3].border - 2.0F) < 0.001F);
+}
+
+TEST_CASE("ui style: an icon node resolves its atlas rect and takes the class tint", "[ui][style]")
+{
+    const char* const icon_document = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <StyleSheet key="theme">
+      <Variable token="--ink" value="0.25 0.5 0.75 1"/>
+      <StyleRule selector=".icon"><Image tint="var(--ink)"/></StyleRule>
+    </StyleSheet>
+    <Icon key="probe" class="icon" x="10" y="10" width="16" height="16" icon="camera"/>
+  </Screen>
+</document>)xml";
+    resonate::ui::IconRegistry icons;
+    std::string icon_error;
+    REQUIRE(icons.load("# atlas\ncamera 0.25 0.5 0.5 0.75\n", icon_error));
+    icons.setTexture(7U);
+
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(icon_document,
+                                                   &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    Fixture fixture;
+    const Entity root =
+        resonate::ui::instantiate(fixture.world, *document, nullptr, {}, nullptr, nullptr, &icons);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 100.0F, 100.0F));
+
+    const auto children = resonate::hierarchy::children(fixture.world, root);
+    REQUIRE(children.size() == 1U);
+    const resonate::ui::Image* image = fixture.world.get<resonate::ui::Image>(children[0]);
+    REQUIRE(image != nullptr);
+    CHECK(image->texture == 7U);
+    CHECK(std::fabs(image->uv_min.x - 0.25F) < 0.0001F);
+    CHECK(std::fabs(image->uv_min.y - 0.5F) < 0.0001F);
+    CHECK(std::fabs(image->uv_max.x - 0.5F) < 0.0001F);
+    CHECK(std::fabs(image->uv_max.y - 0.75F) < 0.0001F);
+    CHECK(std::fabs(image->tint.z - 0.75F) < 0.0001F);
+
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+    REQUIRE(list.quads().size() == 1U);
+    CHECK(list.quads()[0].texture == 7U);
+    CHECK(std::fabs(list.quads()[0].uv_min.x - 0.25F) < 0.0001F);
+    CHECK(std::fabs(list.quads()[0].uv_max.y - 0.75F) < 0.0001F);
 }
 
 TEST_CASE("ui style: an unknown theme variable is refused", "[ui][style]")

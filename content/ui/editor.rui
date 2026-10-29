@@ -15,6 +15,21 @@
       <Label key="brand" class="label" width="150" height="24" text="Resonate Editor"
              font_size="13" font_weight="600" v_align="Middle"/>
       <Box key="tb-sep-1" class="separator" width="1" height="18"/>
+      <Button key="tb-save" class="tool" width="24" height="24">
+        <Icon key="tb-save-icon" class="icon" x="4" y="4" width="16" height="16" icon="save"/>
+      </Button>
+      <Button key="tb-undo" class="tool" width="24" height="24">
+        <Icon key="tb-undo-icon" class="icon" x="4" y="4" width="16" height="16" icon="undo-2"/>
+      </Button>
+      <Button key="tb-redo" class="tool" width="24" height="24">
+        <Icon key="tb-redo-icon" class="icon" x="4" y="4" width="16" height="16" icon="redo-2"/>
+      </Button>
+      <Box key="tb-sep-2" class="separator" width="1" height="18"/>
+      <Button key="tb-play" class="tool" width="24" height="24">
+        <Icon key="tb-play-icon" class="icon-accent" x="4" y="4" width="16" height="16"
+              icon="play"/>
+      </Button>
+      <Box key="tb-sep-3" class="separator" width="1" height="18"/>
       <Button key="file" class="tool" width="56" height="24">
         <Label key="file-label" class="label" width="56" height="24" text="文件"
                font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
@@ -42,27 +57,34 @@
               direction="Column" align="Stretch" gap="0"
               padding_left="0" padding_top="0" padding_right="0" padding_bottom="0">
         <Row key="camera" class="outliner-row" height="24" selected="false">
-          <Label key="camera-label" class="label" x="20" y="3" width="240" height="18"
+          <Icon key="camera-icon" class="icon" x="4" y="4" width="16" height="16" icon="camera"/>
+          <Label key="camera-label" class="label" x="24" y="3" width="236" height="18"
                  text="主相机" font_size="12" v_align="Middle"/>
         </Row>
         <Row key="sun" class="outliner-row" height="24" selected="false">
-          <Label key="sun-label" class="label" x="20" y="3" width="240" height="18"
+          <Icon key="sun-icon" class="icon" x="4" y="4" width="16" height="16" icon="sun"/>
+          <Label key="sun-label" class="label" x="24" y="3" width="236" height="18"
                  text="平行光" font_size="12" v_align="Middle"/>
         </Row>
         <Row key="ground" class="outliner-row" height="24" selected="false">
-          <Label key="ground-label" class="label" x="20" y="3" width="240" height="18"
+          <Icon key="ground-icon" class="icon" x="4" y="4" width="16" height="16" icon="box"/>
+          <Label key="ground-label" class="label" x="24" y="3" width="236" height="18"
                  text="地面" font_size="12" v_align="Middle"/>
         </Row>
         <Row key="crate-a" class="outliner-row" height="24" selected="true">
-          <Label key="crate-a-label" class="label" x="20" y="3" width="240" height="18"
+          <Icon key="crate-a-icon" class="icon-bright" x="4" y="4" width="16" height="16"
+                icon="box"/>
+          <Label key="crate-a-label" class="label" x="24" y="3" width="236" height="18"
                  text="箱子 A" font_size="12" v_align="Middle"/>
         </Row>
         <Row key="crate-b" class="outliner-row" height="24" selected="false">
-          <Label key="crate-b-label" class="label" x="20" y="3" width="240" height="18"
+          <Icon key="crate-b-icon" class="icon" x="4" y="4" width="16" height="16" icon="box"/>
+          <Label key="crate-b-label" class="label" x="24" y="3" width="236" height="18"
                  text="箱子 B" font_size="12" v_align="Middle"/>
         </Row>
         <Row key="crate-c" class="outliner-row" height="24" selected="false">
-          <Label key="crate-c-label" class="label" x="20" y="3" width="240" height="18"
+          <Icon key="crate-c-icon" class="icon" x="4" y="4" width="16" height="16" icon="box"/>
+          <Label key="crate-c-label" class="label" x="24" y="3" width="236" height="18"
                  text="箱子 C" font_size="12" v_align="Middle"/>
         </Row>
       </Scroll>

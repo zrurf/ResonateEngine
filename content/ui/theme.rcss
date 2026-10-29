@@ -167,6 +167,15 @@
     <StyleRule selector=".accent">
       <Background color="var(--accent)"/>
     </StyleRule>
+    <StyleRule selector=".icon">
+      <Image tint="var(--text-dim)"/>
+    </StyleRule>
+    <StyleRule selector=".icon-bright">
+      <Image tint="var(--text)"/>
+    </StyleRule>
+    <StyleRule selector=".icon-accent">
+      <Image tint="var(--accent)"/>
+    </StyleRule>
     <StyleRule selector=".check">
       <Checkbox color="var(--text)"/>
       <Text padding_left="22"/>

@@ -13,6 +13,7 @@
 namespace resonate::ui
 {
 
+class IconRegistry;
 class ImageRegistry;
 class StringTable;
 class TextRuntime;
@@ -26,22 +27,25 @@ class TextRuntime;
    rasterized into the canvas's shared TextAtlasPage; the first font supplies
    the line metrics and the rest cover missing glyphs. A text beginning with
    '#' is a string-table key; without a table the key text is shown and a
-   warning is reported. A Picture `path` resolves through the image registry;
-   without one, or with an unregistered path, the texture stays authored and a
-   warning is reported. Reports and answers an invalid entity on a malformed
-   component value or an unknown component. */
-[[nodiscard]] ecs::Entity instantiate(
-    ecs::World& world, dom::Document& document,
-    const dom::ComponentRegistry* components = nullptr,
-    std::vector<std::shared_ptr<const text::Font>> fonts = {},
-    const StringTable* strings = nullptr, const ImageRegistry* images = nullptr);
+   warning is reported. A Picture `path` resolves through the image registry and
+   an Icon `icon` through the icon registry; without one, or with an
+   unregistered name, the authored texture and UV rect stay and a warning is
+   reported. Reports and answers an invalid entity on a malformed component
+   value or an unknown component. */
+[[nodiscard]] ecs::Entity instantiate(ecs::World& world, dom::Document& document,
+                                      const dom::ComponentRegistry* components = nullptr,
+                                      std::vector<std::shared_ptr<const text::Font>> fonts = {},
+                                      const StringTable* strings = nullptr,
+                                      const ImageRegistry* images = nullptr,
+                                      const IconRegistry* icons = nullptr);
 
 /* Instantiates through a live TextRuntime, whose font chain owns the atlas and
    allows setText after the document is built. */
 [[nodiscard]] ecs::Entity instantiate(ecs::World& world, dom::Document& document,
                                       const dom::ComponentRegistry* components,
                                       TextRuntime& text, const StringTable* strings = nullptr,
-                                      const ImageRegistry* images = nullptr);
+                                      const ImageRegistry* images = nullptr,
+                                      const IconRegistry* icons = nullptr);
 
 /* The widget authored under `key`, found through the WidgetKey every keyed node
    carries — the document itself is gone by the time an application looks. An

@@ -72,6 +72,10 @@ typedef struct ResonateTgfxImageDraw
     float v0;
     float u1;
     float v1; /* the source sub-rect, in image fractions */
+    float r;
+    float g;
+    float b;
+    float a; /* the tint multiplied into the sample */
     float clip_x;
     float clip_y;
     float clip_width;

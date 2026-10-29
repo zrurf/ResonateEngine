@@ -41,6 +41,7 @@
 #include <resonate/ui/binding.h>
 #include <resonate/ui/document_schema.h>
 #include <resonate/ui/event.h>
+#include <resonate/ui/icon_registry.h>
 #include <resonate/ui/image_registry.h>
 #include <resonate/ui/input.h>
 #include <resonate/ui/layout.h>
@@ -644,7 +645,7 @@ bool readTextFile(const std::string& path, std::string& out)
    ends the run with the reason. */
 ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool required,
                         ui::TextRuntime& text_runtime, const ui::StringTable* strings,
-                        const ui::ImageRegistry* images)
+                        const ui::ImageRegistry* images, const ui::IconRegistry* icons)
 {
     /* A host that stages its assets elsewhere (Android) names the document
        directly; the setting and the content walk cover desktop runs. */
@@ -730,8 +731,8 @@ ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool r
     {
         return ecs::Entity{};
     }
-    const ecs::Entity canvas =
-        ui::instantiate(world, *document, &contentComponents(), text_runtime, strings, images);
+    const ecs::Entity canvas = ui::instantiate(world, *document, &contentComponents(),
+                                               text_runtime, strings, images, icons);
     if (!canvas.valid())
     {
         return ecs::Entity{};
@@ -1275,9 +1276,28 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
                     return RESONATE_E_INVALID;
                 }
             }
+            /* Icons: the cooker's map names the sub-rect of icons.png each icon
+               lives in, and the image scan above registered that file. */
+            std::unique_ptr<ui::IconRegistry> ui_icons = std::make_unique<ui::IconRegistry>();
+            const std::string icons_path =
+                resolveContentFile("content/ui/icons.icons", "RESONATE_ICONS_PATH");
+            if (!icons_path.empty())
+            {
+                std::string icons_text;
+                std::string icons_error;
+                if (readTextFile(icons_path, icons_text) && ui_icons->load(icons_text, icons_error))
+                {
+                    ui_icons->setTexture(ui_images->find("icons.png"));
+                }
+                else
+                {
+                    std::fprintf(stderr, "resonate: ui icons: %s\n",
+                                 icons_error.empty() ? icons_path.c_str() : icons_error.c_str());
+                }
+            }
             ui_frame.text = ui_text.get();
             ui_frame.canvas = loadDemoHud(world, ui_document, ui_document_required, *ui_text,
-                                          ui_strings.get(), ui_images.get());
+                                          ui_strings.get(), ui_images.get(), ui_icons.get());
             if (!ui_frame.canvas.valid())
             {
                 return RESONATE_E_INVALID;
