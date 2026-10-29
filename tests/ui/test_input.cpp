@@ -673,3 +673,70 @@ TEST_CASE("ui input: tab focus skips hidden tab pages", "[ui][input][focus]")
     REQUIRE(resonate::ui::focusNext(world, root, false));
     CHECK(pointer->focused == visible_field);
 }
+
+TEST_CASE("ui input: a targeted splitter resizes the pane it names", "[ui][input]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Panel key="top" x="0" y="0" width="400" height="200" color="0.1 0.1 0.1 1"/>
+    <Box key="handle-before" x="0" y="200" width="400" height="6" color="0.2 0.2 0.2 1">
+      <Splitter axis="1" target="top"/>
+    </Box>
+    <Box key="handle-after" x="0" y="300" width="400" height="6" color="0.2 0.2 0.2 1">
+      <Splitter axis="1" target="bottom"/>
+    </Box>
+    <Panel key="bottom" x="0" y="306" width="400" height="200" color="0.1 0.1 0.1 1"/>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(text, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 400.0F, 600.0F));
+
+    const Entity top = resonate::ui::findByKey(world, root, "top");
+    const Entity bottom = resonate::ui::findByKey(world, root, "bottom");
+    const Entity before = resonate::ui::findByKey(world, root, "handle-before");
+    const Entity after = resonate::ui::findByKey(world, root, "handle-after");
+    REQUIRE(top.valid());
+    REQUIRE(bottom.valid());
+    REQUIRE(before.valid());
+    REQUIRE(after.valid());
+
+    /* The document named its panes by key: the second phase resolved both. */
+    const auto* before_splitter = world.get<resonate::ui::Splitter>(before);
+    const auto* after_splitter = world.get<resonate::ui::Splitter>(after);
+    REQUIRE(before_splitter != nullptr);
+    REQUIRE(after_splitter != nullptr);
+    CHECK(before_splitter->target == top);
+    CHECK(after_splitter->target == bottom);
+
+    const auto height_of = [&](Entity entity)
+    {
+        const resonate::ui::RectTransform* rect =
+            world.get<resonate::ui::RectTransform>(entity);
+        REQUIRE(rect != nullptr);
+        return rect->height;
+    };
+
+    /* Dragging down grows the pane above the divider... */
+    REQUIRE(resonate::ui::updateInput(world, root, 200.0F, 203.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 200.0F, 223.0F, true));
+    CHECK(near(height_of(top), 220.0F));
+    REQUIRE(resonate::ui::updateInput(world, root, 200.0F, 223.0F, false));
+
+    /* ...and shrinks the pane below it, which is the console's arrangement. */
+    REQUIRE(resonate::ui::updateInput(world, root, 200.0F, 303.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 200.0F, 323.0F, true));
+    CHECK(near(height_of(bottom), 180.0F));
+    const resonate::ui::RectTransform* handle = world.get<resonate::ui::RectTransform>(after);
+    REQUIRE(handle != nullptr);
+    CHECK(near(handle->y, 320.0F));
+    REQUIRE(resonate::ui::updateInput(world, root, 200.0F, 323.0F, false));
+}

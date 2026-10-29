@@ -586,6 +586,7 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<Tab>() != ecs::kInvalidComponent &&
            world.registerComponent<Splitter>() != ecs::kInvalidComponent &&
            world.registerComponent<Shown>() != ecs::kInvalidComponent &&
+           world.registerComponent<NodeIndex>() != ecs::kInvalidComponent &&
            world.registerComponent<Selectable>() != ecs::kInvalidComponent &&
            world.registerComponent<Scrubber>() != ecs::kInvalidComponent &&
            world.registerComponent<WidgetKey>() != ecs::kInvalidComponent &&

@@ -52,6 +52,11 @@ class TextRuntime;
    unknown key answers an invalid entity. */
 [[nodiscard]] ecs::Entity findByKey(ecs::World& world, ecs::Entity canvas, std::string_view key);
 
+/* The authoring key a node carried, from the canvas' node index; empty when it
+   has none or the canvas was built by hand. The view points into the index blob,
+   so it lives as long as that canvas' index does. */
+[[nodiscard]] std::string_view keyOf(ecs::World& world, ecs::Entity canvas, ecs::Entity entity);
+
 /* The child of `container` whose Selectable is selected, or an invalid entity —
    the one choice a list holds. */
 [[nodiscard]] ecs::Entity selectedChild(ecs::World& world, ecs::Entity container);

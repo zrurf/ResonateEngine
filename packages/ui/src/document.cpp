@@ -16,6 +16,7 @@
 
 #include <cctype>
 #include <cerrno>
+#include <cstring>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -909,6 +910,12 @@ struct BindingContext
     std::vector<detail::BindingRecord> records;
     dom::StringId text_property = dom::kInvalidString;
     dom::StringId placeholder_property = dom::kInvalidString;
+    /* The nodes that carried a key, in creation order; the index is packed from
+       them once every node exists. */
+    std::vector<std::pair<std::string_view, Entity>> keys;
+    /* Cross-node references a document authored by key: they name a node that
+       may not exist yet, so they resolve once the tree (and its index) does. */
+    std::vector<detail::PendingReference> references;
     dom::StringId image_property = dom::kInvalidString;
     dom::StringId icon_property = dom::kInvalidString;
     std::unique_ptr<detail::TextAtlasBuilder> owned_atlas;
@@ -920,6 +927,44 @@ struct BindingContext
     std::uint32_t page_revision = 1U;
     std::vector<PendingRun> runs;
 };
+
+/* The divider: its axis, and a target pane named by document key, which only
+   the whole tree can resolve. */
+bool applySplitter(const dom::Document& document, const dom::Component& component,
+                   Splitter& splitter, BindingContext& bindings, Entity entity,
+                   std::string& error)
+{
+    for (const dom::Field& field : component.fields)
+    {
+        const std::string_view name = document.text(field.name);
+        if (name == "axis")
+        {
+            if (!parseU32(field.value, splitter.axis) || splitter.axis > 1U)
+            {
+                error = "Splitter.axis is not 0 or 1";
+                return false;
+            }
+        }
+        else if (name == "target")
+        {
+            if (field.value.empty())
+            {
+                error = "Splitter.target is empty";
+                return false;
+            }
+            bindings.references.push_back(
+                detail::PendingReference{detail::PendingReference::Kind::SplitterTarget, entity,
+                                         field.value});
+        }
+        else
+        {
+            error = "unknown Splitter field '" + std::string(name) + "'";
+            return false;
+        }
+    }
+    return true;
+}
+
 
 bool collectBindings(World& world, const dom::Document& document, dom::NodeHandle node,
                      Entity entity, BindingContext& context)
@@ -1447,6 +1492,12 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
             applied = applyText(document, component, value, error) &&
                       world.add(entity, value) != nullptr;
         }
+        else if (name == "Splitter")
+        {
+            Splitter value;
+            applied = applySplitter(document, component, value, bindings, entity, error) &&
+                      world.add(entity, value) != nullptr;
+        }
         else
         {
             const dom::ComponentDesc* descriptor =
@@ -1493,6 +1544,17 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
     return collectBindings(world, document, node, entity, bindings);
 }
 
+std::uint64_t keyHash(std::string_view key)
+{
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (const char character : key)
+    {
+        hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(character));
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
 Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Document& document,
                        dom::NodeHandle node, const StyleTable& styles, BindingContext& bindings,
                        const dom::ComponentRegistry* component_registry,
@@ -1514,17 +1576,12 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
        widget after the document is dropped. */
     if (const dom::StringId key = document.key(node); key != dom::kInvalidString)
     {
-        std::uint64_t hash = 1469598103934665603ULL;
-        for (const char character : document.text(key))
-        {
-            hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(character));
-            hash *= 1099511628211ULL;
-        }
-        if (world.add(entity, WidgetKey{hash}) == nullptr)
+        if (world.add(entity, WidgetKey{keyHash(document.text(key))}) == nullptr)
         {
             report(world, document, node, "the widget key could not be attached");
             return Entity{};
         }
+        bindings.keys.emplace_back(document.text(key), entity);
     }
 
     if (!applyComponents(world, document, node, entity, styles.resolve(document, node), bindings,
@@ -1562,6 +1619,87 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
         resonate::hierarchy::setParent(commands, child_entity, entity);
     }
     return entity;
+}
+
+/* The canvas' node index, packed as: u32 count, u32 string bytes, one entry
+   per keyed node, then the keys' bytes. ui::findByKey and ui::keyOf decode the
+   same layout. */
+struct NodeIndexEntry
+{
+    std::uint64_t hash = 0U;
+    std::uint32_t offset = 0U;
+    std::uint32_t length = 0U;
+    std::uint32_t index = 0U;
+    std::uint32_t generation = 0U;
+};
+constexpr std::size_t kNodeIndexHeader = 8U;
+
+bool attachNodeIndex(World& world, Entity canvas,
+                     const std::vector<std::pair<std::string_view, Entity>>& keys)
+{
+    if (keys.empty())
+    {
+        return true;
+    }
+    std::size_t strings_bytes = 0U;
+    for (const auto& [name, entity] : keys)
+    {
+        (void)entity;
+        strings_bytes += name.size();
+    }
+    const std::size_t table = keys.size() * sizeof(NodeIndexEntry);
+    std::vector<std::uint8_t> bytes(kNodeIndexHeader + table + strings_bytes);
+    const auto count = static_cast<std::uint32_t>(keys.size());
+    const auto string_total = static_cast<std::uint32_t>(strings_bytes);
+    std::memcpy(bytes.data(), &count, sizeof(count));
+    std::memcpy(bytes.data() + 4U, &string_total, sizeof(string_total));
+    std::uint32_t offset = 0U;
+    for (std::size_t position = 0U; position < keys.size(); ++position)
+    {
+        NodeIndexEntry entry;
+        entry.hash = keyHash(keys[position].first);
+        entry.offset = offset;
+        entry.length = static_cast<std::uint32_t>(keys[position].first.size());
+        entry.index = keys[position].second.index;
+        entry.generation = keys[position].second.generation;
+        std::memcpy(bytes.data() + kNodeIndexHeader + position * sizeof(NodeIndexEntry), &entry,
+                    sizeof(entry));
+        std::memcpy(bytes.data() + kNodeIndexHeader + table + offset, keys[position].first.data(),
+                    keys[position].first.size());
+        offset += entry.length;
+    }
+    const ecs::BlobHandle records = world.createBlob(canvas, bytes.size(), bytes.data());
+    return records.valid() && world.add(canvas, NodeIndex{records}) != nullptr;
+}
+
+/* Second phase: a reference that named a node by key now has the whole tree
+   and the key index behind it. A key nobody authored is a warning, not a
+   failure — the widget keeps the authored default. */
+bool resolveReferences(World& world, Entity canvas,
+                       const std::vector<detail::PendingReference>& references)
+{
+    for (const detail::PendingReference& reference : references)
+    {
+        const Entity target = findByKey(world, canvas, reference.key);
+        if (!target.valid())
+        {
+            world.report(World::Report::Warning,
+                         "ui document: a reference names no node '%s'",
+                         std::string(reference.key).c_str());
+            continue;
+        }
+        switch (reference.kind)
+        {
+        case detail::PendingReference::Kind::SplitterTarget:
+            if (Splitter* splitter = world.get<Splitter>(reference.entity))
+            {
+                splitter->target = target;
+                (void)world.markChanged<Splitter>(reference.entity);
+            }
+            break;
+        }
+    }
+    return true;
 }
 
 Entity instantiateConfigured(World& world, dom::Document& document,
@@ -1715,6 +1853,16 @@ Entity instantiateConfigured(World& world, dom::Document& document,
             return Entity{};
         }
     }
+    if (!attachNodeIndex(world, entity, bindings.keys))
+    {
+        report(world, document, root, "the node index could not be attached");
+        for (auto iterator = created.rbegin(); iterator != created.rend(); ++iterator)
+        {
+            world.destroy(*iterator);
+        }
+        return Entity{};
+    }
+    resolveReferences(world, entity, bindings.references);
     world.play(commands);
     return entity;
 }
@@ -1864,17 +2012,101 @@ std::string widgetText(ecs::World& world, ecs::Entity entity)
     return {};
 }
 
+namespace
+{
+
+/* The index' entry table and its strings, or an empty view when the canvas
+   carries no index (one built by hand, or a subtree root). */
+struct NodeIndexView
+{
+    const std::uint8_t* table = nullptr;
+    const char* strings = nullptr;
+    std::uint32_t count = 0U;
+};
+
+NodeIndexView nodeIndexOf(ecs::World& world, ecs::Entity canvas)
+{
+    NodeIndexView view;
+    const NodeIndex* index = world.get<NodeIndex>(canvas);
+    if (index == nullptr || !world.alive(index->records))
+    {
+        return view;
+    }
+    const auto* bytes = static_cast<const std::uint8_t*>(world.blobData(index->records));
+    const std::uint64_t size = world.blobSize(index->records);
+    if (bytes == nullptr || size < kNodeIndexHeader)
+    {
+        return view;
+    }
+    std::uint32_t count = 0U;
+    std::memcpy(&count, bytes, sizeof(count));
+    const std::size_t table_end =
+        kNodeIndexHeader + static_cast<std::size_t>(count) * sizeof(NodeIndexEntry);
+    if (table_end > size)
+    {
+        return view;
+    }
+    view.table = bytes + kNodeIndexHeader;
+    view.strings = reinterpret_cast<const char*>(bytes + table_end);
+    view.count = count;
+    return view;
+}
+
+/* Copied out, so the entry never depends on the blob's alignment. */
+void nodeIndexEntry(const NodeIndexView& view, std::uint32_t position, NodeIndexEntry& entry)
+{
+    std::memcpy(&entry, view.table + static_cast<std::size_t>(position) * sizeof(NodeIndexEntry),
+                sizeof(entry));
+}
+
+} // namespace
+
+std::string_view keyOf(ecs::World& world, ecs::Entity canvas, ecs::Entity entity)
+{
+    if (!world.alive(canvas) || !world.alive(entity))
+    {
+        return {};
+    }
+    const NodeIndexView view = nodeIndexOf(world, canvas);
+    for (std::uint32_t position = 0U; position < view.count; ++position)
+    {
+        NodeIndexEntry entry;
+        nodeIndexEntry(view, position, entry);
+        if (entry.index == entity.index && entry.generation == entity.generation)
+        {
+            return std::string_view(view.strings + entry.offset, entry.length);
+        }
+    }
+    return {};
+}
+
 ecs::Entity findByKey(ecs::World& world, ecs::Entity canvas, std::string_view key)
 {
     if (!world.alive(canvas))
     {
         return ecs::Entity{};
     }
-    std::uint64_t hash = 1469598103934665603ULL;
-    for (const char character : key)
+    const std::uint64_t hash = keyHash(key);
+    const NodeIndexView view = nodeIndexOf(world, canvas);
+    for (std::uint32_t position = 0U; position < view.count; ++position)
     {
-        hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(character));
-        hash *= 1099511628211ULL;
+        NodeIndexEntry entry;
+        nodeIndexEntry(view, position, entry);
+        if (entry.hash != hash)
+        {
+            continue;
+        }
+        const ecs::Entity entity{entry.index, entry.generation};
+        if (world.alive(entity))
+        {
+            return entity;
+        }
+    }
+    if (view.count != 0U)
+    {
+        /* The index is the answer: a missing entry is a missing key, so the
+           tree walk below only serves a canvas without one. */
+        return ecs::Entity{};
     }
     struct Search
     {

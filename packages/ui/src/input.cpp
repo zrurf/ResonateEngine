@@ -83,6 +83,47 @@ void applySplitter(ecs::World& world, ecs::Entity entity, float dx, float dy)
     {
         return;
     }
+    /* A targeted divider sizes the pane it names, on the side it finds it: the
+       pane before the divider grows with the drag, the one after shrinks. This
+       is order-independent, so a divider may sit anywhere in the document. */
+    if (splitter->target.valid() && world.alive(splitter->target))
+    {
+        RectTransform* target = world.get<RectTransform>(splitter->target);
+        const ComputedRect* target_rect = world.get<ComputedRect>(splitter->target);
+        const ComputedRect* own_rect = world.get<ComputedRect>(entity);
+        if (target != nullptr && target_rect != nullptr && own_rect != nullptr)
+        {
+            const float target_center = horizontal
+                                            ? target_rect->x + target_rect->width * 0.5F
+                                            : target_rect->y + target_rect->height * 0.5F;
+            const float own_center = horizontal ? own_rect->x + own_rect->width * 0.5F
+                                                : own_rect->y + own_rect->height * 0.5F;
+            const float delta = target_center >= own_center ? -move : move;
+            if (horizontal)
+            {
+                target->width += delta;
+            }
+            else
+            {
+                target->height += delta;
+            }
+            world.markChanged<RectTransform>(splitter->target);
+            if (RectTransform* own = world.get<RectTransform>(entity))
+            {
+                if (horizontal)
+                {
+                    own->x += move;
+                }
+                else
+                {
+                    own->y += move;
+                }
+                world.markChanged<RectTransform>(entity);
+            }
+            return;
+        }
+    }
+
     const ecs::Entity parent = hierarchy::parentOf(world, entity);
     if (!parent.valid())
     {

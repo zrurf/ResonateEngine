@@ -165,51 +165,6 @@ TEST_CASE("offscreen: the editor shell renders", "[render][editor]")
     REQUIRE(resonate::ui::layout(world, canvas, static_cast<float>(kWidth),
                                  static_cast<float>(kHeight)));
 
-    /* The left splitter drags the scene pane and the viewport together: the
-       pane widens by the drag and the viewport starts after it. */
-    {
-        const resonate::ecs::Entity splitter =
-            resonate::ui::findByKey(world, canvas, "splitter-left");
-        REQUIRE(splitter.valid());
-        const auto* splitter_rect = world.get<resonate::ui::ComputedRect>(splitter);
-        REQUIRE(splitter_rect != nullptr);
-        const float sx = splitter_rect->x + splitter_rect->width * 0.5F;
-        const float sy = splitter_rect->y + 60.0F;
-        REQUIRE(resonate::ui::updateInput(world, canvas, sx, sy, true));
-        REQUIRE(resonate::ui::updateInput(world, canvas, sx + 40.0F, sy, true));
-        REQUIRE(resonate::ui::updateInput(world, canvas, sx + 40.0F, sy, false));
-        const resonate::ecs::Entity scene_pane =
-            resonate::ui::findByKey(world, canvas, "scene-pane");
-        const auto* scene_rect = world.get<resonate::ui::RectTransform>(scene_pane);
-        REQUIRE(scene_rect != nullptr);
-        CHECK(std::fabs(scene_rect->width - 320.0F) < 0.5F);
-        REQUIRE(resonate::ui::layout(world, canvas, static_cast<float>(kWidth),
-                                     static_cast<float>(kHeight)));
-        const auto* viewport_rect = world.get<resonate::ui::ComputedRect>(
-            resonate::ui::findByKey(world, canvas, "viewport"));
-        REQUIRE(viewport_rect != nullptr);
-        CHECK(std::fabs(viewport_rect->x - 326.0F) < 0.5F);
-    }
-
-    /* The console's divider closes the viewport from below and opens the
-       console, so the three rects share two edges. */
-    {
-        const resonate::ecs::Entity divider =
-            resonate::ui::findByKey(world, canvas, "splitter-console");
-        REQUIRE(divider.valid());
-        const auto* divider_rect = world.get<resonate::ui::ComputedRect>(divider);
-        const auto* viewport_rect =
-            world.get<resonate::ui::ComputedRect>(resonate::ui::findByKey(world, canvas, "viewport"));
-        const auto* console_rect =
-            world.get<resonate::ui::ComputedRect>(resonate::ui::findByKey(world, canvas, "console"));
-        REQUIRE(divider_rect != nullptr);
-        REQUIRE(viewport_rect != nullptr);
-        REQUIRE(console_rect != nullptr);
-        CHECK(std::fabs(viewport_rect->y + viewport_rect->height - divider_rect->y) < 0.5F);
-        CHECK(std::fabs(divider_rect->y + divider_rect->height - console_rect->y) < 0.5F);
-        CHECK(std::fabs(console_rect->height - 240.0F) < 0.5F);
-    }
-
     resonate::renderer::RenderSystem render_system;
     render_system.setRegistry(host->capabilities());
     render_system.setUiFontPaths(std::move(font_paths));

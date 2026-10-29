@@ -96,7 +96,7 @@
 
     <Box key="splitter-left" class="splitter" x="280" y="37" width="6" height="-63"
          anchor_min="0 0" anchor_max="0 1">
-      <Splitter axis="0"/>
+      <Splitter axis="0" target="scene-pane"/>
     </Box>
     <Box key="viewport" x="286" y="37" width="-572" height="-309"
          anchor_min="0 0" anchor_max="1 1" color="0 0 0 0"/>
@@ -104,7 +104,7 @@
            text="视口" font_size="12" v_align="Middle"/>
     <Box key="splitter-right" class="splitter" x="-286" y="37" width="6" height="-63"
          anchor_min="1 0" anchor_max="1 1">
-      <Splitter axis="0"/>
+      <Splitter axis="0" target="inspector"/>
     </Box>
 
     <Panel key="console" class="panel" x="286" y="-266" width="-572" height="240"
@@ -134,7 +134,7 @@
          editor re-derives from this divider's position. -->
     <Box key="splitter-console" class="splitter" x="286" y="-272" width="-572" height="6"
          anchor_min="0 1" anchor_max="1 1">
-      <Splitter axis="1"/>
+      <Splitter axis="1" target="console"/>
     </Box>
 
     <Panel key="inspector" class="panel" x="-280" y="37" width="280" height="-63"

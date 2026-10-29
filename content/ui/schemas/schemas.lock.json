@@ -250,6 +250,16 @@
       ]
     },
     {
+      "name": "NodeIndex",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component NodeIndex version 1",
+        "  size 8 align 4",
+        "  field records blob @0 size 8"
+      ]
+    },
+    {
       "name": "Panel",
       "kind": "node",
       "version": 1,
@@ -416,11 +426,12 @@
     {
       "name": "Splitter",
       "kind": "component",
-      "version": 1,
+      "version": 2,
       "shape": [
-        "component Splitter version 1",
-        "  size 4 align 4",
-        "  field axis u32 @0 size 4 default=0"
+        "component Splitter version 2",
+        "  size 12 align 4",
+        "  field axis u32 @0 size 4 default=0",
+        "  field target entity @4 size 8"
       ]
     },
     {

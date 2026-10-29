@@ -749,13 +749,12 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                 next.inspector_width = inspector->width;
             }
         }
-        /* The console's divider is bottom-anchored, so its y is the distance
-           from the bottom to its top edge; the status bar and the divider sit
-           below the console. */
+        /* The console's divider sizes the console itself, so its height is the
+           signal; the clamp keeps a drag from eating the viewport. */
         if (next.console_shown)
         {
-            if (const resonate::ui::RectTransform* divider =
-                    world.get<resonate::ui::RectTransform>(state->splitter_console))
+            if (const resonate::ui::RectTransform* console =
+                    world.get<resonate::ui::RectTransform>(state->console_pane))
             {
                 float available = 800.0F;
                 if (const resonate::ui::ComputedRect* canvas_rect =
@@ -763,7 +762,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                 {
                     available = canvas_rect->height;
                 }
-                next.console_height = std::clamp(-divider->y - 32.0F, 96.0F,
+                next.console_height = std::clamp(console->height, 96.0F,
                                                  std::fmax(available - 37.0F - 32.0F - 120.0F,
                                                            96.0F));
             }

@@ -193,6 +193,14 @@
     <migrate from="3" to="4"/>
   </component>
 
+  <!-- The canvas' node index, derived by the adapter at instantiation: every
+       authoring key with its entity, packed so a lookup does not walk the tree
+       and a saver can name a node again. See ui::findByKey / ui::keyOf for the
+       record layout. -->
+  <component name="NodeIndex" version="1" derived="true">
+    <field name="records" type="blob"/>
+  </component>
+
   <!-- Compiled glyph quads in widget-local pixels: x/y/width/height plus the
        atlas UV rect. Derived by the adapter from Text. -->
   <component name="Glyphs" version="1" derived="true">
@@ -336,11 +344,16 @@
     <field name="index" type="u32" default="0"/>
   </component>
 
-  <!-- A draggable divider for absolutely positioned panes: a horizontal drag
-       grows the previous sibling and moves the next one, the divider travelling
-       with the edge. `axis` 0 splits horizontally, 1 vertically. -->
-  <component name="Splitter" version="1">
+  <!-- A draggable divider for absolutely positioned panes. A `target` names the
+       pane it sizes (resolved from a document key at instantiation, which is
+       why it needs the whole tree); without one, a drag grows the previous
+       sibling and moves the next, the divider travelling with the edge. `axis`
+       0 splits horizontally, 1 vertically. -->
+  <component name="Splitter" version="2">
     <field name="axis" type="u32" default="0"/>
+    <field name="target" type="entity"/>
+
+    <migrate from="1" to="2"/>
   </component>
 
   <!-- A widget subtree that paints, hit-tests and takes focus only while

@@ -441,3 +441,49 @@ TEST_CASE("ui document: a hidden subtree paints nothing and takes no hits", "[ui
     CHECK(quads() == 2U);
     CHECK(resonate::ui::hitTest(fixture.world, root, 50.0F, 50.0F) == left);
 }
+
+TEST_CASE("ui document: the canvas indexes its authoring keys", "[ui][document]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Panel key="left" x="0" y="0" width="100" height="100">
+      <Background color="0.2 0.3 0.4 1"/>
+      <Label x="0" y="0" width="100" height="20" text="left"/>
+    </Panel>
+    <Panel key="right" x="120" y="0" width="100" height="100">
+      <Background color="0.4 0.3 0.2 1"/>
+    </Panel>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(text, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 400.0F, 200.0F));
+
+    /* Every keyed node is in the index, in both directions. */
+    CHECK(fixture.world.get<resonate::ui::NodeIndex>(root) != nullptr);
+    const Entity left = resonate::ui::findByKey(fixture.world, root, "left");
+    const Entity right = resonate::ui::findByKey(fixture.world, root, "right");
+    REQUIRE(left.valid());
+    REQUIRE(right.valid());
+    CHECK(left != right);
+    CHECK(resonate::ui::keyOf(fixture.world, root, left) == "left");
+    CHECK(resonate::ui::keyOf(fixture.world, root, right) == "right");
+    CHECK(resonate::ui::keyOf(fixture.world, root, root) == "hud");
+
+    /* The caption carries no key, and a name nobody authored answers nothing. */
+    const auto children = resonate::hierarchy::children(fixture.world, left);
+    REQUIRE(!children.empty());
+    CHECK(resonate::ui::keyOf(fixture.world, root, children[0]).empty());
+    CHECK_FALSE(resonate::ui::findByKey(fixture.world, root, "missing").valid());
+
+    /* A destroyed node leaves a stale entry, which the lookup must not answer. */
+    fixture.world.destroy(right);
+    CHECK_FALSE(resonate::ui::findByKey(fixture.world, root, "right").valid());
+}
