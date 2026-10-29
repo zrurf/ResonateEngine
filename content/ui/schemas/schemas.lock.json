@@ -197,13 +197,14 @@
       "shape": [
         "node Label version 1",
         "  field text string",
+        "  field placeholder string",
         "  field bind-x binding",
         "  field bind-y binding",
         "  field bind-width binding",
         "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
         "  uses Background expose border_color border_width color",
-        "  uses Text expose align font_size font_weight padding_left text_color v_align wrap"
+        "  uses Text expose align font_size font_weight padding_left placeholder_color text_color v_align wrap"
       ]
     },
     {
@@ -493,10 +494,10 @@
     {
       "name": "Text",
       "kind": "component",
-      "version": 2,
+      "version": 3,
       "shape": [
-        "component Text version 2",
-        "  size 40 align 4",
+        "component Text version 3",
+        "  size 64 align 4",
         "  field content blob @0 size 8",
         "  field font_size f32 @8 size 4 default=24",
         "  field font_weight u16 @12 size 2 default=400",
@@ -505,6 +506,8 @@
         "  field wrap bool @33 size 1 default=true",
         "  field v_align resonate.ui.VAlign @34 size 1 default=Top",
         "  field padding_left f32 @36 size 4 default=0",
+        "  field placeholder blob @40 size 8",
+        "  field placeholder_color vec4 @48 size 16 default=0.3419 0.3419 0.3419 0.7",
         "  enum TextAlign u8 values Start=0, Center=1, End=2",
         "  enum VAlign u8 values Top=0, Middle=1, Bottom=2"
       ]

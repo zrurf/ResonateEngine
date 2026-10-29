@@ -864,6 +864,14 @@ bool applyText(const dom::Document& document, const dom::Component& component, T
                 return false;
             }
         }
+        else if (name == "placeholder_color")
+        {
+            if (!parseVec4(field.value, text.placeholder_color))
+            {
+                error = "Text.placeholder_color is not a vec4";
+                return false;
+            }
+        }
         else if (name == "content")
         {
             error = "Text.content is written by the adapter and cannot be authored";
@@ -891,6 +899,7 @@ struct BindingContext
     ecs::ComponentIndex data_component = ecs::kInvalidComponent;
     std::vector<detail::BindingRecord> records;
     dom::StringId text_property = dom::kInvalidString;
+    dom::StringId placeholder_property = dom::kInvalidString;
     dom::StringId image_property = dom::kInvalidString;
     dom::StringId icon_property = dom::kInvalidString;
     std::unique_ptr<detail::TextAtlasBuilder> owned_atlas;
@@ -1061,12 +1070,36 @@ bool buildTextRun(World& world, const dom::Document& document, dom::NodeHandle n
             }
         }
     }
-    if (!text->content.valid() || context.atlas == nullptr)
+    if (context.placeholder_property != dom::kInvalidString)
+    {
+        if (const dom::Field* property = document.property(node, context.placeholder_property))
+        {
+            if (!property->value.empty())
+            {
+                const ecs::BlobHandle blob =
+                    world.createBlob(entity, property->value.size(), property->value.data());
+                if (!blob.valid())
+                {
+                    return report(world, document, node,
+                                  "the placeholder bytes could not be attached");
+                }
+                text->placeholder = blob;
+            }
+        }
+    }
+    /* An empty label shapes its placeholder: the hint is the run the display
+       list paints dim until text arrives. */
+    ecs::BlobHandle source = text->content;
+    if (!source.valid() || world.blobSize(source) == 0U)
+    {
+        source = text->placeholder;
+    }
+    if (!source.valid() || context.atlas == nullptr)
     {
         return true;
     }
-    const auto* bytes = static_cast<const char*>(world.blobData(text->content));
-    const std::size_t size = world.blobSize(text->content);
+    const auto* bytes = static_cast<const char*>(world.blobData(source));
+    const std::size_t size = world.blobSize(source);
     if (bytes == nullptr || size == 0U)
     {
         return true;
@@ -1552,6 +1585,7 @@ Entity instantiateConfigured(World& world, dom::Document& document,
     CommandBuffer commands(world);
     std::vector<Entity> created;
     bindings.text_property = document.intern("text");
+    bindings.placeholder_property = document.intern("placeholder");
     bindings.image_property = document.intern("path");
     bindings.icon_property = document.intern("icon");
     const Entity entity = instantiateNode(world, commands, document, root, styles, bindings,

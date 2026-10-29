@@ -302,6 +302,7 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
     const std::uint32_t align = static_cast<std::uint32_t>(text->align);
     const bool wrap = text->wrap;
     const ecs::BlobHandle old_content = text->content;
+    const ecs::BlobHandle placeholder = text->placeholder;
     if (TextCaret* caret = world.get<TextCaret>(entity);
         caret != nullptr && caret->offset > utf8.size())
     {
@@ -313,9 +314,21 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
     clearSelection(world, entity);
     const RectTransform* rect = world.get<RectTransform>(entity);
     const float width = std::fmax(0.0F, authoredWidth(rect) - padding_left);
+    /* Empty content shapes the placeholder, which is the run the display list
+       paints dim; the content blob itself stays empty. */
+    std::string_view shaped = utf8;
+    if (shaped.empty() && placeholder.valid() && world.alive(placeholder))
+    {
+        const auto* bytes = static_cast<const char*>(world.blobData(placeholder));
+        const std::uint64_t size = world.blobSize(placeholder);
+        if (bytes != nullptr && size > 0U)
+        {
+            shaped = std::string_view(bytes, static_cast<std::size_t>(size));
+        }
+    }
     std::vector<detail::GlyphQuad> quads;
     float advance = 0.0F;
-    if (!impl_->atlas.buildRun(utf8, font_size, font_weight, width, align, wrap, quads, advance,
+    if (!impl_->atlas.buildRun(shaped, font_size, font_weight, width, align, wrap, quads, advance,
                                error))
     {
         return false;

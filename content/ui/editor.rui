@@ -117,7 +117,8 @@
              font_size="12" v_align="Middle" padding_left="12"/>
       <Panel key="command-row" height="28" direction="Row" align="Center" gap="4"
              padding_left="12" padding_top="2" padding_right="12" padding_bottom="2">
-        <Label key="command-field" class="field label" text="" font_size="12" height="24"
+        <Label key="command-field" class="field label" text=""
+               placeholder="输入命令（set / get / find）" font_size="12" height="24"
                v_align="Middle" padding_left="6">
           <Input/>
           <LayoutItem grow="1"/>

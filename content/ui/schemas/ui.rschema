@@ -169,7 +169,7 @@
   <!-- A shaped run: the UTF-8 bytes in a blob, the size in pixels and the
        color the coverage masks. The adapter fills it from the Label's text
        authoring property. -->
-  <component name="Text" version="2">
+  <component name="Text" version="3">
     <field name="content" type="blob"/>
     <field name="font_size" type="f32" default="24"/>
     <field name="font_weight" type="u16" default="400"/>
@@ -180,8 +180,13 @@
          the alignment span from the left edge. -->
     <field name="v_align" type="VAlign" default="Top"/>
     <field name="padding_left" type="f32" default="0.0"/>
+    <!-- The hint shaped while `content` is empty; the display list paints it in
+         `placeholder_color` instead of `text_color`. -->
+    <field name="placeholder" type="blob"/>
+    <field name="placeholder_color" type="vec4" default="0.3419 0.3419 0.3419 0.7"/>
 
     <migrate from="1" to="2"/>
+    <migrate from="2" to="3"/>
   </component>
 
   <!-- Compiled glyph quads in widget-local pixels: x/y/width/height plus the
@@ -426,8 +431,12 @@
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color border_color border_width"/>
     <uses component="Text"
-          expose="font_size font_weight text_color align wrap v_align padding_left"/>
+          expose="font_size font_weight text_color align wrap v_align padding_left
+                  placeholder_color"/>
+    <!-- The text the label shows; `placeholder` is the hint shaped while the
+         text is empty. -->
     <field name="text" type="string"/>
+    <field name="placeholder" type="string"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>
     <field name="bind-width" type="binding"/>

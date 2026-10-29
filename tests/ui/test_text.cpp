@@ -960,3 +960,58 @@ TEST_CASE("ui text: a replacement after a selection keeps the field's own font",
     REQUIRE(small_glyphs != nullptr);
     REQUIRE(fixture.world.alive(small_glyphs->records));
 }
+
+TEST_CASE("ui text: an empty field shapes its placeholder in the hint color", "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="field" text="" placeholder="输入命令" font_size="20" width="240" height="32"
+           color="0 0 0 0" placeholder_color="0.2 0.4 0.6 0.5"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(text, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    resonate::ui::TextRuntime runtime({loadFont()});
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, runtime);
+    REQUIRE(root.valid());
+    const auto children = resonate::hierarchy::children(fixture.world, root);
+    REQUIRE(children.size() == 1U);
+    const Entity field = children[0];
+    REQUIRE(resonate::ui::layout(fixture.world, root, 320.0F, 64.0F));
+
+    const auto run_color = [&]()
+    {
+        resonate::ui::DisplayList list;
+        REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+        REQUIRE(list.texts().size() == 1U);
+        REQUIRE(!list.texts()[0].glyphs.empty());
+        return list.texts()[0].color;
+    };
+
+    /* No content: the placeholder's bytes are the run, painted dim. */
+    const resonate::ui::Text* component = fixture.world.get<resonate::ui::Text>(field);
+    REQUIRE(component != nullptr);
+    CHECK_FALSE(fixture.world.alive(component->content));
+    resonate::Vec4 color = run_color();
+    CHECK(std::fabs(color.z - 0.6F) < 0.001F);
+    CHECK(std::fabs(color.w - 0.5F) < 0.001F);
+
+    /* Typed text replaces the hint and takes the field's own color. */
+    std::string error;
+    REQUIRE(runtime.setText(fixture.world, root, field, "set a 1", error));
+    REQUIRE(resonate::ui::layout(fixture.world, root, 320.0F, 64.0F));
+    color = run_color();
+    CHECK(color.z > 0.9F);
+    CHECK(std::fabs(color.w - 1.0F) < 0.001F);
+
+    /* Clearing the field brings the hint back. */
+    REQUIRE(runtime.setText(fixture.world, root, field, "", error));
+    REQUIRE(resonate::ui::layout(fixture.world, root, 320.0F, 64.0F));
+    color = run_color();
+    CHECK(std::fabs(color.z - 0.6F) < 0.001F);
+}

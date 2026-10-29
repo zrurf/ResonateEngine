@@ -396,11 +396,15 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                     }
                 }
             }
-            if (label_visible && world.alive(text->content) && count > 0U)
+            /* An empty label paints its placeholder instead of its text: the
+               same run, in the hint's color. */
+            const bool has_content = world.alive(text->content);
+            const bool has_placeholder = !has_content && world.alive(text->placeholder);
+            if (label_visible && (has_content || has_placeholder) && count > 0U)
             {
                 TextRun run;
                 run.font_size = text->font_size;
-                run.color = text->text_color;
+                run.color = has_content ? text->text_color : text->placeholder_color;
                 run.clip = text_clip_rect;
                 run.glyphs.reserve(count);
                 for (std::size_t index = 0; index < count; ++index)
