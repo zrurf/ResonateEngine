@@ -358,6 +358,26 @@ task("icons")
         description = "Cook content/ui/icons into the shipped icon atlas and its UV map.",
     }
 
+-- The suite task refuses a configuration with no test targets: `xmake test`
+-- under the Android configuration prints "nothing to test" and exits 0, which
+-- reads as green in a scripted loop. The platform is read from the config
+-- because is_plat() is not populated in a task scope.
+task("suite")
+    set_category("plugin")
+    on_run(function ()
+        import("core.project.config")
+        config.load()
+        local plat = config.get("plat") or os.host()
+        if not (plat == "windows" or plat == "linux" or plat == "macosx") then
+            raise("switch to a host platform first (xmake f -p windows -a x64 -m debug -y)")
+        end
+        os.execv(os.programfile(), {"test", "-j1"})
+    end)
+    set_menu {
+        usage = "xmake suite",
+        description = "Run the full test suite on the host platform, refusing a configuration that has none.",
+    }
+
 task("android-apk")
     set_category("plugin")
     on_run(function ()

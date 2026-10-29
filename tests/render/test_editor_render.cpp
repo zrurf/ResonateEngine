@@ -1,5 +1,6 @@
 #include <catch2/catch_all.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <iostream>
 #include <cstdint>
@@ -280,6 +281,84 @@ TEST_CASE("offscreen: the editor shell renders", "[render][editor]")
         }
         INFO("icon strokes=" << strokes);
         CHECK(strokes > 20U);
+    }
+
+    /* A coarse golden frame: the target box-filtered 4x4, so a layout or
+       palette regression anywhere fails even where the bands above stay in
+       range. RESONATE_UPDATE_BASELINE=1 rewrites the file; the tolerance
+       absorbs the few pixels the smoothed fps readout moves. */
+    {
+        constexpr std::uint32_t kBlocks = 4U;
+        const std::uint32_t golden_width = kWidth / kBlocks;
+        const std::uint32_t golden_height = kHeight / kBlocks;
+        std::vector<std::uint8_t> golden(static_cast<std::size_t>(golden_width) * golden_height *
+                                         4U);
+        for (std::uint32_t y = 0U; y < golden_height; ++y)
+        {
+            for (std::uint32_t x = 0U; x < golden_width; ++x)
+            {
+                std::uint32_t sums[4] = {};
+                for (std::uint32_t dy = 0U; dy < kBlocks; ++dy)
+                {
+                    for (std::uint32_t dx = 0U; dx < kBlocks; ++dx)
+                    {
+                        const std::size_t offset = ((static_cast<std::size_t>(y * kBlocks + dy) *
+                                                         kWidth) +
+                                                    x * kBlocks + dx) *
+                                                   4U;
+                        for (std::uint32_t channel = 0U; channel < 4U; ++channel)
+                        {
+                            sums[channel] += pixels[offset + channel];
+                        }
+                    }
+                }
+                const std::size_t target =
+                    (static_cast<std::size_t>(y) * golden_width + x) * 4U;
+                for (std::uint32_t channel = 0U; channel < 4U; ++channel)
+                {
+                    golden[target + channel] =
+                        static_cast<std::uint8_t>(sums[channel] / (kBlocks * kBlocks));
+                }
+            }
+        }
+
+        const std::string baseline =
+            std::string(RESONATE_SOURCE_DIR) + "/tests/render/baselines/editor_shell.rgba";
+        if (std::getenv("RESONATE_UPDATE_BASELINE") != nullptr)
+        {
+            std::ofstream out(baseline, std::ios::binary);
+            REQUIRE(out.is_open());
+            out.write(reinterpret_cast<const char*>(golden.data()),
+                      static_cast<std::streamsize>(golden.size()));
+        }
+        else
+        {
+            std::ifstream in(baseline, std::ios::binary);
+            INFO("baseline: " << baseline);
+            REQUIRE(in.is_open());
+            std::vector<std::uint8_t> stored((std::istreambuf_iterator<char>(in)),
+                                             std::istreambuf_iterator<char>());
+            REQUIRE(stored.size() == golden.size());
+            std::size_t changed = 0U;
+            std::uint64_t total = 0U;
+            for (std::size_t index = 0U; index < golden.size(); index += 4U)
+            {
+                int delta = 0;
+                for (std::uint32_t channel = 0U; channel < 4U; ++channel)
+                {
+                    delta = std::max(
+                        delta, std::abs(static_cast<int>(golden[index + channel]) -
+                                        static_cast<int>(stored[index + channel])));
+                }
+                changed += delta > 16 ? 1U : 0U;
+                total += static_cast<std::uint64_t>(delta);
+            }
+            const std::size_t count = golden.size() / 4U;
+            const double mean = static_cast<double>(total) / static_cast<double>(count);
+            INFO("golden: " << changed << " of " << count << " pixels differ, mean " << mean);
+            CHECK(changed * 100U < count * 2U);
+            CHECK(mean < 3.0);
+        }
     }
 
     /* The renderer owns the render thread and the device calls; it releases
