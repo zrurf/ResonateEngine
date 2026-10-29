@@ -1,6 +1,8 @@
 #include <resonate/ui/input.h>
 
 #include <algorithm>
+#include <cmath>
+#include <iostream>
 #include <vector>
 
 #include <resonate/ui/event.h>
@@ -181,6 +183,9 @@ ecs::Entity scrubberAt(ecs::World& world, ecs::Entity entity)
 }
 
 /* Horizontal motion changes the value; the application owns the range. */
+/* Pixels the pointer has to travel before a property scrub starts. */
+constexpr float kScrubDeadZone = 4.0F;
+
 void applyScrubber(ecs::World& world, ecs::Entity entity, float dx)
 {
     Scrubber* scrubber = world.get<Scrubber>(entity);
@@ -416,6 +421,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         }
         drag->pressed = true;
         drag->dragging = false;
+        drag->scrub_dead = false;
         drag->press_x = x;
         drag->press_y = y;
         if (hover.valid())
@@ -501,7 +507,16 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
     }
     else if (drag->pressed && pointer->down && drag->scrubber.valid())
     {
-        if (!pressed_this_sample)
+        /* A small dead zone keeps a click from nudging the value. Crossing it
+           applies the whole travel from the press once; later samples apply
+           their own step. */
+        if (!pressed_this_sample && !drag->scrub_dead &&
+            std::fabs(x - drag->press_x) > kScrubDeadZone)
+        {
+            drag->scrub_dead = true;
+            applyScrubber(world, drag->scrubber, x - drag->press_x);
+        }
+        else if (!pressed_this_sample && drag->scrub_dead)
         {
             applyScrubber(world, drag->scrubber, x - last_x);
         }

@@ -398,12 +398,24 @@ TEST_CASE("ui input: dragging a property label scrubs its value", "[ui][input]")
     REQUIRE(resonate::ui::updateInput(world, root, 60.0F, 10.0F, true));
     CHECK(near(value(), 20.0F));
 
+    /* A fresh press with a small wobble stays inside the dead zone: the
+       value does not move until the pointer leaves it. */
+    /* Release the first gesture, then press again: a 2 px wobble stays inside
+       the 4 px dead zone and the value does not move until the pointer leaves
+       it. */
+    REQUIRE(resonate::ui::updateInput(world, root, 60.0F, 10.0F, false));
+    REQUIRE(resonate::ui::updateInput(world, root, 60.0F, 10.0F, true));
+    REQUIRE(resonate::ui::updateInput(world, root, 62.0F, 10.0F, true));
+    CHECK(near(value(), 20.0F));
+    REQUIRE(resonate::ui::updateInput(world, root, 70.0F, 10.0F, true));
+    CHECK(near(value(), 25.0F));
+
     /* The release neither activates nor clicks the label. */
     REQUIRE(resonate::ui::updateInput(world, root, 60.0F, 10.0F, false));
     const resonate::ui::Input* input = world.get<resonate::ui::Input>(scrub);
     REQUIRE(input != nullptr);
     CHECK_FALSE(input->activated);
-    CHECK(near(value(), 20.0F));
+    CHECK(near(value(), 25.0F));
 }
 
 TEST_CASE("ui input: dragging the scrollbar thumb moves the scroll", "[ui][input]")

@@ -26,6 +26,9 @@ struct DragState
     ecs::Entity splitter{};
     /* The property label this gesture scrubs, invalid for any other drag. */
     ecs::Entity scrubber{};
+    /* Set once the pointer left the scrub press's dead zone, so a click on a
+       property label does not nudge its value. */
+    bool scrub_dead = false;
     /* The viewport whose scrollbar thumb this gesture drags. */
     ecs::Entity scroll_thumb{};
     /* The text field this gesture selects in: the press set the anchor, the
