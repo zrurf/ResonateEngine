@@ -1,5 +1,6 @@
 #include <resonate/ui_tgfx.h>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -16,6 +17,7 @@
 #include <tgfx/core/ImageCodec.h>
 #include <tgfx/core/ImageInfo.h>
 #include <tgfx/core/Paint.h>
+#include <tgfx/core/RRect.h>
 #include <tgfx/core/Surface.h>
 #include <tgfx/core/TextBlob.h>
 #include <tgfx/core/Typeface.h>
@@ -188,7 +190,32 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
         beginClip(rect.clip_x, rect.clip_y, rect.clip_width, rect.clip_height);
         tgfx::Paint paint;
         paint.setColor(tgfx::Color{rect.r, rect.g, rect.b, rect.a});
-        canvas->drawRect(tgfx::Rect::MakeXYWH(rect.x, rect.y, rect.width, rect.height), paint);
+        /* A border is a stroke on the rect inset by half its width: the ring
+           spans the widget's edge without spilling outside it, and the corner
+           radius shrinks with the inset so the arcs stay concentric. The fill's
+           radius is bounded by half the shorter side, matching the display
+           list's clamp. */
+        const float half_side = std::fmin(rect.width, rect.height) * 0.5F;
+        float inset = 0.0F;
+        if (rect.border > 0.0F)
+        {
+            const float width = std::fmin(rect.border, half_side);
+            inset = width * 0.5F;
+            paint.setStyle(tgfx::PaintStyle::Stroke);
+            paint.setStrokeWidth(width);
+        }
+        const tgfx::Rect box = tgfx::Rect::MakeXYWH(rect.x + inset, rect.y + inset,
+                                                   rect.width - 2.0F * inset,
+                                                   rect.height - 2.0F * inset);
+        const float radius = std::fmax(std::fmin(rect.radius, half_side) - inset, 0.0F);
+        if (radius > 0.0F)
+        {
+            canvas->drawRRect(tgfx::RRect::MakeRectXY(box, radius, radius), paint);
+        }
+        else
+        {
+            canvas->drawRect(box, paint);
+        }
         endClip(rect.clip_width, rect.clip_height);
     }
     for (std::uint32_t index = 0; index < text_count; ++index)

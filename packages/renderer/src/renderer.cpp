@@ -151,6 +151,13 @@ struct UiVertex
     float a = 0.0F;
     float u = 0.0F;
     float v = 0.0F;
+    /* The quad's extent, corner radius and border width. A solid quad rebuilds
+       its rounded-rect coverage from these and reads its local position off the
+       interpolated uv, which it samples no texture for. */
+    float width = 0.0F;
+    float height = 0.0F;
+    float radius = 0.0F;
+    float border = 0.0F;
 };
 
 /* The overlay's push block: the target extent the pixels divide by and the
@@ -183,7 +190,7 @@ struct UiBatch
 /* A frame's overlay is bounded by one vertex buffer; a larger list is
    truncated rather than resized mid-frame. */
 constexpr std::uint32_t kMaxUiQuads = 4096U;
-static_assert(sizeof(UiVertex) == 32U);
+static_assert(sizeof(UiVertex) == 48U);
 static_assert(sizeof(PostConstants) == 32U);
 
 /* The frame one extract produces; the draw callback walks it. */
@@ -1253,9 +1260,9 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
                     ui_draw_rects.push_back(ResonateTgfxRect{
                         quad.x + static_cast<float>(column) * half_width,
                         quad.y + static_cast<float>(row) * half_height, half_width, half_height,
-                        quad.color.x * shade, quad.color.y * shade, quad.color.z * shade,
-                        quad.color.w, quad.clip.x, quad.clip.y, quad.clip.width,
-                        quad.clip.height});
+                        0.0F, 0.0F, quad.color.x * shade, quad.color.y * shade,
+                        quad.color.z * shade, quad.color.w, quad.clip.x, quad.clip.y,
+                        quad.clip.width, quad.clip.height});
                 }
             }
             continue;
@@ -1269,9 +1276,10 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
             continue;
         }
         ui_draw_rects.push_back(ResonateTgfxRect{quad.x, quad.y, quad.width, quad.height,
-                                                 quad.color.x, quad.color.y, quad.color.z,
-                                                 quad.color.w, quad.clip.x, quad.clip.y,
-                                                 quad.clip.width, quad.clip.height});
+                                                 quad.radius, quad.border, quad.color.x,
+                                                 quad.color.y, quad.color.z, quad.color.w,
+                                                 quad.clip.x, quad.clip.y, quad.clip.width,
+                                                 quad.clip.height});
     }
 
     ui_draw_glyphs.clear();
@@ -1781,9 +1789,9 @@ bool RenderSystem::Impl::ensurePipelines()
         }
     }
 
-    /* The overlay: target-pixel positions, straight-alpha colors and sampled
-       UVs, blended into the UI image. */
-    ResonateRenderVertexAttribute ui_attributes[3] = {};
+    /* The overlay: target-pixel positions, straight-alpha colors, sampled UVs
+       and the rounded-rect shape, blended into the UI image. */
+    ResonateRenderVertexAttribute ui_attributes[4] = {};
     ui_attributes[0].location = 0U;
     ui_attributes[0].format = RESONATE_RENDER_FORMAT_R32G32_SFLOAT;
     ui_attributes[0].offset_bytes = 0U;
@@ -1793,9 +1801,12 @@ bool RenderSystem::Impl::ensurePipelines()
     ui_attributes[2].location = 2U;
     ui_attributes[2].format = RESONATE_RENDER_FORMAT_R32G32_SFLOAT;
     ui_attributes[2].offset_bytes = 24U;
+    ui_attributes[3].location = 3U;
+    ui_attributes[3].format = RESONATE_RENDER_FORMAT_R32G32B32A32_SFLOAT;
+    ui_attributes[3].offset_bytes = 32U;
     ResonateRenderVertexStream ui_stream{};
     ui_stream.stride_bytes = sizeof(UiVertex);
-    ui_stream.attribute_count = 3U;
+    ui_stream.attribute_count = 4U;
     ui_stream.attributes = ui_attributes;
 
     ResonateRenderGraphicsPipelineDesc ui_desc{};
@@ -2372,14 +2383,16 @@ void RenderSystem::Impl::prepareFrame(GraphExecuteContext& commands)
             const ui::Quad& quad = quads[index];
             const float right = quad.x + quad.width;
             const float bottom = quad.y + quad.height;
-            const UiVertex top_left{quad.x,  quad.y,   quad.color.x, quad.color.y,
-                                    quad.color.z, quad.color.w, quad.uv_min.x, quad.uv_min.y};
-            const UiVertex top_right{right, quad.y, quad.color.x, quad.color.y, quad.color.z,
-                                     quad.color.w, quad.uv_max.x, quad.uv_min.y};
-            const UiVertex bottom_right{right, bottom, quad.color.x, quad.color.y, quad.color.z,
-                                        quad.color.w, quad.uv_max.x, quad.uv_max.y};
-            const UiVertex bottom_left{quad.x, bottom, quad.color.x, quad.color.y, quad.color.z,
-                                       quad.color.w, quad.uv_min.x, quad.uv_max.y};
+            const auto corner = [&quad](float x, float y, float u, float v) -> UiVertex
+            {
+                return UiVertex{x,            y,            quad.color.x, quad.color.y,
+                                quad.color.z, quad.color.w, u,            v,
+                                quad.width,   quad.height,  quad.radius,  quad.border};
+            };
+            const UiVertex top_left = corner(quad.x, quad.y, quad.uv_min.x, quad.uv_min.y);
+            const UiVertex top_right = corner(right, quad.y, quad.uv_max.x, quad.uv_min.y);
+            const UiVertex bottom_right = corner(right, bottom, quad.uv_max.x, quad.uv_max.y);
+            const UiVertex bottom_left = corner(quad.x, bottom, quad.uv_min.x, quad.uv_max.y);
 
             const std::uint32_t first = static_cast<std::uint32_t>(ui_vertex_scratch.size());
             if (ui_batches.empty() || ui_batches.back().texture != quad.texture)

@@ -139,16 +139,20 @@
 
   <!-- A flat fill. The style compiler will resolve it from a class set; until
        then a widget carries its color directly. -->
-  <component name="Background" version="2">
+  <component name="Background" version="3">
     <!-- Transparent by default: a label carries text, and a fill is something a
          style or an attribute asks for. -->
     <field name="color" type="vec4" default="0 0 0 0"/>
-    <!-- An outline drawn inside the rect on all four edges; zero width draws
-         none. -->
+    <!-- An outline drawn inside the rect as a ring; the ring and the fill share
+         the corner radius. Zero width draws none. -->
     <field name="border_color" type="vec4" default="0 0 0 0"/>
     <field name="border_width" type="f32" default="0.0"/>
+    <!-- Corner radius in pixels, clamped to half the shorter side; 0 draws
+         square corners. -->
+    <field name="radius" type="f32" default="0.0"/>
 
     <migrate from="1" to="2"/>
+    <migrate from="2" to="3"/>
   </component>
 
   <!-- A textured rectangle. `texture` names an engine texture id (0 = white,

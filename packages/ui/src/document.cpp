@@ -572,6 +572,14 @@ bool applyBackground(const dom::Document& document, const dom::Component& compon
                 return false;
             }
         }
+        else if (name == "radius")
+        {
+            if (!parseFloat(field.value, background.radius) || background.radius < 0.0F)
+            {
+                error = "Background.radius is not a non-negative number";
+                return false;
+            }
+        }
         else
         {
             error = "unknown Background field '" + std::string(name) + "'";

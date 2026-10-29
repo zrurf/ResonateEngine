@@ -23,6 +23,7 @@ struct VertexInput
     float2 position : POSITION;
     float4 color : COLOR0;
     float2 uv : TEXCOORD0;
+    float4 shape : TEXCOORD1; // x: width, y: height, z: radius, w: border
 };
 
 struct VertexOutput
@@ -30,7 +31,40 @@ struct VertexOutput
     float4 position : SV_Position;
     float4 color : COLOR0;
     float2 uv : TEXCOORD0;
+    float4 shape : TEXCOORD1;
 };
+
+// Distance to a box of half extents `half_size` with rounded corners, centred
+// on the origin; negative inside.
+float roundedBoxDistance(float2 p, float2 half_size, float radius)
+{
+    float2 q = abs(p) - half_size + radius;
+    return length(max(q, float2(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - radius;
+}
+
+// Coverage of a solid quad. The local position comes from the interpolated uv:
+// a solid quad samples no texture, so it is the normalized rect coordinate.
+// A border keeps only the ring between the edge and the rect inset by its
+// width, so a border pixel never blends twice. The ramp is one pixel wide
+// because the rect is axis-aligned and p is already in target pixels.
+float quadCoverage(float2 uv, float4 shape)
+{
+    if (shape.x <= 0.0 || shape.y <= 0.0)
+    {
+        return 1.0;
+    }
+    float2 half_size = shape.xy * 0.5;
+    float2 p = (uv - 0.5) * shape.xy;
+    float radius = clamp(shape.z, 0.0, min(half_size.x, half_size.y));
+    float coverage = saturate(0.5 - roundedBoxDistance(p, half_size, radius));
+    if (shape.w > 0.0)
+    {
+        float border = min(shape.w, min(half_size.x, half_size.y));
+        float inner_radius = max(radius - border, 0.0);
+        coverage *= saturate(0.5 + roundedBoxDistance(p, half_size - border, inner_radius));
+    }
+    return coverage;
+}
 
 [shader("vertex")]
 VertexOutput uiVertex(VertexInput input)
@@ -42,6 +76,7 @@ VertexOutput uiVertex(VertexInput input)
     output.position = float4(ndc, 0.0, 1.0);
     output.color = input.color;
     output.uv = input.uv;
+    output.shape = input.shape;
     return output;
 }
 
@@ -50,7 +85,7 @@ float4 uiFragment(VertexOutput input) : SV_Target
 {
     if (push.texture_slot == 0xFFFFFFFFu)
     {
-        return input.color;
+        return float4(input.color.rgb, input.color.a * quadCoverage(input.uv, input.shape));
     }
     float4 sampled = image_table[push.texture_slot].Sample(input.uv);
     if (push.texture_slot == push.overlay_slot)

@@ -1,6 +1,7 @@
 #include <resonate/ui/display_list.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <utility>
 
@@ -93,28 +94,27 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
         {
             return report(world, entity, "has Background but no ComputedRect");
         }
+        const float radius =
+            std::clamp(background->radius, 0.0F, std::fmin(rect->width, rect->height) * 0.5F);
         if (background->color.w > 0.0F &&
             visible(clip, rect->x, rect->y, rect->width, rect->height))
         {
-            quads_.push_back(Quad{rect->x, rect->y, rect->width, rect->height, background->color});
+            Quad quad{rect->x, rect->y, rect->width, rect->height, background->color};
+            quad.radius = radius;
+            quads_.push_back(quad);
         }
-        /* The outline is drawn inside the rect: top and bottom strips span the
-           full width, the side strips fill between them so no pixel blends
-           twice. */
+        /* The outline is one ring quad: the fill's rounded rect minus the same
+           rect inset by the width, so no pixel blends twice. */
         if (background->border_width > 0.0F && background->border_color.w > 0.0F)
         {
             const float width = std::fmin(background->border_width,
                                           std::fmin(rect->width, rect->height) * 0.5F);
             if (width > 0.0F)
             {
-                quads_.push_back(
-                    Quad{rect->x, rect->y, rect->width, width, background->border_color});
-                quads_.push_back(Quad{rect->x, rect->y + rect->height - width, rect->width, width,
-                                      background->border_color});
-                quads_.push_back(Quad{rect->x, rect->y + width, width, rect->height - 2.0F * width,
-                                      background->border_color});
-                quads_.push_back(Quad{rect->x + rect->width - width, rect->y + width, width,
-                                      rect->height - 2.0F * width, background->border_color});
+                Quad quad{rect->x, rect->y, rect->width, rect->height, background->border_color};
+                quad.radius = radius;
+                quad.border = width;
+                quads_.push_back(quad);
             }
         }
     }

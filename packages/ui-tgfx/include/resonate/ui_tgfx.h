@@ -18,13 +18,16 @@ extern "C"
 typedef void* ResonateTgfxUi;
 
 /* Every draw entry carries the rectangle it is confined to (target pixels);
-   a non-positive clip width draws unclipped. */
+   a non-positive clip width draws unclipped. `radius` rounds the corners and
+   `border` keeps only a ring of that width along the edge. */
 typedef struct ResonateTgfxRect
 {
     float x;
     float y;
     float width;
     float height;
+    float radius;
+    float border;
     float r;
     float g;
     float b;

@@ -9,6 +9,7 @@
 #include <resonate/dom/document.h>
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/tree.h>
+#include <resonate/ui/display_list.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/document_schema.h>
 #include <resonate/ui/layout.h>
@@ -190,6 +191,50 @@ TEST_CASE("ui style: theme variables resolve in declaration values", "[ui][style
     const Background* fallback = fixture.world.get<Background>(children[1]);
     REQUIRE(fallback != nullptr);
     CHECK(std::fabs(fallback->color.y - 0.5F) < 0.001F);
+}
+
+TEST_CASE("ui style: a background's radius reaches the display list and its border rings",
+          "[ui][style]")
+{
+    const char* const rounded = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <StyleSheet key="theme">
+      <Variable token="--radius" value="8"/>
+      <StyleRule selector=".round">
+        <Background color="0.2 0.3 0.4 1" border_color="1 1 1 1" border_width="2"
+                    radius="var(--radius)"/>
+      </StyleRule>
+    </StyleSheet>
+    <Panel key="round" class="round" x="0" y="0" width="100" height="50"/>
+    <Panel key="clamped" x="0" y="60" width="100" height="50">
+      <Background color="1 1 1 1" border_color="1 1 1 1" border_width="2" radius="60"/>
+    </Panel>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(rounded, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 160.0F));
+
+    resonate::ui::DisplayList list;
+    REQUIRE(resonate::ui::buildDisplayList(fixture.world, root, list));
+    const auto quads = list.quads();
+    /* Each panel is one fill and one border ring; nothing else paints. */
+    REQUIRE(quads.size() == 4U);
+    CHECK(std::fabs(quads[0].radius - 8.0F) < 0.001F);
+    CHECK(quads[0].border == 0.0F);
+    CHECK(std::fabs(quads[1].radius - 8.0F) < 0.001F);
+    CHECK(std::fabs(quads[1].border - 2.0F) < 0.001F);
+    /* A radius wider than half the shorter side is clamped to that half. */
+    CHECK(std::fabs(quads[2].radius - 25.0F) < 0.001F);
+    CHECK(std::fabs(quads[3].radius - 25.0F) < 0.001F);
+    CHECK(std::fabs(quads[3].border - 2.0F) < 0.001F);
 }
 
 TEST_CASE("ui style: an unknown theme variable is refused", "[ui][style]")

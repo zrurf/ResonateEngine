@@ -6,13 +6,14 @@
     {
       "name": "Background",
       "kind": "component",
-      "version": 2,
+      "version": 3,
       "shape": [
-        "component Background version 2",
-        "  size 36 align 4",
+        "component Background version 3",
+        "  size 40 align 4",
         "  field color vec4 @0 size 16 default=0 0 0 0",
         "  field border_color vec4 @16 size 16 default=0 0 0 0",
-        "  field border_width f32 @32 size 4 default=0"
+        "  field border_width f32 @32 size 4 default=0",
+        "  field radius f32 @36 size 4 default=0"
       ]
     },
     {

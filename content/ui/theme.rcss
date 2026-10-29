@@ -106,7 +106,8 @@
       <Text text_color="var(--text)"/>
     </StyleRule>
     <StyleRule selector=".field">
-      <Background color="var(--field)" border_color="var(--border)" border_width="0"/>
+      <Background color="var(--field)" border_color="var(--border)" border_width="0"
+                  radius="var(--radius-sm)"/>
       <Transition duration_ms="100"/>
     </StyleRule>
     <StyleRule selector=".field:hover">
@@ -116,7 +117,8 @@
       <Background border_color="var(--accent)" border_width="1"/>
     </StyleRule>
     <StyleRule selector=".button">
-      <Background color="var(--surface)" border_color="var(--border)" border_width="1"/>
+      <Background color="var(--surface)" border_color="var(--border)" border_width="1"
+                  radius="var(--radius-sm)"/>
       <Transition duration_ms="100"/>
     </StyleRule>
     <StyleRule selector=".button:hover">
@@ -126,7 +128,8 @@
       <Background color="var(--pressed)"/>
     </StyleRule>
     <StyleRule selector=".tool">
-      <Background color="0 0 0 0" border_color="var(--border)" border_width="0"/>
+      <Background color="0 0 0 0" border_color="var(--border)" border_width="0"
+                  radius="var(--radius-sm)"/>
       <Transition duration_ms="100"/>
     </StyleRule>
     <StyleRule selector=".tool:hover">

@@ -50,6 +50,11 @@ struct Quad
     Vec2 uv_min{0.0F, 0.0F};
     Vec2 uv_max{1.0F, 1.0F};
     ClipRect clip{};
+    /* Pixels of corner radius, and the ring width when the quad paints a
+       border. A renderer rounds the rect and, with `border` above zero, keeps
+       only the ring between the edge and the inset. */
+    float radius = 0.0F;
+    float border = 0.0F;
 };
 
 /* One laid-out glyph in target pixels. Shaping, wrapping, alignment and font
