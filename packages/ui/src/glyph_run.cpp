@@ -240,8 +240,9 @@ bool TextAtlasBuilder::getGlyph(std::uint32_t font, std::uint32_t glyph, float s
 }
 
 bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight, float width,
-                                std::uint32_t align, bool wrap, std::vector<GlyphQuad>& out,
-                                float& out_advance_x, std::string& out_error)
+                                std::uint32_t align, bool wrap, bool ellipsis,
+                                std::vector<GlyphQuad>& out, float& out_advance_x,
+                                std::string& out_error)
 {
     out_advance_x = 0.0F;
     if (fonts_.empty() || fonts_[0] == nullptr || !(size > 0.0F))
@@ -331,6 +332,55 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight,
     if (shaped.empty())
     {
         return true;
+    }
+
+    /* A single line that does not fit ends in an ellipsis: keep the glyphs that
+       fit beside one, so nothing is clipped at the edge. A wrapping run breaks
+       lines instead and needs no truncation. */
+    if (ellipsis && !wrap && width > 0.0F)
+    {
+        float total = 0.0F;
+        for (const RunGlyph& entry : shaped)
+        {
+            total += entry.glyph.x_advance;
+        }
+        constexpr std::string_view kEllipsis = "…";
+        const std::uint32_t codepoint = 0x2026U;
+        std::uint32_t tail_font = 0U;
+        bool covered = false;
+        for (std::uint32_t font = 0U; font < fonts_.size(); ++font)
+        {
+            if (fonts_[font] != nullptr && fonts_[font]->glyphIndex(codepoint) != 0U)
+            {
+                tail_font = font;
+                covered = true;
+                break;
+            }
+        }
+        if (total > width && covered)
+        {
+            std::vector<text::ShapedGlyph> tail;
+            if (!text::shape(*fonts_[tail_font], kEllipsis, size, weight, tail, out_error) ||
+                tail.empty())
+            {
+                return false;
+            }
+            const float tail_advance = tail.front().x_advance;
+            float used = 0.0F;
+            std::size_t keep = 0U;
+            while (keep < shaped.size() &&
+                   used + shaped[keep].glyph.x_advance + tail_advance <= width)
+            {
+                used += shaped[keep].glyph.x_advance;
+                ++keep;
+            }
+            const std::uint32_t cluster =
+                keep < shaped.size() ? shaped[keep].glyph.cluster : tail.front().cluster;
+            shaped.resize(keep);
+            text::ShapedGlyph glyph = tail.front();
+            glyph.cluster = cluster;
+            shaped.push_back(RunGlyph{glyph, tail_font});
+        }
     }
 
     text::FontMetrics metrics;

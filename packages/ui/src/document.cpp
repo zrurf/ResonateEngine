@@ -872,6 +872,15 @@ bool applyText(const dom::Document& document, const dom::Component& component, T
                 return false;
             }
         }
+        else if (name == "ellipsis")
+        {
+            if (field.value != "true" && field.value != "false")
+            {
+                error = "Text.ellipsis is not a bool";
+                return false;
+            }
+            text.ellipsis = field.value == "true";
+        }
         else if (name == "content")
         {
             error = "Text.content is written by the adapter and cannot be authored";
@@ -1115,8 +1124,8 @@ bool buildTextRun(World& world, const dom::Document& document, dom::NodeHandle n
     float advance = 0.0F;
     if (!context.atlas->buildRun(std::string_view(bytes, size), text->font_size,
                                  static_cast<float>(text->font_weight), width,
-                                 static_cast<std::uint32_t>(text->align), text->wrap, glyphs,
-                                 advance, error))
+                                 static_cast<std::uint32_t>(text->align), text->wrap,
+                                 text->ellipsis, glyphs, advance, error))
     {
         return report(world, document, node, "text: " + error);
     }

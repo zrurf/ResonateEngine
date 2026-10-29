@@ -301,6 +301,7 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
     const float padding_left = text->padding_left;
     const std::uint32_t align = static_cast<std::uint32_t>(text->align);
     const bool wrap = text->wrap;
+    const bool ellipsis = text->ellipsis;
     const ecs::BlobHandle old_content = text->content;
     const ecs::BlobHandle placeholder = text->placeholder;
     if (TextCaret* caret = world.get<TextCaret>(entity);
@@ -328,8 +329,8 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
     }
     std::vector<detail::GlyphQuad> quads;
     float advance = 0.0F;
-    if (!impl_->atlas.buildRun(shaped, font_size, font_weight, width, align, wrap, quads, advance,
-                               error))
+    if (!impl_->atlas.buildRun(shaped, font_size, font_weight, width, align, wrap, ellipsis,
+                               quads, advance, error))
     {
         return false;
     }

@@ -1015,3 +1015,60 @@ TEST_CASE("ui text: an empty field shapes its placeholder in the hint color", "[
     color = run_color();
     CHECK(std::fabs(color.z - 0.6F) < 0.001F);
 }
+
+TEST_CASE("ui text: a non-wrapping run ends in an ellipsis when it overflows", "[ui][text]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="cut" text="MAGNIFICENTLY LONG LABEL" font_size="16" width="90" height="24"
+           wrap="false" ellipsis="true" color="0 0 0 0"/>
+    <Label key="whole" text="MAGNIFICENTLY LONG LABEL" font_size="16" width="90" height="24"
+           wrap="false" color="0 0 0 0"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(text, &resonate::ui::documentSchema(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    const auto font = loadFont();
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, {font});
+    REQUIRE(root.valid());
+    const Entity cut = resonate::ui::findByKey(fixture.world, root, "cut");
+    const Entity whole = resonate::ui::findByKey(fixture.world, root, "whole");
+    REQUIRE(cut.valid());
+    REQUIRE(whole.valid());
+
+    const auto glyph_count = [&](Entity entity)
+    {
+        const Glyphs* glyphs = fixture.world.get<Glyphs>(entity);
+        REQUIRE(glyphs != nullptr);
+        return fixture.world.blobSize(glyphs->records) / sizeof(resonate::ui::detail::GlyphQuad);
+    };
+    const auto last_glyph = [&](Entity entity)
+    {
+        const Glyphs* glyphs = fixture.world.get<Glyphs>(entity);
+        REQUIRE(glyphs != nullptr);
+        const auto* records =
+            static_cast<const resonate::ui::detail::GlyphQuad*>(fixture.world.blobData(
+                glyphs->records));
+        REQUIRE(fixture.world.blobSize(glyphs->records) >= sizeof(*records));
+        return records[fixture.world.blobSize(glyphs->records) / sizeof(*records) - 1U].glyph_id;
+    };
+
+    /* The ellipsis run is shorter than the full one, ends in the ellipsis glyph
+       and stays inside the authored width. */
+    std::vector<resonate::text::ShapedGlyph> ellipsis;
+    std::string shape_error;
+    REQUIRE(resonate::text::shape(*font, "…", 16.0F, 400.0F, ellipsis,
+                                  shape_error));
+    REQUIRE(ellipsis.size() == 1U);
+    CHECK(glyph_count(cut) < glyph_count(whole));
+    CHECK(last_glyph(cut) == ellipsis.front().glyph);
+    CHECK(last_glyph(whole) != ellipsis.front().glyph);
+    const TextMetrics* metrics = fixture.world.get<TextMetrics>(cut);
+    REQUIRE(metrics != nullptr);
+    CHECK(metrics->advance <= 90.0F);
+}

@@ -57,8 +57,10 @@ class TextAtlasBuilder
        alignment offset included: where the caret sits after the final glyph,
        trailing space advances and all. False with a named error when the page
        is full or a glyph cannot be rasterized. */
+    /* `ellipsis` ends a non-wrapping run that overflows `width` with an
+       ellipsis instead of letting it run past the edge. */
     bool buildRun(std::string_view utf8, float size, float weight, float width, std::uint32_t align,
-                  bool wrap, std::vector<GlyphQuad>& out, float& out_advance_x,
+                  bool wrap, bool ellipsis, std::vector<GlyphQuad>& out, float& out_advance_x,
                   std::string& out_error);
 
     /* The line box at this size and weight, in pixels: the baseline sits

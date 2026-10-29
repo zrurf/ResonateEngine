@@ -72,17 +72,17 @@
         <Row key="camera" class="outliner-row" height="24" selected="false">
           <Icon key="camera-icon" class="icon" x="4" y="4" width="16" height="16" icon="camera"/>
           <Label key="camera-label" class="label" x="24" y="3" width="236" height="18"
-                 text="主相机" font_size="12" v_align="Middle"/>
+                 text="主相机" font_size="12" v_align="Middle" wrap="false" ellipsis="true"/>
         </Row>
         <Row key="sun" class="outliner-row" height="24" selected="false">
           <Icon key="sun-icon" class="icon" x="4" y="4" width="16" height="16" icon="sun"/>
           <Label key="sun-label" class="label" x="24" y="3" width="236" height="18"
-                 text="平行光" font_size="12" v_align="Middle"/>
+                 text="平行光" font_size="12" v_align="Middle" wrap="false" ellipsis="true"/>
         </Row>
         <Row key="ground" class="outliner-row" height="24" selected="false">
           <Icon key="ground-icon" class="icon" x="4" y="4" width="16" height="16" icon="box"/>
           <Label key="ground-label" class="label" x="24" y="3" width="236" height="18"
-                 text="地面" font_size="12" v_align="Middle"/>
+                 text="地面" font_size="12" v_align="Middle" wrap="false" ellipsis="true"/>
         </Row>
         <!-- The first object's row: the editor reshapes its caption from the
              entity and clones it for every further object. -->
@@ -90,7 +90,7 @@
           <Icon key="crate-a-icon" class="icon-bright" x="4" y="4" width="16" height="16"
                 icon="box"/>
           <Label key="crate-a-label" class="label" x="24" y="3" width="236" height="18"
-                 text="箱子 A" font_size="12" v_align="Middle"/>
+                 text="箱子 A" font_size="12" v_align="Middle" wrap="false" ellipsis="true"/>
         </Row>      </Scroll>
     </Panel>
 

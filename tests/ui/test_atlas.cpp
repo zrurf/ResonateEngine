@@ -38,7 +38,7 @@ TEST_CASE("ui atlas: a full page grows and repacks its glyphs", "[ui][text][atla
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
         "\xE7\x94\x9F\xE5\x91\xBD\xE5\x80\xBC\xE5\xBC\xB9\xE8\x8D\xAF\xE5\x8A\xA8\xE4\xBD\x9C"
         "\xE6\xBC\x94\xE7\xA4\xBA\xE6\x95\xB0\xE6\x8D\xAE",
-        24.0F, 400.0F, 0.0F, 0U, false, quads, advance, error));
+        24.0F, 400.0F, 0.0F, 0U, false, false, quads, advance, error));
     CHECK(atlas.width() > 32U);
     CHECK(atlas.width() <= 2048U);
     CHECK(atlas.used());
@@ -69,8 +69,8 @@ TEST_CASE("ui atlas: a missing glyph falls through the font chain", "[ui][text][
     std::vector<resonate::ui::detail::GlyphQuad> quads;
     float advance = 0.0F;
     error.clear();
-    REQUIRE(atlas.buildRun("A\xE4\xBD\xA0", 24.0F, 400.0F, 0.0F, 0U, false, quads, advance,
-                           error));
+    REQUIRE(atlas.buildRun("A\xE4\xBD\xA0", 24.0F, 400.0F, 0.0F, 0U, false, false, quads,
+                           advance, error));
     REQUIRE(quads.size() == 2U);
     CHECK((quads[0].key >> 56U) == 0U);
     CHECK((quads[1].key >> 56U) == 1U);
@@ -87,12 +87,12 @@ TEST_CASE("ui atlas: the medium weight takes its own face", "[ui][text][atlas]")
     std::vector<resonate::ui::detail::GlyphQuad> quads;
     float advance = 0.0F;
     std::string error;
-    REQUIRE(atlas.buildRun("A", 24.0F, 500.0F, 0.0F, 0U, false, quads, advance, error));
+    REQUIRE(atlas.buildRun("A", 24.0F, 500.0F, 0.0F, 0U, false, false, quads, advance, error));
     REQUIRE(quads.size() == 1U);
     CHECK(quads[0].font_index == 1U);
 
     quads.clear();
-    REQUIRE(atlas.buildRun("A", 24.0F, 700.0F, 0.0F, 0U, false, quads, advance, error));
+    REQUIRE(atlas.buildRun("A", 24.0F, 700.0F, 0.0F, 0U, false, false, quads, advance, error));
     REQUIRE(quads.size() == 1U);
     CHECK(quads[0].font_index == 2U);
 }
