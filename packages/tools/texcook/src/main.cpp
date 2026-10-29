@@ -1,20 +1,38 @@
 /* Cooks the P6 PPM sources under content/render/textures into KTX2 files with
  * UASTC Basis payloads. The runtime transcoder turns them back into RGBA8;
- * compressed GPU formats slot in behind the same container later. */
+ * compressed GPU formats slot in behind the same container later.
+ *
+ * Identity and skip: each source carries a random GUID in a .meta sidecar (the
+ * tool creates one on first sight), and a products manifest beside the output
+ * records source -> guid -> product path -> fingerprint. A source whose
+ * fingerprint still matches is not re-cooked, so a build only pays for what
+ * changed. */
 
 #include <basisu/encoder/basisu_comp.h>
 #include <basisu/encoder/basisu_enc.h>
 
+#if !defined(TOML_EXCEPTIONS)
+#    define TOML_EXCEPTIONS 0
+#endif
+
+#include <toml++/toml.hpp>
+
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace
 {
+
+constexpr const char* kCookSalt = "resonate.texcook.uastc-ktx2.v1";
 
 bool readPpm(const std::filesystem::path& path, std::uint32_t& out_width, std::uint32_t& out_height,
              std::vector<std::uint8_t>& out_rgba)
@@ -38,8 +56,9 @@ bool readPpm(const std::filesystem::path& path, std::uint32_t& out_width, std::u
                 {
                     ++position;
                 }
+                continue;
             }
-            else if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
+            if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
             {
                 ++position;
             }
@@ -88,6 +107,98 @@ bool readPpm(const std::filesystem::path& path, std::uint32_t& out_width, std::u
     return true;
 }
 
+std::string readFile(const std::filesystem::path& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open())
+    {
+        return {};
+    }
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+std::uint64_t fnv1a(const void* bytes, std::size_t size, std::uint64_t seed)
+{
+    const auto* data = static_cast<const std::uint8_t*>(bytes);
+    std::uint64_t hash = seed;
+    for (std::size_t index = 0U; index < size; ++index)
+    {
+        hash ^= data[index];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+std::string hex(std::uint64_t value)
+{
+    static const char* kDigits = "0123456789abcdef";
+    std::string text(16U, '0');
+    for (int shift = 60; shift >= 0; shift -= 4)
+    {
+        text[static_cast<std::size_t>((60 - shift) / 4)] = kDigits[(value >> shift) & 0x0FU];
+    }
+    return text;
+}
+
+/* The source's identity from its .meta sidecar, creating the sidecar when it
+   does not exist. False when a sidecar exists but carries no usable GUID. */
+bool identityOf(const std::filesystem::path& source, std::string& out_guid)
+{
+    const std::filesystem::path meta = source.string() + ".meta";
+    const std::string text = readFile(meta);
+    if (!text.empty())
+    {
+        toml::parse_result result = toml::parse(text);
+        if (result)
+        {
+            const std::string guid = result.table()["guid"].value_or(std::string{});
+            if (guid.size() == 36U)
+            {
+                out_guid = guid;
+                return true;
+            }
+        }
+        std::fprintf(stderr, "texcook: %s: the sidecar carries no usable guid\n",
+                     meta.string().c_str());
+        return false;
+    }
+
+    /* A fresh identity: random UUID v4. The sidecar is the only place one is
+       born, and it is committed, so the identity outlives every cook. */
+    std::random_device device;
+    const std::uint64_t high =
+        (static_cast<std::uint64_t>(device()) << 32U) | static_cast<std::uint64_t>(device());
+    const std::uint64_t low =
+        (static_cast<std::uint64_t>(device()) << 32U) | static_cast<std::uint64_t>(device());
+    const std::uint64_t halves[2] = {(high & 0xFFFFFFFF0FFFFFFULL) | 0x0000000040000000ULL,
+                                     (low & 0x3FFFFFFFFFFFFFFULL) | 0x8000000000000000ULL};
+    static const char* kDigits = "0123456789abcdef";
+    out_guid.clear();
+    for (int half = 0; half < 2; ++half)
+    {
+        for (int shift = 56; shift >= 0; shift -= 8)
+        {
+            const std::uint8_t byte = static_cast<std::uint8_t>((halves[half] >> shift) & 0xFFU);
+            out_guid.push_back(kDigits[byte >> 4U]);
+            out_guid.push_back(kDigits[byte & 0x0FU]);
+            const int absolute = half * 8 + (7 - shift / 8);
+            if (absolute == 3 || absolute == 5 || absolute == 7 || absolute == 9)
+            {
+                out_guid.push_back('-');
+            }
+        }
+    }
+    std::ofstream out(meta, std::ios::binary);
+    if (!out.is_open())
+    {
+        std::fprintf(stderr, "texcook: %s: cannot write the sidecar\n", meta.string().c_str());
+        return false;
+    }
+    out << "# Resonate asset identity; references use the GUID. Do not edit.\n";
+    out << "guid = \"" << out_guid << "\"\n";
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -103,48 +214,131 @@ int main(int argc, char** argv)
     std::error_code error;
     std::filesystem::create_directories(output_directory, error);
 
-    int cooked = 0;
+    /* What the last run cooked: fingerprint and product path. */
+    struct Previous
+    {
+        std::string fingerprint;
+        std::string path;
+    };
+    std::vector<Previous> previous;
+    {
+        const std::string text = readFile(output_directory / "products.toml");
+        toml::parse_result result = toml::parse(text);
+        if (result)
+        {
+            if (const toml::array* products = result.table()["product"].as_array())
+            {
+                for (const toml::node& entry : *products)
+                {
+                    const toml::table* product = entry.as_table();
+                    if (product == nullptr)
+                    {
+                        continue;
+                    }
+                    Previous record;
+                    record.fingerprint = product->at_path("fingerprint").value_or(std::string{});
+                    record.path = product->at_path("path").value_or(std::string{});
+                    previous.push_back(std::move(record));
+                }
+            }
+        }
+    }
+
+    std::vector<std::filesystem::path> sources;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(source_directory, error))
     {
-        if (entry.path().extension() != ".ppm")
+        if (entry.path().extension() == ".ppm")
         {
-            continue;
+            sources.push_back(entry.path());
         }
-        std::uint32_t width = 0;
-        std::uint32_t height = 0;
-        std::vector<std::uint8_t> rgba;
-        if (!readPpm(entry.path(), width, height, rgba))
-        {
-            std::fprintf(stderr, "texcook: %s: not a readable P6 PPM\n",
-                         entry.path().string().c_str());
-            return 1;
-        }
-
-        basisu::basis_compressor_params params;
-        params.m_source_images.push_back(basisu::image(rgba.data(), width, height, 4));
-        params.m_uastc = true;
-        params.m_create_ktx2_file = true;
-        params.m_perceptual = false;
-        params.m_status_output = false;
-        params.m_write_output_basis_files = true;
-        params.m_out_filename =
-            (output_directory / (entry.path().stem().string() + ".ktx2")).string();
-
-        basisu::job_pool pool(1);
-        params.m_pJob_pool = &pool;
-        basisu::basis_compressor compressor;
-        if (!compressor.init(params) ||
-            compressor.process() != basisu::basis_compressor::cECSuccess)
-        {
-            std::fprintf(stderr, "texcook: %s: basis encoding failed\n",
-                         entry.path().string().c_str());
-            return 1;
-        }
-        std::printf("texcook: %s -> %s (%ux%u)\n", entry.path().filename().string().c_str(),
-                    params.m_out_filename.c_str(), width, height);
-        ++cooked;
     }
-    std::printf("texcook: %d texture(s) -> %s\n", cooked, output_directory.string().c_str());
+    std::sort(sources.begin(), sources.end());
+
+    std::string manifest = "# Written by texcook; the runtime's asset identity reads it.\n";
+    int cooked = 0;
+    int skipped = 0;
+    for (const std::filesystem::path& source : sources)
+    {
+        std::string guid;
+        if (!identityOf(source, guid))
+        {
+            return 1;
+        }
+        const std::string bytes = readFile(source);
+        const std::string fingerprint =
+            hex(fnv1a(bytes.data(), bytes.size(),
+                      fnv1a(kCookSalt, std::strlen(kCookSalt), 1469598103934665603ULL)));
+        const std::string product = source.stem().string() + ".ktx2";
+
+        bool fresh = true;
+        for (const Previous& record : previous)
+        {
+            if (record.fingerprint == fingerprint && record.path == product &&
+                std::filesystem::exists(output_directory / product))
+            {
+                fresh = false;
+                break;
+            }
+        }
+        if (fresh)
+        {
+            std::uint32_t width = 0U;
+            std::uint32_t height = 0U;
+            std::vector<std::uint8_t> rgba;
+            if (!readPpm(source, width, height, rgba))
+            {
+                std::fprintf(stderr, "texcook: %s: not a readable P6 PPM\n",
+                             source.string().c_str());
+                return 1;
+            }
+
+            basisu::basis_compressor_params params;
+            params.m_source_images.push_back(basisu::image(rgba.data(), width, height, 4));
+            params.m_uastc = true;
+            params.m_create_ktx2_file = true;
+            params.m_perceptual = false;
+            params.m_status_output = false;
+            params.m_write_output_basis_files = true;
+            params.m_out_filename = (output_directory / product).string();
+
+            basisu::job_pool pool(1);
+            params.m_pJob_pool = &pool;
+            basisu::basis_compressor compressor;
+            if (!compressor.init(params) ||
+                compressor.process() != basisu::basis_compressor::cECSuccess)
+            {
+                std::fprintf(stderr, "texcook: %s: basis encoding failed\n",
+                             source.string().c_str());
+                return 1;
+            }
+            std::printf("texcook: %s -> %s (%ux%u)\n", source.filename().string().c_str(),
+                        params.m_out_filename.c_str(), width, height);
+            ++cooked;
+        }
+        else
+        {
+            ++skipped;
+        }
+
+        manifest += "[[product]]\n";
+        manifest += "source = \"" + source.filename().string() + "\"\n";
+        manifest += "guid = \"" + guid + "\"\n";
+        manifest += "fingerprint = \"" + fingerprint + "\"\n";
+        manifest += "sub_id = 1\n";
+        manifest += "path = \"" + product + "\"\n";
+    }
+
+    const std::filesystem::path manifest_path = output_directory / "products.toml";
+    std::ofstream out(manifest_path, std::ios::binary);
+    if (!out.is_open())
+    {
+        std::fprintf(stderr, "texcook: %s: cannot write the manifest\n",
+                     manifest_path.string().c_str());
+        return 1;
+    }
+    out << manifest;
+    std::printf("texcook: %d cooked, %d skipped -> %s\n", cooked, skipped,
+                output_directory.string().c_str());
     return 0;
 }
