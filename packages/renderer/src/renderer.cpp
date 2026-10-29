@@ -3457,9 +3457,9 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
 
 /* The demo's box names, indexed by the grid's x: A, B, C left to right. */
 const char* const kBoxNames[3] = {
-    "ç®±å­ A",
-    "ç®±å­ B",
-    "ç®±å­ C",
+    "箱子 A",
+    "箱子 B",
+    "箱子 C",
 };
 
 void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player)
@@ -3477,13 +3477,13 @@ void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player)
                                                 Vec3{1.0F, 1.0F, 1.0F}});
     world.add(camera, hierarchy::WorldTransform{Mat4{}});
     world.add(camera, render::Camera{});
-    name(camera, "ä¸»ç¸æº");
+    name(camera, "主相机");
 
     const ecs::Entity ground = world.create();
     world.add(ground, hierarchy::LocalTransform{Vec3{}, resonate::Quat{}, Vec3{1.0F, 1.0F, 1.0F}});
     world.add(ground, hierarchy::WorldTransform{Mat4{}});
     world.add(ground, render::MeshInstance{kMeshGround, Vec3{1.0F, 1.0F, 1.0F}});
-    name(ground, "å°é¢");
+    name(ground, "地面");
 
     static const Vec3 kColors[3][3] = {
         {Vec3{0.90F, 0.45F, 0.35F}, Vec3{0.95F, 0.65F, 0.30F}, Vec3{0.55F, 0.80F, 0.40F}},
@@ -3567,7 +3567,7 @@ void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player)
     const ecs::Entity sun = world.create();
     world.add(sun,
               render::DirectionalLight{Vec3{0.35F, -1.0F, 0.25F}, Vec3{1.0F, 0.96F, 0.88F}, 1.1F});
-    name(sun, "å¹³è¡å");
+    name(sun, "平行光");
 }
 
 } // namespace resonate::renderer

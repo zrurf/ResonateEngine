@@ -231,38 +231,60 @@ resonate::ecs::Entity cloneRow(EditorState& state, resonate::ecs::World& world, 
             }
         }
     }
+    /* The layout writes into an existing ComputedRect; a cloned widget brings
+       its own, as the adapter's instantiation does. */
+    world.add(row, resonate::ui::ComputedRect{});
     resonate::hierarchy::setParent(commands, row, list);
 
-    /* The caption: the template's first Text descendant, reshaped to `name`. */
-    std::vector<resonate::ecs::Entity> stack{template_row};
-    while (!stack.empty())
+    /* The row's own widgets copy with it: the glyph keeps its image and tint,
+       the caption reshapes to `name` through the canvas runtime. */
+    for (const resonate::ecs::Entity child : resonate::hierarchy::children(world, template_row))
     {
-        const resonate::ecs::Entity current = stack.front();
-        stack.erase(stack.begin());
-        if (resonate::ui::Text* text = world.get<resonate::ui::Text>(current);
-            text != nullptr && current != template_row)
+        const resonate::ui::Text* text = world.get<resonate::ui::Text>(child);
+        const resonate::ecs::Entity copy = world.create();
+        if (text != nullptr)
         {
-            const resonate::ecs::Entity caption = world.create();
             resonate::ui::Text shaped = *text;
             shaped.content = {};
-            world.add(caption, shaped);
-            if (const auto* transform = world.get<resonate::ui::RectTransform>(current))
-            {
-                world.add(caption, *transform);
-            }
-            std::string error;
-            (void)resonate::ui::setText(world, state.canvas, caption, name, error);
-            resonate::hierarchy::setParent(commands, caption, row);
-            world.play(commands);
-            return row;
+            world.add(copy, shaped);
         }
-        for (const resonate::ecs::Entity child : resonate::hierarchy::children(world, current))
+        if (const auto* image = world.get<resonate::ui::Image>(child))
         {
-            stack.push_back(child);
+            world.add(copy, *image);
         }
+        world.add(copy, resonate::ui::ComputedRect{});
+        if (const auto* transform = world.get<resonate::ui::RectTransform>(child))
+        {
+            world.add(copy, *transform);
+        }
+        if (const auto* styles = world.get<resonate::ui::StyleRef>(child))
+        {
+            world.add(copy, *styles);
+        }
+        if (text != nullptr)
+        {
+            std::string error;
+            (void)resonate::ui::setText(world, state.canvas, copy, name, error);
+        }
+        resonate::hierarchy::setParent(commands, copy, row);
     }
     world.play(commands);
     return row;
+}
+
+/* Reshapes a row's caption to `name`: the row's first child carrying text. */
+void setRowCaption(EditorState& state, resonate::ecs::World& world, Entity row,
+                   const std::string& name)
+{
+    std::string error;
+    for (const Entity child : resonate::hierarchy::children(world, row))
+    {
+        if (world.get<resonate::ui::Text>(child) != nullptr)
+        {
+            (void)resonate::ui::setText(world, state.canvas, child, name, error);
+            return;
+        }
+    }
 }
 
 /* The world's report sink: the console's ring keeps the latest lines. */
@@ -920,7 +942,12 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     attachToggle("tb-inspector", &toggleInspector);
     attachToggle("tb-console", &toggleConsole);
     state->status_fps = resonate::ui::findByKey(world, canvas, "status-fps");
-    world.setReportSink(state, &reportSink);
+    /* The console keeps the last lines only; a host bisecting a report reads
+       the same stream on stderr instead. */
+    if (std::getenv("RESONATE_EDITOR_REPORTS") == nullptr)
+    {
+        world.setReportSink(state, &reportSink);
+    }
 
     resonate::ecs::QueryDesc desc{};
     const resonate::ecs::ComponentIndex all[] = {
@@ -929,41 +956,47 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     desc.all = resonate::Span<const resonate::ecs::ComponentIndex>(all, 2U);
     state->boxes = world.createQuery(desc);
 
-    /* The scene tree lists the real scene: one cloned row per box. */
+    /* The scene tree lists the real scene: the authored row stands for the
+       first object and is cloned for the rest. The query only collects, because
+       cloning is a structural change and the world refuses one while a query is
+       walking its chunks. */
     const resonate::ecs::Entity template_row =
         resonate::ui::findByKey(world, canvas, "crate-a");
     const resonate::ecs::Entity scene_list = state->scene_list;
     if (template_row.valid() && scene_list.valid())
     {
-        struct ListContext
-        {
-            EditorState* state;
-            resonate::ecs::World* world;
-            resonate::ecs::Entity template_row;
-            resonate::ecs::Entity list;
-            std::uint32_t index = 0U;
-        } list_context{state, &world, template_row, scene_list, 0U};
+        std::vector<resonate::ecs::Entity> boxes;
         state->boxes.forEachChunk(
             [](void* context, resonate::ecs::ChunkView view)
             {
-                auto* list = static_cast<ListContext*>(context);
+                auto* collected = static_cast<std::vector<resonate::ecs::Entity>*>(context);
                 for (std::uint32_t row = 0; row < view.count; ++row)
                 {
-                    ++list->index;
-                    /* The row carries the entity's Name; an unnamed entity
-                       falls back to its position in the list. */
-                    std::string name =
-                        resonate::hierarchy::nameOf(*list->world, view.entities[row]);
-                    if (name.empty())
-                    {
-                        name = "箱子 " + std::to_string(list->index);
-                    }
-                    const resonate::ecs::Entity tree_row = cloneRow(
-                        *list->state, *list->world, list->template_row, list->list, name);
-                    list->state->box_rows.emplace_back(tree_row, view.entities[row]);
+                    collected->push_back(view.entities[row]);
                 }
             },
-            &list_context);
+            &boxes);
+        /* An unnamed object falls back to its position in the list. */
+        const auto nameOf = [&world, &boxes](std::size_t index)
+        {
+            std::string name = resonate::hierarchy::nameOf(world, boxes[index]);
+            if (name.empty())
+            {
+                name = "箱子 " + std::to_string(index + 1U);
+            }
+            return name;
+        };
+        if (!boxes.empty())
+        {
+            setRowCaption(*state, world, template_row, nameOf(0U));
+            state->box_rows.emplace_back(template_row, boxes[0]);
+        }
+        for (std::size_t index = 1U; index < boxes.size(); ++index)
+        {
+            const resonate::ecs::Entity tree_row =
+                cloneRow(*state, world, template_row, scene_list, nameOf(index));
+            state->box_rows.emplace_back(tree_row, boxes[index]);
+        }
     }
 }
 

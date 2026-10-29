@@ -84,23 +84,14 @@
           <Label key="ground-label" class="label" x="24" y="3" width="236" height="18"
                  text="地面" font_size="12" v_align="Middle"/>
         </Row>
+        <!-- The first object's row: the editor reshapes its caption from the
+             entity and clones it for every further object. -->
         <Row key="crate-a" class="outliner-row" height="24" selected="true">
           <Icon key="crate-a-icon" class="icon-bright" x="4" y="4" width="16" height="16"
                 icon="box"/>
           <Label key="crate-a-label" class="label" x="24" y="3" width="236" height="18"
                  text="箱子 A" font_size="12" v_align="Middle"/>
-        </Row>
-        <Row key="crate-b" class="outliner-row" height="24" selected="false">
-          <Icon key="crate-b-icon" class="icon" x="4" y="4" width="16" height="16" icon="box"/>
-          <Label key="crate-b-label" class="label" x="24" y="3" width="236" height="18"
-                 text="箱子 B" font_size="12" v_align="Middle"/>
-        </Row>
-        <Row key="crate-c" class="outliner-row" height="24" selected="false">
-          <Icon key="crate-c-icon" class="icon" x="4" y="4" width="16" height="16" icon="box"/>
-          <Label key="crate-c-label" class="label" x="24" y="3" width="236" height="18"
-                 text="箱子 C" font_size="12" v_align="Middle"/>
-        </Row>
-      </Scroll>
+        </Row>      </Scroll>
     </Panel>
 
     <Box key="splitter-left" class="splitter" x="280" y="37" width="6" height="-63"

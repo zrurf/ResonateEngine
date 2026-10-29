@@ -12,6 +12,7 @@
 #include "component_bind.h"
 #include "glyph_run.h"
 #include "state_style_internal.h"
+#include "widget_shown.h"
 
 #include <cctype>
 #include <cerrno>
@@ -1777,6 +1778,12 @@ ecs::Entity selectedChild(ecs::World& world, ecs::Entity container)
     }
     for (const ecs::Entity child : hierarchy::children(world, container))
     {
+        /* A hidden row is not a choice: a template or a collapsed page may
+           still carry the flag from authoring. */
+        if (!detail::childShown(world, container, child))
+        {
+            continue;
+        }
         const Selectable* selectable = world.get<Selectable>(child);
         if (selectable != nullptr && selectable->selected)
         {
