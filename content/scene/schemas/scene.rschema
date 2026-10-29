@@ -12,6 +12,13 @@
        the scene's roots. -->
   <node name="Scene" version="1"/>
 
+  <!-- The document key an object was instantiated from, kept as text so a
+       capture writes the same key back. Runtime data the adapter attaches;
+       the binder refuses blobs, so a document cannot author it. -->
+  <component name="SourceKey" version="1" derived="true">
+    <field name="text" type="blob"/>
+  </component>
+
   <!-- One entity. Nesting is parenting: an Object inside an Object is its
        child. `key` is the stable id applications resolve, `name` the display
        name. -->

@@ -21,6 +21,16 @@
       "shape": [
         "node Scene version 1"
       ]
+    },
+    {
+      "name": "SourceKey",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component SourceKey version 1",
+        "  size 8 align 4",
+        "  field text blob @0 size 8"
+      ]
     }
   ]
 }

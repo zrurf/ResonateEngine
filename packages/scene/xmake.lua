@@ -9,4 +9,12 @@ target("Resonate.Scene")
     add_files("src/**.cpp")
 
     add_deps("Resonate.Document", "Resonate.Document.Bind", "Resonate.ECS",
-             "Resonate.Hierarchy", "Resonate.Core.Math")
+             "Resonate.Hierarchy", "Resonate.Render", "Resonate.Core.Math")
+
+    -- The reader attaches the scene module's SourceKey; the generated header
+    -- must exist before this target compiles.
+    add_includedirs(path.join(os.projectdir(), "build", "gen"))
+    on_load(function (target)
+        os.mkdir(path.join(os.projectdir(), "build", "gen"))
+    end)
+    add_rules("resonate.schema")

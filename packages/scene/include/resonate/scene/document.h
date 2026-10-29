@@ -37,6 +37,17 @@ namespace resonate::scene
 [[nodiscard]] ecs::Entity findByKey(ecs::World& world, ecs::Entity root,
                                     std::string_view key);
 
+/* The topmost ancestor of `entity`: the scene root a capture walks. An entity
+   with no Parent answers itself. */
+[[nodiscard]] ecs::Entity rootOf(ecs::World& world, ecs::Entity entity);
+
+/* Writes the subtree rooted at `root` as a scene document: a Scene element
+   wrapping the root Object, its key and name restored from SourceKey and Name,
+   and the scene schema's composed components with the fields that differ from
+   their defaults. Procedural entities outside the subtree are not written. */
+[[nodiscard]] bool capture(ecs::World& world, ecs::Entity root, std::string& out_xml,
+                           std::string& error);
+
 } // namespace resonate::scene
 
 #endif /* RESONATE_SCENE_DOCUMENT_H */

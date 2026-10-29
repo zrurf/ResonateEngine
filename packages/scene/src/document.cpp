@@ -9,6 +9,8 @@
 #include <resonate/hierarchy/name.h>
 #include <resonate/hierarchy/tree.h>
 
+#include "resonate.scene/components.gen.h"
+
 namespace resonate::scene
 {
 namespace
@@ -69,6 +71,14 @@ ecs::Entity instantiateObject(ecs::World& world, const dom::Document& document,
         }
         if (!attachKey(world, entity, hash, error))
         {
+            return ecs::Entity{};
+        }
+        /* The key's text rides along, so a capture writes the same key back. */
+        const ecs::BlobHandle text =
+            world.createBlob(entity, document.text(key).size(), document.text(key).data());
+        if (!text.valid() || world.add(entity, scene::SourceKey{text}) == nullptr)
+        {
+            error = "the node key's text could not be attached";
             return ecs::Entity{};
         }
     }
@@ -167,6 +177,13 @@ bool instantiate(ecs::World& world, dom::Document& document,
                  std::string& error)
 {
     out_root = ecs::Entity{};
+    /* SourceKey rides on every keyed object; registration is idempotent, and a
+       world that already registered it (a second scene, a reload) reuses it. */
+    if (world.registerComponent<SourceKey>() == ecs::kInvalidComponent)
+    {
+        error = "the SourceKey component could not be registered";
+        return false;
+    }
     const dom::NodeHandle root = document.root();
     if (!root.valid())
     {

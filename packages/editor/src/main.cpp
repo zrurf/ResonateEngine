@@ -5,6 +5,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
 #include <limits>
 #include <string>
 #include <vector>
@@ -12,6 +15,7 @@
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/name.h>
 #include <resonate/hierarchy/tree.h>
+#include <resonate/scene/capture.h>
 #include <resonate/pal/io.h>
 #include <resonate/startup/cvar.h>
 #include "resonate.render/components.gen.h"
@@ -95,6 +99,7 @@ struct EditorState
        dispatch has finished. */
     Entity command_field{};
     bool command_pending = false;
+    bool save_pending = false;
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -602,6 +607,20 @@ bool runCommand(void* context, resonate::ecs::World&, resonate::ecs::Entity,
     return true;
 }
 
+/* The scene save: capture the subtree under the demo scene's root and write it
+   back to the document it came from, found by the same walk the start-up used.
+   A dev-loop editor writes the source tree; a shipped one would stage. */
+bool saveScene(void* context, resonate::ecs::World& world, resonate::ecs::Entity,
+               resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->save_pending = true;
+    return true;
+}
+
 /* A pane toggle flips its flag, re-derives the geometry and records the result
    at once: a click is deliberate, unlike a drag that settles first. */
 void togglePane(EditorState& state, resonate::ecs::World& world, bool Layout::*flag)
@@ -698,6 +717,71 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     if (!world.alive(state->canvas))
     {
         return;
+    }
+    if (state->save_pending)
+    {
+        state->save_pending = false;
+        /* Any scene object reaches the root: the capture walks the subtree of
+           the demo document, and the procedural light grid (outside it) stays
+           procedural. */
+        Entity any_object{};
+        for (const auto& [row, box] : state->box_rows)
+        {
+            (void)row;
+            if (box.valid() && world.alive(box))
+            {
+                any_object = box;
+                break;
+            }
+        }
+        const Entity root = resonate::scene::rootOf(world, any_object);
+        std::string xml;
+        std::string error;
+        if (any_object.valid() && resonate::scene::capture(world, root, xml, error))
+        {
+            /* The demo document: beside the executable in a shipped layout,
+               in the source tree during development; the walk covers both. */
+            std::filesystem::path directory = resonate_pal_io_executable_directory();
+            std::filesystem::path target;
+            for (int level = 0; level < 6; ++level)
+            {
+                const std::filesystem::path candidate =
+                    directory / "content" / "scene" / "demo.rscene";
+                std::error_code probe;
+                if (std::filesystem::is_regular_file(candidate, probe))
+                {
+                    target = candidate;
+                    break;
+                }
+                if (!directory.has_parent_path())
+                {
+                    break;
+                }
+                directory = directory.parent_path();
+            }
+            if (target.empty())
+            {
+                target = resonate_pal_io_executable_directory() /
+                         std::filesystem::path("demo.rscene");
+            }
+            std::ofstream out(target, std::ios::binary);
+            if (out.is_open())
+            {
+                out << xml;
+                std::string status_error;
+                (void)resonate::ui::setText(world, state->canvas, state->status,
+                                            "已保存 场景", status_error);
+            }
+            else
+            {
+                std::fprintf(stderr, "editor: %s: cannot write the scene\n",
+                             target.string().c_str());
+            }
+        }
+        else
+        {
+            std::fprintf(stderr, "editor: scene capture failed: %s\n", error.c_str());
+        }
     }
     if (state->command_pending)
     {
@@ -937,6 +1021,13 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
                                   resonate::ui::eventBit(resonate::ui::EventKind::Click)});
         }
     };
+    const Entity file_button = resonate::ui::findByKey(world, canvas, "file");
+    if (file_button.valid())
+    {
+        world.add(file_button,
+                  resonate::ui::Listener{&saveScene, state,
+                                         resonate::ui::eventBit(resonate::ui::EventKind::Click)});
+    }
     attachToggle("tb-scene-pane", &toggleScene);
     attachToggle("tb-inspector", &toggleInspector);
     attachToggle("tb-console", &toggleConsole);

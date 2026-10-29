@@ -11,6 +11,7 @@
 #include <resonate/hierarchy/name.h>
 #include <resonate/hierarchy/tree.h>
 #include <resonate/renderer/renderer.h>
+#include <resonate/scene/capture.h>
 #include <resonate/scene/document.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/layout.h>
@@ -179,6 +180,69 @@ TEST_CASE("scene: a document instantiates into a parented entity tree", "[scene]
     const auto* ground_transform = fixture.world.get<resonate::hierarchy::LocalTransform>(ground);
     REQUIRE(ground_transform != nullptr);
     CHECK(near(ground_transform->scale.x, 1.0F));
+}
+
+TEST_CASE("scene: a capture round trips through a second instantiate", "[scene]")
+{
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kScene, &sceneSchemas(), diagnostics);
+    REQUIRE(document != nullptr);
+
+    Fixture fixture;
+    REQUIRE(resonate::ui::registerComponents(fixture.world));
+    Entity root{};
+    std::string error;
+    REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
+                                         error));
+
+    /* Move the box and re-temper its material: the capture must carry both. */
+    const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
+    REQUIRE(crate.valid());
+    auto* transform = fixture.world.get<resonate::hierarchy::LocalTransform>(crate);
+    REQUIRE(transform != nullptr);
+    transform->position = resonate::Vec3{3.5F, 1.25F, -0.5F};
+    auto* material = fixture.world.get<resonate::render::Material>(crate);
+    REQUIRE(material != nullptr);
+    material->roughness = 0.85F;
+    material->metallic = 0.25F;
+
+    std::string xml;
+    REQUIRE(resonate::scene::capture(fixture.world, root, xml, error));
+    CHECK(error.empty());
+    const bool has_key = xml.find("key=\"crate\"") != std::string::npos;
+    CHECK(has_key);
+    CHECK(xml.find("3.5 1.25 -0.5") != std::string::npos);
+    CHECK(xml.find("roughness=\"0.85\"") != std::string::npos);
+    /* Fields at their defaults are not written. */
+    CHECK(xml.find("scale=") == std::string::npos);
+
+    /* The capture parses, instantiates, and answers the same scene. */
+    auto captured = resonate::dom::Document::parse(xml, &sceneSchemas(), diagnostics);
+    REQUIRE(captured != nullptr);
+
+    World second{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(second));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
+    REQUIRE(resonate::ui::registerComponents(second));
+    Entity second_root{};
+    REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
+                                         error));
+
+    const Entity second_crate = resonate::scene::findByKey(second, second_root, "crate");
+    REQUIRE(second_crate.valid());
+    const auto* second_transform =
+        second.get<resonate::hierarchy::LocalTransform>(second_crate);
+    REQUIRE(second_transform != nullptr);
+    CHECK(near(second_transform->position.x, 3.5F));
+    CHECK(near(second_transform->position.y, 1.25F));
+    const auto* second_material = second.get<resonate::render::Material>(second_crate);
+    REQUIRE(second_material != nullptr);
+    CHECK(near(second_material->roughness, 0.85F));
+    CHECK(near(second_material->metallic, 0.25F));
+    const Entity second_lid = resonate::scene::findByKey(second, second_root, "lid");
+    REQUIRE(second_lid.valid());
+    CHECK(resonate::hierarchy::parentOf(second, second_lid) == second_crate);
+    CHECK(resonate::hierarchy::nameOf(second, second_lid) == "箱盖");
 }
 
 TEST_CASE("scene: a malformed document is refused with a reason", "[scene]")
