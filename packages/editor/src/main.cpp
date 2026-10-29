@@ -12,6 +12,7 @@
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/name.h>
 #include <resonate/hierarchy/tree.h>
+#include <resonate/pal/io.h>
 #include <resonate/startup/cvar.h>
 #include "resonate.render/components.gen.h"
 #include <resonate/ui/document.h>
@@ -85,6 +86,19 @@ struct EditorState
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
     std::string shown_fps{};
+
+    /* The pane geometry the splitters drive: remembered, persisted to a small
+       file beside the executable, and restored on ready. */
+    Entity scene_pane{};
+    Entity splitter_left{};
+    Entity viewport{};
+    Entity viewport_hint{};
+    Entity splitter_right{};
+    Entity inspector{};
+    Entity console_pane{};
+    float shown_scene_width = 280.0F;
+    float shown_inspector_width = 280.0F;
+    float save_delay = 0.0F;
 };
 
 /* The run's CVars: startup copies the engine's bindings in through the host
@@ -282,6 +296,85 @@ Entity entityOfRow(const EditorState& state, Entity row)
         }
     }
     return Entity{};
+}
+
+/* The editor's pane widths, beside the executable: two numbers the splitters
+   own. A missing or malformed file keeps the authored defaults. */
+std::string layoutPath()
+{
+    const char* directory = resonate_pal_io_executable_directory();
+    return std::string(directory != nullptr ? directory : ".") + "/resonate.editor.layout";
+}
+
+void loadLayout(float& scene_width, float& inspector_width)
+{
+    std::FILE* file = std::fopen(layoutPath().c_str(), "rb");
+    if (file == nullptr)
+    {
+        return;
+    }
+    char line[128] = {};
+    while (std::fgets(line, sizeof(line), file) != nullptr)
+    {
+        char key[64] = {};
+        float value = 0.0F;
+        if (std::sscanf(line, "%63[^=]=%f", key, &value) == 2)
+        {
+            const std::string name = key;
+            if (name == "scene-width" && value > 0.0F)
+            {
+                scene_width = value;
+            }
+            else if (name == "inspector-width" && value > 0.0F)
+            {
+                inspector_width = value;
+            }
+        }
+    }
+    std::fclose(file);
+}
+
+void saveLayout(float scene_width, float inspector_width)
+{
+    std::FILE* file = std::fopen(layoutPath().c_str(), "wb");
+    if (file == nullptr)
+    {
+        return;
+    }
+    std::fprintf(file, "scene-width=%.0f", static_cast<double>(scene_width));
+    std::fputc('\n', file);
+    std::fprintf(file, "inspector-width=%.0f", static_cast<double>(inspector_width));
+    std::fputc('\n', file);
+    std::fclose(file);
+}
+
+/* Places the panes around two widths: the scene pane on the left, the
+   inspector on the right, the viewport and the console between them. */
+void applyLayout(EditorState& state, resonate::ecs::World& world, float scene_width,
+                 float inspector_width)
+{
+    const auto place = [&](Entity entity, float x, float width)
+    {
+        if (resonate::ui::RectTransform* rect = world.get<resonate::ui::RectTransform>(entity))
+        {
+            rect->x = x;
+            rect->width = width;
+            (void)world.markChanged<resonate::ui::RectTransform>(entity);
+        }
+    };
+    place(state.scene_pane, 0.0F, scene_width);
+    place(state.splitter_left, scene_width, 6.0F);
+    place(state.viewport, scene_width + 6.0F, -(scene_width + inspector_width + 12.0F));
+    if (resonate::ui::RectTransform* hint = world.get<resonate::ui::RectTransform>(state.viewport_hint))
+    {
+        hint->x = scene_width + 22.0F;
+        (void)world.markChanged<resonate::ui::RectTransform>(state.viewport_hint);
+    }
+    place(state.console_pane, scene_width + 6.0F, -(scene_width + inspector_width + 12.0F));
+    place(state.splitter_right, -(inspector_width + 6.0F), 6.0F);
+    place(state.inspector, -inspector_width, inspector_width);
+    state.shown_scene_width = scene_width;
+    state.shown_inspector_width = inspector_width;
 }
 
 /* The material scrubs follow the selected object: the scrubber takes the
@@ -491,6 +584,37 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         std::string error;
         (void)resonate::ui::setText(world, state->canvas, state->status_fps, bar_text, error);
     }
+    /* The splitters move the panes' RectTransforms directly; the geometry is
+       saved once the drag has settled. */
+    {
+        float scene_width = state->shown_scene_width;
+        float inspector_width = state->shown_inspector_width;
+        if (const resonate::ui::RectTransform* scene =
+                world.get<resonate::ui::RectTransform>(state->scene_pane))
+        {
+            scene_width = scene->width;
+        }
+        if (const resonate::ui::RectTransform* inspector =
+                world.get<resonate::ui::RectTransform>(state->inspector))
+        {
+            inspector_width = inspector->width;
+        }
+        if (std::fabs(scene_width - state->shown_scene_width) > 0.5F ||
+            std::fabs(inspector_width - state->shown_inspector_width) > 0.5F)
+        {
+            state->shown_scene_width = scene_width;
+            state->shown_inspector_width = inspector_width;
+            state->save_delay = 0.3F;
+        }
+        else if (state->save_delay > 0.0F)
+        {
+            state->save_delay -= delta_seconds;
+            if (state->save_delay <= 0.0F)
+            {
+                saveLayout(state->shown_scene_width, state->shown_inspector_width);
+            }
+        }
+    }
     mirrorConsole(*state, world);
     mirrorScrub(state->canvas, world, state->opacity);
     mirrorScrub(state->canvas, world, state->roughness);
@@ -613,6 +737,19 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     }
     state->console = resonate::ui::findByKey(world, canvas, "console-line");
     state->status_count = resonate::ui::findByKey(world, canvas, "status-count");
+    state->scene_pane = resonate::ui::findByKey(world, canvas, "scene-pane");
+    state->splitter_left = resonate::ui::findByKey(world, canvas, "splitter-left");
+    state->viewport = resonate::ui::findByKey(world, canvas, "viewport");
+    state->viewport_hint = resonate::ui::findByKey(world, canvas, "viewport-hint");
+    state->splitter_right = resonate::ui::findByKey(world, canvas, "splitter-right");
+    state->inspector = resonate::ui::findByKey(world, canvas, "inspector");
+    state->console_pane = resonate::ui::findByKey(world, canvas, "console");
+    {
+        float scene_width = 280.0F;
+        float inspector_width = 280.0F;
+        loadLayout(scene_width, inspector_width);
+        applyLayout(*state, world, scene_width, inspector_width);
+    }
     state->status_fps = resonate::ui::findByKey(world, canvas, "status-fps");
     world.setReportSink(state, &reportSink);
 

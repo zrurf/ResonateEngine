@@ -68,12 +68,20 @@
       </Scroll>
     </Panel>
 
-    <Box key="viewport" x="280" y="37" width="-560" height="-303"
+    <Box key="splitter-left" class="splitter" x="280" y="37" width="6" height="-63"
+         anchor_min="0 0" anchor_max="0 1">
+      <Splitter axis="0"/>
+    </Box>
+    <Box key="viewport" x="286" y="37" width="-572" height="-303"
          anchor_min="0 0" anchor_max="1 1" color="0 0 0 0"/>
-    <Label key="viewport-hint" class="prop-label" x="296" y="52" width="220" height="20"
+    <Label key="viewport-hint" class="prop-label" x="302" y="52" width="220" height="20"
            text="视口" font_size="12" v_align="Middle"/>
+    <Box key="splitter-right" class="splitter" x="-286" y="37" width="6" height="-63"
+         anchor_min="1 0" anchor_max="1 1">
+      <Splitter axis="0"/>
+    </Box>
 
-    <Panel key="console" class="panel" x="280" y="-266" width="-560" height="240"
+    <Panel key="console" class="panel" x="286" y="-266" width="-572" height="240"
            anchor_min="0 1" anchor_max="1 1"
            direction="Column" align="Stretch" gap="0">
       <Label key="console-header" class="pane-title" height="28" text="控制台"
