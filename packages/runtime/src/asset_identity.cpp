@@ -1,6 +1,8 @@
 #include <resonate/asset/identity.h>
 
 #include <cctype>
+#include <fstream>
+#include <iterator>
 
 #if !defined(TOML_EXCEPTIONS)
 #    define TOML_EXCEPTIONS 0
@@ -165,6 +167,31 @@ std::optional<std::string> Identity::locate(const AssetId& id) const
         if (product.id == id)
         {
             return product.path;
+        }
+    }
+    return std::nullopt;
+}
+
+bool Identity::loadFile(const std::string& path, std::string& error)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open())
+    {
+        error = "cannot open " + path;
+        return false;
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    return loadProducts(text, error);
+}
+
+std::optional<AssetId> Identity::idForPath(std::string_view path) const
+{
+    for (const Product& product : products_)
+    {
+        if (product.path == path)
+        {
+            return product.id;
         }
     }
     return std::nullopt;

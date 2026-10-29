@@ -7,6 +7,8 @@
 #include <cstring>
 
 #include <resonate/hierarchy/name.h>
+
+#include "material.h"
 #include <resonate/hierarchy/tree.h>
 
 #include "resonate.scene/components.gen.h"
@@ -100,6 +102,21 @@ ecs::Entity instantiateObject(ecs::World& world, const dom::Document& document,
             error = "node '" + std::string(nodeLabel(document, node)) + "': component '" +
                     std::string(component_name) + "' is not in the registry";
             return ecs::Entity{};
+        }
+        if (component_name == "Material")
+        {
+            if (descriptor == nullptr)
+            {
+                error = "node '" + std::string(nodeLabel(document, node)) + "': component '" +
+                        std::string(component_name) + "' is not in the registry";
+                return ecs::Entity{};
+            }
+            if (!applyMaterial(world, document, component, *descriptor, entity, error))
+            {
+                error = "node '" + std::string(nodeLabel(document, node)) + "': " + error;
+                return ecs::Entity{};
+            }
+            continue;
         }
         if (!dom_bind::attachComponent(world, entity, document, component, *descriptor, error))
         {

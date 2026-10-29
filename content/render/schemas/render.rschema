@@ -41,4 +41,14 @@
     <field name="radius" type="f32" default="10"/>
   </component>
 
+  <!-- The asset a material's texture slot was resolved from: the scene format
+       authors a guid, the adapter leaves this beside the Material, and the
+       renderer maps it to a slot through the products manifest the textures
+       were cooked with. Derived: never authored directly. -->
+  <component name="TextureRef" version="1" derived="true">
+    <field name="guid_low" type="u64"/>
+    <field name="guid_high" type="u64"/>
+    <field name="sub_id" type="u32"/>
+  </component>
+
 </schema>

@@ -61,8 +61,16 @@ class Identity
        path). False with a named error; an id named twice is one. */
     bool loadProducts(std::string_view toml, std::string& error);
 
+    /* Reads the manifest file at `path`. Same rules as loadProducts. */
+    [[nodiscard]] bool loadFile(const std::string& path, std::string& error);
+
     /* The product's path, or nothing for an id no loaded manifest knows. */
     [[nodiscard]] std::optional<std::string> locate(const AssetId& id) const;
+
+    /* The id cooked into `path` (as the manifest records it, relative to the
+       manifest's directory), or nothing. This is how a loader that opens a
+       file by name learns which asset it just made visible. */
+    [[nodiscard]] std::optional<AssetId> idForPath(std::string_view path) const;
 
     [[nodiscard]] std::size_t size() const noexcept { return products_.size(); }
 

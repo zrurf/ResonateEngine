@@ -9,7 +9,8 @@ target("Resonate.Scene")
     add_files("src/**.cpp")
 
     add_deps("Resonate.Document", "Resonate.Document.Bind", "Resonate.ECS",
-             "Resonate.Hierarchy", "Resonate.Render", "Resonate.Core.Math")
+             "Resonate.Hierarchy", "Resonate.Render", "Resonate.Runtime",
+             "Resonate.Core.Math")
 
     -- The reader attaches the scene module's SourceKey; the generated header
     -- must exist before this target compiles.

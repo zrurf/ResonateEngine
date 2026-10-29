@@ -22,49 +22,49 @@
 
       <Object key="box-a1" name="箱子 A">
         <MeshInstance mesh="1" color="0.9 0.45 0.35"/>
-        <Material texture="1"/>
+        <Material texture="@0704c7df-7013-4c31-818d-b515207bb7df"/>
         <LocalTransform position="-2.5 0.5 0"/>
       </Object>
       <Object key="box-a2" name="箱子 A">
         <MeshInstance mesh="1" color="0.95 0.65 0.3"/>
-        <Material texture="1"/>
+        <Material texture="@0704c7df-7013-4c31-818d-b515207bb7df"/>
         <LocalTransform position="-2.5 0.5 2.5"/>
       </Object>
       <Object key="box-a3" name="箱子 A">
         <MeshInstance mesh="1" color="0.55 0.8 0.4"/>
-        <Material texture="1"/>
+        <Material texture="@0704c7df-7013-4c31-818d-b515207bb7df"/>
         <LocalTransform position="-2.5 0.5 5"/>
       </Object>
 
       <Object key="box-b1" name="箱子 B">
         <MeshInstance mesh="1" color="0.35 0.75 0.7"/>
-        <Material texture="1"/>
+        <Material texture="@0704c7df-7013-4c31-818d-b515207bb7df"/>
         <LocalTransform position="0 0.5 0"/>
       </Object>
       <Object key="box-center" name="箱子 B">
         <MeshInstance mesh="1" color="0.4 0.55 0.9"/>
-        <Material texture="1"/>
+        <Material texture="@0704c7df-7013-4c31-818d-b515207bb7df"/>
         <LocalTransform position="0 0.5 2.5"/>
       </Object>
       <Object key="box-b3" name="箱子 B">
         <MeshInstance mesh="1" color="0.6 0.45 0.9"/>
-        <Material texture="1"/>
+        <Material texture="@0704c7df-7013-4c31-818d-b515207bb7df"/>
         <LocalTransform position="0 0.5 5"/>
       </Object>
 
       <Object key="box-c1" name="箱子 C">
         <MeshInstance mesh="1" color="0.85 0.4 0.7"/>
-        <Material texture="1"/>
+        <Material texture="@0704c7df-7013-4c31-818d-b515207bb7df"/>
         <LocalTransform position="2.5 0.5 0"/>
       </Object>
       <Object key="box-c2" name="箱子 C">
         <MeshInstance mesh="1" color="0.9 0.85 0.4"/>
-        <Material texture="1"/>
+        <Material texture="@0704c7df-7013-4c31-818d-b515207bb7df"/>
         <LocalTransform position="2.5 0.5 2.5"/>
       </Object>
       <Object key="box-c3" name="箱子 C">
         <MeshInstance mesh="1" color="0.45 0.85 0.85"/>
-        <Material texture="1"/>
+        <Material texture="@0704c7df-7013-4c31-818d-b515207bb7df"/>
         <LocalTransform position="2.5 0.5 5"/>
       </Object>
     </Object>

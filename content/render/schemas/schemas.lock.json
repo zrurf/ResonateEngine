@@ -62,6 +62,18 @@
         "  field intensity f32 @12 size 4 default=1",
         "  field radius f32 @16 size 4 default=10"
       ]
+    },
+    {
+      "name": "TextureRef",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component TextureRef version 1",
+        "  size 24 align 8",
+        "  field guid_low u64 @0 size 8",
+        "  field guid_high u64 @8 size 8",
+        "  field sub_id u32 @16 size 4"
+      ]
     }
   ]
 }

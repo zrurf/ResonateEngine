@@ -26,6 +26,7 @@
 #include <resonate/hierarchy/tree.h>
 #include <resonate/module/capability.h>
 #include <resonate/module/capability_id.hpp>
+#include <resonate/asset/identity.h>
 #include <resonate/pal/io.h>
 #include <resonate/render/canvas.h>
 #include <resonate/render/device.h>
@@ -529,6 +530,12 @@ struct RenderSystem::Impl
     std::uint32_t font_atlas_height = 0U;
     std::uint32_t white_texture_slot = 0U;
     std::uint32_t checker_texture_slot = 0U;
+    /* The asset the checker texture was cooked from, from the products
+       manifest beside it; a scene's texture references resolve through it. */
+    std::uint64_t checker_asset_low = 0U;
+    std::uint64_t checker_asset_high = 0U;
+    std::uint32_t checker_asset_sub = 0U;
+    bool checker_asset_known = false;
     std::uint32_t font_atlas_slot = 0U;
     std::uint32_t font_atlas_revision = 0U;
     bool albedo_ready = false;
@@ -1939,6 +1946,25 @@ bool RenderSystem::Impl::createAlbedoTextures(const FrameSnapshot& snapshot)
     }
     white_texture_slot = slotOf(white_texture);
     checker_texture_slot = slotOf(checker_texture);
+    /* Which asset the checker is: the products manifest beside the texture
+       names it, and a scene's texture references resolve through this. */
+    if (checker_loaded && !content_directory.empty())
+    {
+        resonate::asset::Identity identity;
+        std::string manifest_error;
+        if (identity.loadFile(content_directory + "/products.toml", manifest_error))
+        {
+            if (const std::optional<resonate::asset::AssetId> id =
+                    identity.idForPath("checker.ktx2");
+                id.has_value())
+            {
+                checker_asset_low = id->guid_low;
+                checker_asset_high = id->guid_high;
+                checker_asset_sub = id->sub_id;
+                checker_asset_known = true;
+            }
+        }
+    }
     /* The atlas is rebuilt here for the same reason as the albedo images: the
        copy updateFontAtlas made before the first present is the one this
        driver ignores. */
@@ -2178,6 +2204,17 @@ bool RenderSystem::Impl::extract(ecs::World& world)
                     material != nullptr)
                 {
                     instance.texture = material->texture;
+                    /* A texture reference wins: the slot the material carries is
+                       the fallback for content that predates asset identity. */
+                    if (const render::TextureRef* reference =
+                            self->extract_world->get<render::TextureRef>(view.entities[row]);
+                        reference != nullptr && self->checker_asset_known &&
+                        reference->guid_low == self->checker_asset_low &&
+                        reference->guid_high == self->checker_asset_high &&
+                        reference->sub_id == self->checker_asset_sub)
+                    {
+                        instance.texture = self->checker_texture_slot;
+                    }
                     instance.color = Vec3{instance.color.x * material->tint.x,
                                           instance.color.y * material->tint.y,
                                           instance.color.z * material->tint.z};
@@ -3051,6 +3088,19 @@ std::string RenderSystem::featureChain() const
     return chain;
 }
 
+std::uint32_t RenderSystem::assetTextureSlot(std::uint64_t guid_low, std::uint64_t guid_high,
+                                             std::uint32_t sub_id) const
+{
+    /* One manifest-backed texture for now (the checker); the table grows with
+       the texture slice. */
+    if (impl_->checker_asset_known && impl_->checker_asset_low == guid_low &&
+        impl_->checker_asset_high == guid_high && impl_->checker_asset_sub == sub_id)
+    {
+        return impl_->checker_texture_slot;
+    }
+    return 0U;
+}
+
 const std::string& RenderSystem::antialiasing() const
 {
     return impl_->features.antialiasing;
@@ -3078,6 +3128,7 @@ bool RenderSystem::registerComponents(ecs::World& world)
     ok = world.registerComponent<render::Material>() != ecs::kInvalidComponent && ok;
     ok = world.registerComponent<render::DirectionalLight>() != ecs::kInvalidComponent && ok;
     ok = world.registerComponent<render::PointLight>() != ecs::kInvalidComponent && ok;
+    ok = world.registerComponent<render::TextureRef>() != ecs::kInvalidComponent && ok;
     return ok;
 }
 

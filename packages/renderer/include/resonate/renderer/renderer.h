@@ -127,6 +127,12 @@ class RenderSystem
        collision) answers false. */
     static bool registerComponents(ecs::World& world);
 
+    /* The texture slot an asset id resolves to, through the products manifest
+       the textures were cooked with; 0 (the white fallback) for an id the
+       renderer has no texture for. */
+    [[nodiscard]] std::uint32_t assetTextureSlot(std::uint64_t guid_low, std::uint64_t guid_high,
+                                                 std::uint32_t sub_id) const;
+
     /* The engine-system entry a run registers with addEngineSystem (RENDER
        stage); the command buffer and the delta are unused. */
     static void invoke(void* context, ecs::World& world, ecs::CommandBuffer& commands,
