@@ -176,6 +176,31 @@ TEST_CASE("ui event: the wheel scrolls a viewport by whole rows", "[ui][event]")
     CHECK(near(view->scroll, 40.0F));
 }
 
+TEST_CASE("ui layout: a hidden row takes no room in the flow", "[ui][layout]")
+{
+    Fixture fixture;
+    const ScrollView* view = fixture.world.get<ScrollView>(fixture.list);
+    REQUIRE(view != nullptr);
+    CHECK(near(view->content_height, 160.0F));
+
+    /* Collapsing a row (what a delete does before it hides the object) pulls
+       the rows below it up and shortens the content. */
+    resonate::ui::setShown(fixture.world, fixture.rows[2], false);
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.root, 200.0F, 200.0F));
+    view = fixture.world.get<ScrollView>(fixture.list);
+    CHECK(near(view->content_height, 140.0F));
+    const auto* hidden = fixture.world.get<resonate::ui::ComputedRect>(fixture.rows[2]);
+    const auto* below = fixture.world.get<resonate::ui::ComputedRect>(fixture.rows[3]);
+    REQUIRE(hidden != nullptr);
+    REQUIRE(below != nullptr);
+    CHECK(near(below->y, hidden->y));
+
+    resonate::ui::setShown(fixture.world, fixture.rows[2], true);
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.root, 200.0F, 200.0F));
+    view = fixture.world.get<ScrollView>(fixture.list);
+    CHECK(near(view->content_height, 160.0F));
+}
+
 TEST_CASE("ui layout: reveal scrolls the nearest viewport to the widget", "[ui][layout]")
 {
     Fixture fixture;

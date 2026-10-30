@@ -9,6 +9,7 @@
 #include <resonate/ui/text_runtime.h>
 
 #include "resonate.ui/components.gen.h"
+#include "widget_shown.h"
 
 namespace resonate::ui
 {
@@ -207,6 +208,12 @@ bool placeChildren(ecs::World& world, ecs::Entity parent, const Box& parent_box,
             return reportMissing(world, child, "RectTransform");
         }
         if (rect->position == PositionMode::Absolute)
+        {
+            continue;
+        }
+        /* A hidden child takes no room in the flow: a collapsed list row
+           leaves no gap behind. */
+        if (!detail::childShown(world, parent, child))
         {
             continue;
         }
