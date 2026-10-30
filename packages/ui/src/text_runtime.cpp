@@ -389,16 +389,16 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
     text->content = content;
     if (old_content.valid())
     {
-        world.destroyBlob(old_content);
+        (void)world.destroyBlob(old_content);
     }
 
     if (Glyphs* glyphs = world.get<Glyphs>(entity))
     {
         if (world.alive(glyphs->records))
         {
-            world.destroyBlob(glyphs->records);
+            (void)world.destroyBlob(glyphs->records);
         }
-        world.remove<Glyphs>(entity);
+        (void)world.remove<Glyphs>(entity);
     }
     if (!quads.empty())
     {
@@ -431,7 +431,7 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
     }
     float ascent = font_size * 0.8F;
     float descent = -font_size * 0.2F;
-    impl_->atlas.lineMetrics(font_size, font_weight, ascent, descent);
+    (void)impl_->atlas.lineMetrics(font_size, font_weight, ascent, descent);
     if (TextMetrics* metrics = world.get<TextMetrics>(entity))
     {
         metrics->width = maximum_x - minimum_x;
@@ -483,7 +483,7 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
                     state->world->blobSize(glyphs->records) / sizeof(detail::GlyphQuad);
                 for (std::size_t index = 0; index < count; ++index)
                 {
-                    state->atlas->updateQuad(records[index]);
+                    (void)state->atlas->updateQuad(records[index]);
                 }
             }
         },
@@ -525,7 +525,7 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
             page->pixels = pixels;
             if (old.valid())
             {
-                world.destroyBlob(old);
+                (void)world.destroyBlob(old);
             }
         }
         else

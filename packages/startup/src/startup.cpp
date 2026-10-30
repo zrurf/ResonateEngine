@@ -291,14 +291,14 @@ struct UiFrame
             {
                 ResonateVec2 wheel{};
                 frame->input->pointer_wheel(frame->input->self, &wheel);
-                ui::scrollInput(world, frame->canvas, position.x, position.y, wheel.y);
+                (void)ui::scrollInput(world, frame->canvas, position.x, position.y, wheel.y);
             }
             if (frame->input->key_pressed(frame->input->self, RESONATE_KEY_TAB) != 0)
             {
                 const bool backwards =
                     frame->input->key_down(frame->input->self, RESONATE_KEY_LSHIFT) != 0 ||
                     frame->input->key_down(frame->input->self, RESONATE_KEY_RSHIFT) != 0;
-                ui::focusNext(world, frame->canvas, backwards);
+                (void)ui::focusNext(world, frame->canvas, backwards);
             }
             /* Return and Space activate the focused widget; a text field takes
                the space as a character instead. */

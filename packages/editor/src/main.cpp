@@ -714,9 +714,9 @@ bool redoEdit(void* context, resonate::ecs::World&, resonate::ecs::Entity,
     return true;
 }
 
-/* The editor's keyboard pass: Ctrl+Z and Ctrl+Y reach the same undo and redo
-   the toolbar buttons run, unless a text field owns the keys (the field's own
-   editing history is not the scene's). */
+/* The editor's keyboard pass: Ctrl+S saves, Ctrl+Z and Ctrl+Y run the same
+   undo and redo the toolbar buttons do, unless a text field owns the keys (a
+   field's own editing is not the scene's). */
 bool editorKeys(void* context, resonate::ecs::World& world, const ResonateInput* input)
 {
     auto* state = static_cast<EditorState*>(context);
@@ -729,6 +729,11 @@ bool editorKeys(void* context, resonate::ecs::World& world, const ResonateInput*
     if (!ctrl)
     {
         return false;
+    }
+    if (input->key_pressed(input->self, RESONATE_KEY_S) != 0)
+    {
+        state->save_pending = true;
+        return true;
     }
     if (input->key_pressed(input->self, RESONATE_KEY_Z) != 0)
     {
