@@ -1,5 +1,6 @@
 #include <resonate/ui/layout.h>
 
+#include <algorithm>
 #include <cstdint>
 
 #include <resonate/hierarchy/tree.h>
@@ -631,6 +632,51 @@ bool layout(ecs::World& world, ecs::Entity canvas, float viewport_width, float v
         return false;
     }
     return placeChildren(world, canvas, box, scale, 1U);
+}
+
+bool reveal(ecs::World& world, ecs::Entity entity)
+{
+    const ComputedRect* target = world.get<ComputedRect>(entity);
+    if (target == nullptr)
+    {
+        return false;
+    }
+    /* Innermost viewport first. A scroll shifts the widget by the same amount,
+       so the applied offsets accumulate and the outer viewports measure the
+       rect where it will actually sit. */
+    float shift = 0.0F;
+    bool moved = false;
+    ecs::Entity ancestor = hierarchy::parentOf(world, entity);
+    for (std::uint32_t depth = 0U; ancestor.valid() && depth <= hierarchy::kMaxDepth; ++depth)
+    {
+        ScrollView* view = world.get<ScrollView>(ancestor);
+        const ComputedRect* viewport = world.get<ComputedRect>(ancestor);
+        if (view != nullptr && viewport != nullptr && viewport->height > 0.0F)
+        {
+            const float top = target->y + shift;
+            const float bottom = top + target->height;
+            float wanted = view->scroll;
+            if (top < viewport->y)
+            {
+                wanted -= viewport->y - top;
+            }
+            else if (bottom > viewport->y + viewport->height)
+            {
+                wanted += bottom - (viewport->y + viewport->height);
+            }
+            const float maximum = std::max(0.0F, view->content_height - viewport->height);
+            wanted = std::clamp(wanted, 0.0F, maximum);
+            if (wanted != view->scroll)
+            {
+                shift += view->scroll - wanted;
+                view->scroll = wanted;
+                world.markChanged<ScrollView>(ancestor);
+                moved = true;
+            }
+        }
+        ancestor = hierarchy::parentOf(world, ancestor);
+    }
+    return moved;
 }
 
 } // namespace resonate::ui

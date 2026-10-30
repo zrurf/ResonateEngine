@@ -299,6 +299,13 @@ struct UiFrame
                     frame->input->key_down(frame->input->self, RESONATE_KEY_LSHIFT) != 0 ||
                     frame->input->key_down(frame->input->self, RESONATE_KEY_RSHIFT) != 0;
                 (void)ui::focusNext(world, frame->canvas, backwards);
+                /* Tab may land on a row below the fold: its viewport brings it
+                   into view before this frame lays the tree out. */
+                const ecs::Entity focused = ui::focusedEntity(world, frame->canvas);
+                if (focused.valid())
+                {
+                    (void)ui::reveal(world, focused);
+                }
             }
             /* Return and Space activate the focused widget; a text field takes
                the space as a character instead. */

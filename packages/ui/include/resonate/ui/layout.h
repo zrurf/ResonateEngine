@@ -33,6 +33,12 @@ bool registerComponents(ecs::World& world);
    the hierarchy's bound. */
 bool layout(ecs::World& world, ecs::Entity canvas, float viewport_width, float viewport_height);
 
+/* Scrolls the ScrollView ancestors of `entity` so the widget lies inside them:
+   each viewport moves its content the least amount that covers the whole rect,
+   clamped to its content. True when any viewport's scroll changed; false for a
+   widget with no ComputedRect or no viewport above it. */
+[[nodiscard]] bool reveal(ecs::World& world, ecs::Entity entity);
+
 } // namespace resonate::ui
 
 #endif /* RESONATE_UI_LAYOUT_H */

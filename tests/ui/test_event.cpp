@@ -176,6 +176,34 @@ TEST_CASE("ui event: the wheel scrolls a viewport by whole rows", "[ui][event]")
     CHECK(near(view->scroll, 40.0F));
 }
 
+TEST_CASE("ui layout: reveal scrolls the nearest viewport to the widget", "[ui][layout]")
+{
+    Fixture fixture;
+    const auto* view = fixture.world.get<ScrollView>(fixture.list);
+    REQUIRE(view != nullptr);
+    CHECK(near(view->scroll, 0.0F));
+
+    /* Row 6 starts below the fold: the viewport scrolls just enough to show
+       its bottom edge, and a fresh layout puts it inside. */
+    REQUIRE(resonate::ui::reveal(fixture.world, fixture.rows[6]));
+    view = fixture.world.get<ScrollView>(fixture.list);
+    CHECK(near(view->scroll, 40.0F));
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.root, 200.0F, 200.0F));
+    const auto* row_rect = fixture.world.get<resonate::ui::ComputedRect>(fixture.rows[6]);
+    const auto* list_rect = fixture.world.get<resonate::ui::ComputedRect>(fixture.list);
+    REQUIRE(row_rect != nullptr);
+    REQUIRE(list_rect != nullptr);
+    CHECK(row_rect->y >= list_rect->y - 0.001F);
+    CHECK(row_rect->y + row_rect->height <= list_rect->y + list_rect->height + 0.001F);
+
+    /* A row already on screen asks for nothing; one above the fold scrolls
+       the viewport back up. */
+    CHECK_FALSE(resonate::ui::reveal(fixture.world, fixture.rows[2]));
+    CHECK(near(fixture.world.get<ScrollView>(fixture.list)->scroll, 40.0F));
+    REQUIRE(resonate::ui::reveal(fixture.world, fixture.rows[0]));
+    CHECK(near(fixture.world.get<ScrollView>(fixture.list)->scroll, 0.0F));
+}
+
 TEST_CASE("ui event: a handler can take the wheel from the viewport", "[ui][event]")
 {
     Fixture fixture;
