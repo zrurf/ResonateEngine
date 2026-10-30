@@ -23,6 +23,7 @@
 #include <resonate/pal/io.h>
 #include <resonate/startup/cvar.h>
 #include "resonate.render/components.gen.h"
+#include "resonate.scene/components.gen.h"
 #include <resonate/ui/document.h>
 #include <resonate/ui/event.h>
 #include <resonate/ui/text_runtime.h>
@@ -107,6 +108,7 @@ struct EditorState
     bool undo_pending = false;
     bool redo_pending = false;
     bool delete_pending = false;
+    bool duplicate_pending = false;
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -529,6 +531,99 @@ void deleteSelected(EditorState& state, resonate::ecs::World& world)
         });
 }
 
+/* Duplicate copies the selected object through the same capture the delete
+   uses and instantiates it beside its original. The copy drops the authored
+   key -- a stable id names one object -- and takes a " 副本" name; its row is
+   cloned from the row of the object it came from. */
+void duplicateSelected(EditorState& state, resonate::ecs::World& world)
+{
+    const Entity row = resonate::ui::selectedChild(world, state.scene_list);
+    if (!row.valid())
+    {
+        return;
+    }
+    const Entity entity = entityOfRow(state, row);
+    if (!entity.valid() || !world.alive(entity))
+    {
+        return;
+    }
+    std::string xml;
+    std::string error;
+    if (!resonate::scene::capture(world, entity, xml, error))
+    {
+        std::fprintf(stderr, "editor: duplicate: %s\n", error.c_str());
+        return;
+    }
+    const Entity parent = resonate::hierarchy::parentOf(world, entity);
+    const std::string source_name = resonate::hierarchy::nameOf(world, entity);
+    const std::string name = source_name.empty() ? "副本" : source_name + " 副本";
+
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(xml, &resonate::startup::contentSchema(), diagnostics);
+    Entity copy{};
+    std::string copy_error;
+    if (document == nullptr ||
+        !resonate::scene::instantiateUnder(world, *document,
+                                           &resonate::startup::contentComponents(),
+                                           world.alive(parent) ? parent : Entity{}, copy,
+                                           copy_error))
+    {
+        std::fprintf(stderr, "editor: duplicate: %s\n", copy_error.c_str());
+        return;
+    }
+    (void)world.remove<resonate::scene::SourceKey>(copy);
+    (void)world.remove<resonate::ui::WidgetKey>(copy);
+    std::string name_error;
+    (void)resonate::hierarchy::setName(world, copy, name, name_error);
+
+    const Entity copy_row = cloneRow(state, world, row, state.scene_list, name);
+    state.box_rows.emplace_back(copy_row, copy);
+    selectRow(world, state.scene_list, copy_row);
+
+    /* The redo reinstantiates the copy as it stands now (its own name, no key),
+       so the entry stores a capture of the copy itself. */
+    std::string copy_xml;
+    if (!resonate::scene::capture(world, copy, copy_xml, error))
+    {
+        copy_xml = xml;
+    }
+    pushUndo(
+        state, "复制 " + name,
+        [&state, copy_row](resonate::ecs::World& target)
+        {
+            const Entity current = entityOfRow(state, copy_row);
+            if (current.valid())
+            {
+                destroySubtree(target, current);
+            }
+            selectRow(target, state.scene_list, Entity{});
+            (void)resonate::ui::setShown(target, copy_row, false);
+            std::erase_if(state.box_rows,
+                          [copy_row](const auto& pair) { return pair.first == copy_row; });
+        },
+        [&state, copy_row, parent, copy_xml](resonate::ecs::World& target)
+        {
+            std::vector<resonate::dom::Diagnostic> redo_diagnostics;
+            auto redo_document = resonate::dom::Document::parse(
+                copy_xml, &resonate::startup::contentSchema(), redo_diagnostics);
+            const Entity anchor = target.alive(parent) ? parent : Entity{};
+            Entity restored{};
+            std::string redo_error;
+            if (redo_document == nullptr ||
+                !resonate::scene::instantiateUnder(target, *redo_document,
+                                                   &resonate::startup::contentComponents(),
+                                                   anchor, restored, redo_error))
+            {
+                std::fprintf(stderr, "editor: redo duplicate: %s\n", redo_error.c_str());
+                return;
+            }
+            (void)resonate::ui::setShown(target, copy_row, true);
+            state.box_rows.emplace_back(copy_row, restored);
+            selectRow(target, state.scene_list, copy_row);
+        });
+}
+
 std::string layoutPath()
 {
     const char* directory = resonate_pal_io_executable_directory();
@@ -858,6 +953,11 @@ bool editorKeys(void* context, resonate::ecs::World& world, const ResonateInput*
         state->save_pending = true;
         return true;
     }
+    if (input->key_pressed(input->self, RESONATE_KEY_D) != 0)
+    {
+        state->duplicate_pending = true;
+        return true;
+    }
     if (input->key_pressed(input->self, RESONATE_KEY_Z) != 0)
     {
         state->undo_pending = true;
@@ -1014,6 +1114,11 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         state->delete_pending = false;
         deleteSelected(*state, world);
+    }
+    if (state->duplicate_pending)
+    {
+        state->duplicate_pending = false;
+        duplicateSelected(*state, world);
     }
     if (state->save_pending)
     {
