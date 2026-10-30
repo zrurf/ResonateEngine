@@ -495,6 +495,11 @@ void deleteSelected(EditorState& state, resonate::ecs::World& world)
     (void)resonate::ui::setShown(world, row, false);
     std::erase_if(state.box_rows, [row](const auto& pair) { return pair.first == row; });
     destroySubtree(world, entity);
+    {
+        std::string status_error;
+        (void)resonate::ui::setText(world, state.canvas, state.status, "已删除 " + name,
+                                    status_error);
+    }
 
     pushUndo(
         state, "删除 " + name,
@@ -580,6 +585,11 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
     const Entity copy_row = cloneRow(state, world, row, state.scene_list, name);
     state.box_rows.emplace_back(copy_row, copy);
     selectRow(world, state.scene_list, copy_row);
+    {
+        std::string status_error;
+        (void)resonate::ui::setText(world, state.canvas, state.status, "已复制 " + name,
+                                    status_error);
+    }
 
     /* The redo reinstantiates the copy as it stands now (its own name, no key),
        so the entry stores a capture of the copy itself. */
