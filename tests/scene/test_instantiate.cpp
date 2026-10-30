@@ -9,6 +9,7 @@
 #include <resonate/core/allocator.h>
 #include <resonate/dom/document.h>
 #include <resonate/dom/schema.h>
+#include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/name.h>
 #include <resonate/hierarchy/tree.h>
@@ -356,6 +357,50 @@ TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[sce
     }
     CHECK(second.get<resonate::render::TextureRef>(
               resonate::scene::findByKey(second, second_root, "ground")) == nullptr);
+}
+
+TEST_CASE("scene: a captured subtree reinstantiates under its old parent", "[scene]")
+{
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kScene, &sceneSchemas(), diagnostics);
+    REQUIRE(document != nullptr);
+
+    Fixture fixture;
+    REQUIRE(resonate::ui::registerComponents(fixture.world));
+    Entity root{};
+    std::string error;
+    REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
+                                         error));
+    const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
+    REQUIRE(crate.valid());
+    const Entity parent = resonate::hierarchy::parentOf(fixture.world, crate);
+    REQUIRE(parent == root);
+
+    /* What an editor's delete captures before it destroys the object. */
+    std::string xml;
+    REQUIRE(resonate::scene::capture(fixture.world, crate, xml, error));
+    resonate::ecs::CommandBuffer commands(fixture.world);
+    resonate::hierarchy::destroyEntity(commands, crate);
+    fixture.world.play(commands);
+    CHECK_FALSE(fixture.world.alive(crate));
+    CHECK_FALSE(resonate::scene::findByKey(fixture.world, root, "crate").valid());
+
+    /* The undo: the captured document instantiates back under the parent, with
+       its components, its name and its own child. */
+    auto captured = resonate::dom::Document::parse(xml, &sceneSchemas(), diagnostics);
+    REQUIRE(captured != nullptr);
+    Entity restored{};
+    REQUIRE(resonate::scene::instantiateUnder(fixture.world, *captured, &sceneComponents(),
+                                              parent, restored, error));
+    REQUIRE(restored.valid());
+    CHECK(resonate::hierarchy::parentOf(fixture.world, restored) == parent);
+    CHECK(resonate::hierarchy::nameOf(fixture.world, restored) == "箱子");
+    const auto* material = fixture.world.get<resonate::render::Material>(restored);
+    REQUIRE(material != nullptr);
+    CHECK(near(material->roughness, 0.4F));
+    const Entity lid = resonate::scene::findByKey(fixture.world, root, "lid");
+    REQUIRE(lid.valid());
+    CHECK(resonate::hierarchy::parentOf(fixture.world, lid) == restored);
 }
 
 TEST_CASE("scene: a malformed document is refused with a reason", "[scene]")

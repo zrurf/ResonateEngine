@@ -31,6 +31,14 @@ namespace resonate::scene
                                const dom::ComponentRegistry* components, ecs::Entity& out_root,
                                std::string& error);
 
+/* As instantiate, but the Scene's objects become children of `parent` — an
+   invalid parent makes them roots. This is how a captured subtree goes back
+   where it came from (an editor's undo of a delete). */
+[[nodiscard]] bool instantiateUnder(ecs::World& world, dom::Document& document,
+                                    const dom::ComponentRegistry* components,
+                                    ecs::Entity parent, ecs::Entity& out_root,
+                                    std::string& error);
+
 /* The entity authored under `key`, found through the WidgetKey hashes in the
    subtree rooted at `root`. Requires the UI module's components to be
    registered (the key lives there); answers an invalid entity otherwise. */

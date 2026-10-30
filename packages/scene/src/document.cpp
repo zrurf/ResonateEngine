@@ -189,9 +189,9 @@ ecs::Entity findByKey(ecs::World& world, ecs::Entity root, std::string_view key)
     return ecs::Entity{};
 }
 
-bool instantiate(ecs::World& world, dom::Document& document,
-                 const dom::ComponentRegistry* components, ecs::Entity& out_root,
-                 std::string& error)
+bool instantiateUnder(ecs::World& world, dom::Document& document,
+                      const dom::ComponentRegistry* components, ecs::Entity parent,
+                      ecs::Entity& out_root, std::string& error)
 {
     out_root = ecs::Entity{};
     /* SourceKey rides on every keyed object; registration is idempotent, and a
@@ -219,7 +219,7 @@ bool instantiate(ecs::World& world, dom::Document& document,
          child = document.nextSibling(child))
     {
         const ecs::Entity entity =
-            instantiateObject(world, document, child, components, commands, ecs::Entity{}, error);
+            instantiateObject(world, document, child, components, commands, parent, error);
         if (!entity.valid())
         {
             return false;
@@ -232,6 +232,13 @@ bool instantiate(ecs::World& world, dom::Document& document,
     world.play(commands);
     out_root = first;
     return true;
+}
+
+bool instantiate(ecs::World& world, dom::Document& document,
+                 const dom::ComponentRegistry* components, ecs::Entity& out_root,
+                 std::string& error)
+{
+    return instantiateUnder(world, document, components, ecs::Entity{}, out_root, error);
 }
 
 } // namespace resonate::scene
