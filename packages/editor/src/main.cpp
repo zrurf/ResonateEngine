@@ -11,6 +11,7 @@
 #include <system_error>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <resonate/dom/document.h>
@@ -26,6 +27,7 @@
 #include "resonate.scene/components.gen.h"
 #include <resonate/ui/document.h>
 #include <resonate/ui/event.h>
+#include <resonate/ui/string_table.h>
 #include <resonate/ui/text_runtime.h>
 
 #include "resonate.ui/components.gen.h"
@@ -370,6 +372,15 @@ Entity entityOfRow(const EditorState& state, Entity row)
     return Entity{};
 }
 
+/* A user-facing string from the run's table: the key itself when the table or
+   the entry is missing, so a stale key shows up instead of silence. */
+std::string localized(std::string_view key)
+{
+    const resonate::ui::StringTable* table = resonate::startup::stringTable();
+    const std::string* found = table != nullptr ? table->find(key) : nullptr;
+    return found != nullptr ? *found : std::string(key);
+}
+
 /* One reversible edit per push; a push clears the redo stack, and the stacks
    cap so a long session cannot grow without bound. Executed only from the
    tick: the closures read the world through the editor state. */
@@ -399,7 +410,7 @@ void runUndo(EditorState& state, resonate::ecs::World& world)
     state.redo_stack.push_back(std::move(entry));
     std::string status_error;
     (void)resonate::ui::setText(world, state.canvas, state.status,
-                                "撤销 " + state.redo_stack.back().name, status_error);
+                                localized("editor.undo") + " " + state.redo_stack.back().name, status_error);
 }
 
 void runRedo(EditorState& state, resonate::ecs::World& world)
@@ -414,7 +425,7 @@ void runRedo(EditorState& state, resonate::ecs::World& world)
     state.undo_stack.push_back(std::move(entry));
     std::string status_error;
     (void)resonate::ui::setText(world, state.canvas, state.status,
-                                "重做 " + state.undo_stack.back().name, status_error);
+                                localized("editor.redo") + " " + state.undo_stack.back().name, status_error);
 }
 
 /* Delete removes the selected object from the scene and from the tree list.
@@ -497,12 +508,12 @@ void deleteSelected(EditorState& state, resonate::ecs::World& world)
     destroySubtree(world, entity);
     {
         std::string status_error;
-        (void)resonate::ui::setText(world, state.canvas, state.status, "已删除 " + name,
+        (void)resonate::ui::setText(world, state.canvas, state.status, localized("editor.deleted") + " " + name,
                                     status_error);
     }
 
     pushUndo(
-        state, "删除 " + name,
+        state, localized("editor.delete") + " " + name,
         [&state, row, parent, xml](resonate::ecs::World& target)
         {
             std::vector<resonate::dom::Diagnostic> diagnostics;
@@ -538,7 +549,7 @@ void deleteSelected(EditorState& state, resonate::ecs::World& world)
 
 /* Duplicate copies the selected object through the same capture the delete
    uses and instantiates it beside its original. The copy drops the authored
-   key -- a stable id names one object -- and takes a " 副本" name; its row is
+   key -- a stable id names one object -- and takes a copy-suffixed name; its row is
    cloned from the row of the object it came from. */
 void duplicateSelected(EditorState& state, resonate::ecs::World& world)
 {
@@ -561,7 +572,8 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
     }
     const Entity parent = resonate::hierarchy::parentOf(world, entity);
     const std::string source_name = resonate::hierarchy::nameOf(world, entity);
-    const std::string name = source_name.empty() ? "副本" : source_name + " 副本";
+    const std::string suffix = localized("editor.copy_suffix");
+    const std::string name = source_name.empty() ? suffix : source_name + " " + suffix;
 
     std::vector<resonate::dom::Diagnostic> diagnostics;
     auto document =
@@ -587,7 +599,7 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
     selectRow(world, state.scene_list, copy_row);
     {
         std::string status_error;
-        (void)resonate::ui::setText(world, state.canvas, state.status, "已复制 " + name,
+        (void)resonate::ui::setText(world, state.canvas, state.status, localized("editor.copied") + " " + name,
                                     status_error);
     }
 
@@ -599,7 +611,7 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
         copy_xml = xml;
     }
     pushUndo(
-        state, "复制 " + name,
+        state, localized("editor.duplicate") + " " + name,
         [&state, copy_row](resonate::ecs::World& target)
         {
             const Entity current = entityOfRow(state, copy_row);
@@ -1073,8 +1085,8 @@ void applyPositionField(resonate::ecs::World& world, EditorState& state,
         (void)resonate::ui::setText(world_ref, state.canvas, field.handle, text, field_error);
         field.mirrored = text;
     };
-    static const char* const kAxisNames[3] = {"位置 X", "位置 Y", "位置 Z"};
-    pushUndo(state, kAxisNames[axis],
+    static const char* const kAxisKeys[3] = {"editor.axis.x", "editor.axis.y", "editor.axis.z"};
+    pushUndo(state, localized(kAxisKeys[axis]),
              [apply, previous](resonate::ecs::World& world_ref)
              { apply(previous, world_ref); },
              [apply, value](resonate::ecs::World& world_ref) { apply(value, world_ref); });
@@ -1182,7 +1194,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                 out << xml;
                 std::string status_error;
                 (void)resonate::ui::setText(world, state->canvas, state->status,
-                                            "已保存 场景", status_error);
+                                            localized("editor.saved"), status_error);
             }
             else
             {
@@ -1203,8 +1215,9 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     /* The status bar's second and third segments: the object count and a
        smoothed frame rate, reshaped only when the shown text changes. */
     char bar_text[32] = {};
-    std::snprintf(bar_text, sizeof(bar_text), "%u 个对象",
-                  static_cast<unsigned>(state->box_rows.size()));
+    std::snprintf(bar_text, sizeof(bar_text), "%u %s",
+                  static_cast<unsigned>(state->box_rows.size()),
+                  localized("editor.objects").c_str());
     if (state->shown_count != bar_text)
     {
         state->shown_count = bar_text;
@@ -1299,7 +1312,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
             pointer != nullptr)
         {
             const auto track = [&](EditorState::ScrubUndo& undo, const EditorState::Scrub& scrub,
-                                   const float current, const char* name)
+                                   const float current, const std::string& name)
             {
                 const bool dragging = pointer->down && pointer->press == scrub.handle;
                 if (dragging && !undo.dragging)
@@ -1319,8 +1332,8 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                 }
                 undo.dragging = dragging;
             };
-            track(state->roughness_undo, state->roughness, state->roughness.shown, "粗糙度");
-            track(state->metallic_undo, state->metallic, state->metallic.shown, "金属度");
+            track(state->roughness_undo, state->roughness, state->roughness.shown, localized("editor.property.roughness"));
+            track(state->metallic_undo, state->metallic, state->metallic.shown, localized("editor.property.metallic"));
         }
 
         applyMaterials(*state, world, selected);
@@ -1371,7 +1384,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                                                 name, name_error);
                     state->mirrored_name = name;
                 };
-                pushUndo(*state, "名称",
+                pushUndo(*state, localized("editor.rename"),
                          [apply_name, previous](resonate::ecs::World& world_ref)
                          { apply_name(previous, world_ref); },
                          [apply_name, current](resonate::ecs::World& world_ref)
@@ -1393,7 +1406,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
             }
             state->mirrored_name = field_text;
             (void)resonate::ui::setText(world, state->canvas, state->status,
-                                        "已选择 " + field_text, error);
+                                        localized("editor.selected") + " " + field_text, error);
         }
         /* The position fields write the selected object's LocalTransform. */
         const Entity entity = entityOfRow(*state, selected);
@@ -1428,7 +1441,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         }
         (void)resonate::ui::setText(world, state->canvas, state->name_field, name, error);
         state->mirrored_name = name;
-        (void)resonate::ui::setText(world, state->canvas, state->status, "已选择 " + name, error);
+        (void)resonate::ui::setText(world, state->canvas, state->status, localized("editor.selected") + " " + name, error);
         seedMaterial(*state, world, entity);
         const resonate::hierarchy::LocalTransform* transform =
             entity.valid()
@@ -1440,7 +1453,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         (void)resonate::ui::setText(world, state->canvas, state->name_field, "", error);
         state->mirrored_name.clear();
-        (void)resonate::ui::setText(world, state->canvas, state->status, "未选择", error);
+        (void)resonate::ui::setText(world, state->canvas, state->status, localized("editor.no_selection"), error);
         seedPosition(*state, world, nullptr);
     }
 }
@@ -1561,7 +1574,7 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
             std::string name = resonate::hierarchy::nameOf(world, boxes[index]);
             if (name.empty())
             {
-                name = "箱子 " + std::to_string(index + 1U);
+                name = localized("editor.object_fallback") + " " + std::to_string(index + 1U);
             }
             return name;
         };

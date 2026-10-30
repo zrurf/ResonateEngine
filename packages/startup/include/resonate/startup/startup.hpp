@@ -19,6 +19,11 @@
 #include <resonate/dom/schema.h>
 #include <resonate/window/input.h>
 
+namespace resonate::ui
+{
+class StringTable;
+}
+
 namespace resonate::startup
 {
 
@@ -70,6 +75,12 @@ struct HostExtension
    the demo was loaded with. */
 [[nodiscard]] const dom::SchemaRegistry& contentSchema();
 [[nodiscard]] const dom::ComponentRegistry& contentComponents();
+
+/* The run's UI string table (content/ui/strings.rstrings), or null when the
+   run loaded none. Markup resolves "#key" against it while the document is
+   instantiated; a host looks up the keys it composes at runtime. Valid from
+   composition until run() returns. */
+[[nodiscard]] const ui::StringTable* stringTable();
 
 /* Parses the command line, composes a windowed or an offscreen run, and returns
    the process exit code. `default_title` names the window when the command line

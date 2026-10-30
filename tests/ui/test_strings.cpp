@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <vector>
@@ -118,3 +120,32 @@ TEST_CASE("ui strings: markup keys resolve through the table", "[ui][strings]")
     REQUIRE(fallback_children.size() == 1U);
     CHECK(labelText(plain.world, fallback_children[0]) == "ui.demo.title");
 }
+
+TEST_CASE("ui strings: the content table parses and carries the editor keys",
+          "[ui][strings]")
+{
+    std::ifstream in(std::string(RESONATE_SOURCE_DIR) + "/content/ui/strings.rstrings",
+                     std::ios::binary);
+    REQUIRE(in.is_open());
+    const std::string xml((std::istreambuf_iterator<char>(in)),
+                          std::istreambuf_iterator<char>());
+    std::string error;
+    auto table = resonate::ui::StringTable::parse(xml, error);
+    REQUIRE(table != nullptr);
+    CHECK(error.empty());
+
+    /* Every key the editor composes at runtime: a typo in the resource would
+       otherwise only show up as the raw key in a status line. */
+    for (const char* key : {"editor.undo", "editor.redo", "editor.saved", "editor.deleted",
+                            "editor.copied", "editor.delete", "editor.duplicate",
+                            "editor.copy_suffix", "editor.rename", "editor.selected",
+                            "editor.no_selection", "editor.objects", "editor.object_fallback",
+                            "editor.axis.x", "editor.axis.y", "editor.axis.z",
+                            "editor.property.roughness", "editor.property.metallic",
+                            "editor.property.opacity"})
+    {
+        INFO("key " << key);
+        CHECK(table->find(key) != nullptr);
+    }
+}
+

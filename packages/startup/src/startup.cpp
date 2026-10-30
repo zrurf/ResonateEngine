@@ -594,6 +594,12 @@ const dom::ComponentRegistry& contentComponents()
 namespace
 {
 
+/* The run's UI string table: composition parses it, markup resolves its keys
+   while the document instantiates, and a host reads message keys from it at
+   runtime. Owned for the process because those messages outlive the frame
+   loop's setup. */
+std::unique_ptr<ui::StringTable> g_ui_strings;
+
 /* Content lives beside the executable in a shipped layout and in the project
    tree during development; the walk covers both. */
 std::string findContentFile(const std::string& relative)
@@ -988,6 +994,11 @@ std::string resolveManagedPath(const std::string& path)
 #endif
 
 } // namespace
+
+const ui::StringTable* stringTable()
+{
+    return g_ui_strings.get();
+}
 
 DisplayOptions displayOptionsFromCommandLine(const std::vector<std::string>& arguments)
 {
@@ -1409,7 +1420,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
                                                     file.string());
                 }
             }
-            std::unique_ptr<ui::StringTable> ui_strings;
+            g_ui_strings.reset();
             const std::string strings_path =
                 resolveContentFile("content/ui/strings.rstrings", "RESONATE_STRINGS_PATH");
             if (!strings_path.empty())
@@ -1417,7 +1428,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
                 std::string xml;
                 std::string strings_error;
                 if (!readTextFile(strings_path, xml) ||
-                    (ui_strings = ui::StringTable::parse(xml, strings_error)) == nullptr)
+                    (g_ui_strings = ui::StringTable::parse(xml, strings_error)) == nullptr)
                 {
                     std::fprintf(stderr, "resonate: ui strings: %s\n",
                                  strings_error.empty() ? strings_path.c_str()
@@ -1448,7 +1459,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
             ui_frame.keys = extension.keys;
             ui_frame.keys_context = extension.keys_context;
             ui_frame.canvas = loadDemoHud(world, ui_document, ui_document_required, *ui_text,
-                                          ui_strings.get(), ui_images.get(), ui_icons.get());
+                                          g_ui_strings.get(), ui_images.get(), ui_icons.get());
             if (!ui_frame.canvas.valid())
             {
                 return RESONATE_E_INVALID;
