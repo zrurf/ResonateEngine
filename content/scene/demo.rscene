@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <document version="1" schemas="resonate.scene">
   <!-- The demo's scene: one root, the camera and sun, the ground plane and the
-       nine checker boxes. The 12x12 light grid stays procedural (a rendering
-       stress fixture, not content), and the middle box's state machine is
-       attached by key at start-up -- data-driven animation authoring comes
-       with the animation schema. -->
+       nine checker boxes. The middle box's state machine is attached by key at
+       start-up -- data-driven animation authoring comes with the animation
+       schema. -->
 
   <Scene key="demo">
     <Object key="scene-root" name="动作演示">

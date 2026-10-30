@@ -2,6 +2,8 @@
 
 #include <array>
 #include <cmath>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 #include <resonate/core/allocator.h>
@@ -243,6 +245,117 @@ TEST_CASE("scene: a capture round trips through a second instantiate", "[scene]"
     REQUIRE(second_lid.valid());
     CHECK(resonate::hierarchy::parentOf(second, second_lid) == second_crate);
     CHECK(resonate::hierarchy::nameOf(second, second_lid) == "箱盖");
+}
+
+TEST_CASE("scene: a capture keeps a texture reference as an asset id", "[scene]")
+{
+    constexpr const char* kTextured = R"xml(<document version="1" schemas="resonate.scene">
+  <Scene key="yard">
+    <Object key="yard-root">
+      <Object key="crate">
+        <MeshInstance mesh="1"/>
+        <Material texture="@0704c7df-7013-4c31-818d-b515207bb7df"/>
+      </Object>
+      <Object key="lid">
+        <MeshInstance mesh="1"/>
+        <Material texture="@0704c7df-7013-4c31-818d-b515207bb7df:3"/>
+      </Object>
+    </Object>
+  </Scene>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kTextured, &sceneSchemas(), diagnostics);
+    REQUIRE(document != nullptr);
+
+    Fixture fixture;
+    REQUIRE(resonate::ui::registerComponents(fixture.world));
+    Entity root{};
+    std::string error;
+    REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
+                                         error));
+    const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
+    REQUIRE(crate.valid());
+    const auto* reference = fixture.world.get<resonate::render::TextureRef>(crate);
+    REQUIRE(reference != nullptr);
+    CHECK(reference->sub_id == 1U);
+
+    std::string xml;
+    REQUIRE(resonate::scene::capture(fixture.world, root, xml, error));
+    CHECK(xml.find("texture=\"@0704c7df-7013-4c31-818d-b515207bb7df\"") != std::string::npos);
+    CHECK(xml.find("texture=\"@0704c7df-7013-4c31-818d-b515207bb7df:3\"") != std::string::npos);
+
+    /* The capture instantiates back to the same references, not to slots. */
+    auto captured = resonate::dom::Document::parse(xml, &sceneSchemas(), diagnostics);
+    REQUIRE(captured != nullptr);
+    World second{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(second));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
+    REQUIRE(resonate::ui::registerComponents(second));
+    Entity second_root{};
+    REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
+                                         error));
+    const Entity second_lid = resonate::scene::findByKey(second, second_root, "lid");
+    REQUIRE(second_lid.valid());
+    const auto* second_reference = second.get<resonate::render::TextureRef>(second_lid);
+    REQUIRE(second_reference != nullptr);
+    CHECK(second_reference->sub_id == 3U);
+    CHECK(second_reference->guid_high == reference->guid_high);
+}
+
+TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[scene]")
+{
+    std::string text;
+    {
+        std::ifstream in(std::string(RESONATE_SOURCE_DIR) + "/content/scene/demo.rscene",
+                         std::ios::binary);
+        REQUIRE(in.is_open());
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &sceneSchemas(), diagnostics);
+    REQUIRE(document != nullptr);
+
+    Fixture fixture;
+    REQUIRE(resonate::ui::registerComponents(fixture.world));
+    Entity root{};
+    std::string error;
+    REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
+                                         error));
+
+    /* The editor's save writes this capture back over the authored file: every
+       material's asset reference must survive it. A resolved reference has no
+       slot number (texture stays 0 until the renderer resolves it), so a
+       writer that only knew slots would drop the texture entirely. */
+    std::string xml;
+    REQUIRE(resonate::scene::capture(fixture.world, root, xml, error));
+    constexpr const char* kReference = "texture=\"@0704c7df-7013-4c31-818d-b515207bb7df\"";
+    std::size_t references = 0;
+    for (std::size_t at = xml.find(kReference); at != std::string::npos;
+         at = xml.find(kReference, at + 1U))
+    {
+        ++references;
+    }
+    CHECK(references == 9U);
+
+    auto captured = resonate::dom::Document::parse(xml, &sceneSchemas(), diagnostics);
+    REQUIRE(captured != nullptr);
+    World second{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(second));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
+    REQUIRE(resonate::ui::registerComponents(second));
+    Entity second_root{};
+    REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
+                                         error));
+    for (const char* const key : {"box-a1", "box-a2", "box-a3", "box-b1", "box-center",
+                                  "box-b3", "box-c1", "box-c2", "box-c3"})
+    {
+        INFO("key " << key);
+        const Entity box = resonate::scene::findByKey(second, second_root, key);
+        REQUIRE(box.valid());
+        CHECK(second.get<resonate::render::TextureRef>(box) != nullptr);
+    }
+    CHECK(second.get<resonate::render::TextureRef>(
+              resonate::scene::findByKey(second, second_root, "ground")) == nullptr);
 }
 
 TEST_CASE("scene: a malformed document is refused with a reason", "[scene]")

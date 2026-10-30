@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <string>
 
+#include <resonate/asset/identity.h>
 #include <resonate/hierarchy/name.h>
 #include <resonate/hierarchy/tree.h>
 
@@ -164,10 +165,27 @@ void appendComponents(std::string& out, ecs::World& world, ecs::Entity entity)
     if (const auto* material = world.get<render::Material>(entity); material != nullptr)
     {
         std::string attributes;
-        if (material->texture != 0U)
+        /* A resolved reference is written back as the authoring form, not as
+           the slot it resolved to: the slot depends on allocation order. */
+        std::string texture;
+        if (const auto* reference = world.get<render::TextureRef>(entity);
+            reference != nullptr && reference->sub_id != 0U)
         {
-            appendAttribute(attributes, "texture",
-                            formatFloat(static_cast<float>(material->texture)));
+            const asset::AssetId id{reference->guid_low, reference->guid_high,
+                                    reference->sub_id};
+            texture = "@" + asset::formatGuid(id);
+            if (reference->sub_id != 1U)
+            {
+                texture += ":" + std::to_string(reference->sub_id);
+            }
+        }
+        else if (material->texture != 0U)
+        {
+            texture = formatFloat(static_cast<float>(material->texture));
+        }
+        if (!texture.empty())
+        {
+            appendAttribute(attributes, "texture", texture);
         }
         if (!isDefault(material->tint, 1.0F, 1.0F, 1.0F))
         {

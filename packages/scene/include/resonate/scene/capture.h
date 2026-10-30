@@ -6,8 +6,9 @@
  * document. Keys come from the SourceKey each instantiated object carries,
  * names from Name, and the scene schema's composed components are written with
  * only the fields that differ from their schema defaults, so a capture reads
- * like the document it came from. Procedural entities outside the subtree
- * (the demo's light grid) are not written.
+ * like the document it came from. Entities outside the subtree are not
+ * written; a resolved texture reference is written back as its asset id, never
+ * as the slot it happened to occupy.
  */
 
 #include <string>

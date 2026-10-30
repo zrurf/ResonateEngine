@@ -857,8 +857,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         state->save_pending = false;
         /* Any scene object reaches the root: the capture walks the subtree of
-           the demo document, and the procedural light grid (outside it) stays
-           procedural. */
+           the demo document. */
         Entity any_object{};
         for (const auto& [row, box] : state->box_rows)
         {
