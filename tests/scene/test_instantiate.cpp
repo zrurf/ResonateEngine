@@ -324,12 +324,11 @@ TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[sce
                                          error));
 
     /* The editor's save writes this capture back over the authored file: every
-       material's asset reference must survive it. A resolved reference has no
-       slot number (texture stays 0 until the renderer resolves it), so a
-       writer that only knew slots would drop the texture entirely. */
+       material's asset reference must survive it, and an alias stays an alias
+       instead of expanding to the id nine times. */
     std::string xml;
     REQUIRE(resonate::scene::capture(fixture.world, root, xml, error));
-    constexpr const char* kReference = "texture=\"@0704c7df-7013-4c31-818d-b515207bb7df\"";
+    constexpr const char* kReference = "texture=\"#checker\"";
     std::size_t references = 0;
     for (std::size_t at = xml.find(kReference); at != std::string::npos;
          at = xml.find(kReference, at + 1U))
@@ -337,6 +336,9 @@ TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[sce
         ++references;
     }
     CHECK(references == 9U);
+    CHECK(xml.find("<Resource key=\"checker\" "
+                   "asset=\"@0704c7df-7013-4c31-818d-b515207bb7df\"/>") != std::string::npos);
+    CHECK(xml.find("texture=\"@") == std::string::npos);
 
     auto captured = resonate::dom::Document::parse(xml, &sceneSchemas(), diagnostics);
     REQUIRE(captured != nullptr);
@@ -401,6 +403,71 @@ TEST_CASE("scene: a captured subtree reinstantiates under its old parent", "[sce
     const Entity lid = resonate::scene::findByKey(fixture.world, root, "lid");
     REQUIRE(lid.valid());
     CHECK(resonate::hierarchy::parentOf(fixture.world, lid) == restored);
+}
+
+TEST_CASE("scene: a Resources alias stands for an asset id", "[scene]")
+{
+    constexpr const char* kAliased = R"xml(<document version="1" schemas="resonate.scene">
+  <Scene key="yard">
+    <Resources>
+      <Resource key="checker" asset="@0704c7df-7013-4c31-818d-b515207bb7df"/>
+    </Resources>
+    <Object key="crate">
+      <MeshInstance mesh="1"/>
+      <Material texture="#checker"/>
+    </Object>
+  </Scene>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kAliased, &sceneSchemas(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    Fixture fixture;
+    REQUIRE(resonate::ui::registerComponents(fixture.world));
+    Entity root{};
+    std::string error;
+    REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
+                                         error));
+    const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
+    REQUIRE(crate.valid());
+    const auto* reference = fixture.world.get<resonate::render::TextureRef>(crate);
+    REQUIRE(reference != nullptr);
+    CHECK(reference->sub_id == 1U);
+    CHECK((reference->guid_low != 0U || reference->guid_high != 0U));
+    const auto* alias = fixture.world.get<resonate::scene::TextureAlias>(crate);
+    REQUIRE(alias != nullptr);
+    const std::string_view alias_text(
+        static_cast<const char*>(fixture.world.blobData(alias->text)),
+        fixture.world.blobSize(alias->text));
+    CHECK(alias_text == "checker");
+
+    /* The capture keeps the name and writes the table it came from, so the
+       document does not grow a guid per material. */
+    std::string xml;
+    REQUIRE(resonate::scene::capture(fixture.world, root, xml, error));
+    CHECK(xml.find("texture=\"#checker\"") != std::string::npos);
+    CHECK(xml.find("<Resource key=\"checker\" "
+                   "asset=\"@0704c7df-7013-4c31-818d-b515207bb7df\"/>") != std::string::npos);
+
+    /* A name the table lacks is refused, and the message names it. */
+    constexpr const char* kMissing = R"xml(<document version="1" schemas="resonate.scene">
+  <Scene key="yard">
+    <Object key="crate">
+      <Material texture="#missing"/>
+    </Object>
+  </Scene>
+</document>)xml";
+    auto broken = resonate::dom::Document::parse(kMissing, &sceneSchemas(), diagnostics);
+    REQUIRE(broken != nullptr);
+    World second{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(second));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
+    REQUIRE(resonate::ui::registerComponents(second));
+    Entity broken_root{};
+    CHECK_FALSE(resonate::scene::instantiate(second, *broken, &sceneComponents(), broken_root,
+                                             error));
+    CHECK(error.find("missing") != std::string::npos);
 }
 
 TEST_CASE("scene: a malformed document is refused with a reason", "[scene]")

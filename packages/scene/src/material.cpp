@@ -6,6 +6,7 @@
 #include <resonate/document_bind/bind.h>
 
 #include "resonate.render/components.gen.h"
+#include "resonate.scene/components.gen.h"
 
 namespace resonate::scene
 {
@@ -33,46 +34,82 @@ bool parseU32(std::string_view text, std::uint32_t& out)
 
 } // namespace
 
+bool parseAssetId(std::string_view text, asset::AssetId& out, std::string& error)
+{
+    if (!text.empty() && text.front() == '@')
+    {
+        text.remove_prefix(1U);
+    }
+    std::string_view guid = text;
+    std::uint32_t sub_id = 1U;
+    const std::size_t colon = text.find(':');
+    if (colon != std::string_view::npos)
+    {
+        guid = text.substr(0U, colon);
+        if (!parseU32(text.substr(colon + 1U), sub_id))
+        {
+            error = "the sub id is not a number";
+            return false;
+        }
+    }
+    asset::AssetId parsed;
+    if (!asset::parseGuid(guid, parsed))
+    {
+        error = "the value is not an asset id";
+        return false;
+    }
+    parsed.sub_id = sub_id;
+    out = parsed;
+    return true;
+}
+
 bool applyMaterial(ecs::World& world, const dom::Document& document,
                    const dom::Component& component, const dom::ComponentDesc& descriptor,
-                   ecs::Entity entity, std::string& error)
+                   const ResourceAliases* aliases, ecs::Entity entity, std::string& error)
 {
     /* The generated struct carries the schema defaults; authored fields
        overwrite them. */
     render::Material material;
     render::TextureRef reference;
     bool has_reference = false;
+    std::string alias_text;
     for (const dom::Field& field : component.fields)
     {
         const std::string_view name = document.text(field.name);
-        if (name == "texture" && !field.value.empty() && field.value.front() == '@')
+        if (name == "texture" && !field.value.empty() &&
+            (field.value.front() == '@' || field.value.front() == '#'))
         {
-            /* "@<guid>[:<sub>]": an asset id the renderer resolves through the
-               products manifest its textures were cooked with. */
-            std::string_view id = field.value; /* the view borrows the owned field text */
-            id.remove_prefix(1U);
-            const std::size_t colon = id.find(':');
-            std::string_view guid = id;
-            if (colon != std::string_view::npos)
+            asset::AssetId id;
+            if (field.value.front() == '#')
             {
-                id = id.substr(colon + 1U);
-                guid = guid.substr(0U, colon);
+                alias_text = std::string(field.value.substr(1U));
+                if (aliases == nullptr)
+                {
+                    error = "Material.texture: '" + field.value +
+                            "' needs a Resources block";
+                    return false;
+                }
+                const auto found = aliases->find(alias_text);
+                if (found == aliases->end())
+                {
+                    error = "Material.texture: no resource '" + alias_text +
+                            "' in the Resources block";
+                    return false;
+                }
+                id = found->second;
             }
-            std::uint32_t sub_id = 1U;
-            if (colon != std::string_view::npos && !parseU32(id, sub_id))
+            else
             {
-                error = "Material.texture: the sub id is not a number";
-                return false;
+                std::string id_error;
+                if (!parseAssetId(field.value, id, id_error))
+                {
+                    error = "Material.texture: " + id_error;
+                    return false;
+                }
             }
-            resonate::asset::AssetId asset;
-            if (!resonate::asset::parseGuid(guid, asset))
-            {
-                error = "Material.texture: the value is not an asset id or a slot";
-                return false;
-            }
-            reference.guid_low = asset.guid_low;
-            reference.guid_high = asset.guid_high;
-            reference.sub_id = sub_id;
+            reference.guid_low = id.guid_low;
+            reference.guid_high = id.guid_high;
+            reference.sub_id = id.sub_id;
             has_reference = true;
             continue;
         }
@@ -105,6 +142,16 @@ bool applyMaterial(ecs::World& world, const dom::Document& document,
     {
         error = "TextureRef could not be attached";
         return false;
+    }
+    if (!alias_text.empty())
+    {
+        const ecs::BlobHandle text =
+            world.createBlob(entity, alias_text.size(), alias_text.data());
+        if (!text.valid() || world.add(entity, TextureAlias{text}) == nullptr)
+        {
+            error = "TextureAlias could not be attached";
+            return false;
+        }
     }
     return true;
 }

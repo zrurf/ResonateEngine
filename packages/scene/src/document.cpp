@@ -52,8 +52,8 @@ bool attachKey(ecs::World& world, ecs::Entity entity, std::uint64_t hash, std::s
 
 ecs::Entity instantiateObject(ecs::World& world, const dom::Document& document,
                               dom::NodeHandle node, const dom::ComponentRegistry* components,
-                              ecs::CommandBuffer& commands, const ecs::Entity parent,
-                              std::string& error)
+                              const ResourceAliases* aliases, ecs::CommandBuffer& commands,
+                              const ecs::Entity parent, std::string& error)
 {
     const ecs::Entity entity = world.create();
     if (!entity.valid())
@@ -111,7 +111,7 @@ ecs::Entity instantiateObject(ecs::World& world, const dom::Document& document,
                         std::string(component_name) + "' is not in the registry";
                 return ecs::Entity{};
             }
-            if (!applyMaterial(world, document, component, *descriptor, entity, error))
+            if (!applyMaterial(world, document, component, *descriptor, aliases, entity, error))
             {
                 error = "node '" + std::string(nodeLabel(document, node)) + "': " + error;
                 return ecs::Entity{};
@@ -143,13 +143,55 @@ ecs::Entity instantiateObject(ecs::World& world, const dom::Document& document,
                                                                             "are Objects";
             return ecs::Entity{};
         }
-        if (!instantiateObject(world, document, child, components, commands, entity, error)
+        if (!instantiateObject(world, document, child, components, aliases, commands, entity,
+                               error)
                  .valid())
         {
             return ecs::Entity{};
         }
     }
     return entity;
+}
+
+/* The Resources block a Scene may start with: every Resource key mapped to the
+   asset its `asset` attribute names. A document without one answers an empty
+   table. */
+bool collectAliases(dom::Document& document, dom::NodeHandle scene, ResourceAliases& out,
+                    std::string& error)
+{
+    const dom::StringId asset_property = document.intern("asset");
+    for (dom::NodeHandle child = document.firstChild(scene); child.valid();
+         child = document.nextSibling(child))
+    {
+        if (document.text(document.type(child)) != "Resources")
+        {
+            continue;
+        }
+        for (dom::NodeHandle entry = document.firstChild(child); entry.valid();
+             entry = document.nextSibling(entry))
+        {
+            if (document.text(document.type(entry)) != "Resource")
+            {
+                continue;
+            }
+            const dom::StringId key = document.key(entry);
+            const dom::Field* asset = document.property(entry, asset_property);
+            if (key == dom::kInvalidString || asset == nullptr || asset->value.empty())
+            {
+                error = "a Resources entry needs a key and an asset";
+                return false;
+            }
+            asset::AssetId id;
+            std::string id_error;
+            if (!parseAssetId(asset->value, id, id_error))
+            {
+                error = "resource '" + std::string(document.text(key)) + "': " + id_error;
+                return false;
+            }
+            out[std::string(document.text(key))] = id;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -194,11 +236,13 @@ bool instantiateUnder(ecs::World& world, dom::Document& document,
                       ecs::Entity& out_root, std::string& error)
 {
     out_root = ecs::Entity{};
-    /* SourceKey rides on every keyed object; registration is idempotent, and a
-       world that already registered it (a second scene, a reload) reuses it. */
-    if (world.registerComponent<SourceKey>() == ecs::kInvalidComponent)
+    /* The adapter's own components ride on keyed objects and aliased materials;
+       registration is idempotent, and a world that already registered them (a
+       second scene, a reload) reuses them. */
+    if (world.registerComponent<SourceKey>() == ecs::kInvalidComponent ||
+        world.registerComponent<TextureAlias>() == ecs::kInvalidComponent)
     {
-        error = "the SourceKey component could not be registered";
+        error = "the scene components could not be registered";
         return false;
     }
     const dom::NodeHandle root = document.root();
@@ -214,12 +258,29 @@ bool instantiateUnder(ecs::World& world, dom::Document& document,
     }
 
     ecs::CommandBuffer commands(world);
+    ResourceAliases aliases;
+    if (!collectAliases(document, root, aliases, error))
+    {
+        return false;
+    }
     ecs::Entity first{};
     for (dom::NodeHandle child = document.firstChild(root); child.valid();
          child = document.nextSibling(child))
     {
+        /* The alias table is not an object: it was read before the walk. */
+        if (document.text(document.type(child)) == "Resources")
+        {
+            continue;
+        }
+        if (document.text(document.type(child)) != "Object")
+        {
+            error = "node '" + std::string(nodeLabel(document, child)) +
+                    "': a Scene holds Objects and one Resources block";
+            return false;
+        }
         const ecs::Entity entity =
-            instantiateObject(world, document, child, components, commands, parent, error);
+            instantiateObject(world, document, child, components, &aliases, commands, parent,
+                              error);
         if (!entity.valid())
         {
             return false;

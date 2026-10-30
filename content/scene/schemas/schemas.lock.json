@@ -15,6 +15,23 @@
       ]
     },
     {
+      "name": "Resource",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Resource version 1",
+        "  field asset string"
+      ]
+    },
+    {
+      "name": "Resources",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Resources version 1"
+      ]
+    },
+    {
       "name": "Scene",
       "kind": "node",
       "version": 1,
@@ -28,6 +45,16 @@
       "version": 1,
       "shape": [
         "component SourceKey version 1",
+        "  size 8 align 4",
+        "  field text blob @0 size 8"
+      ]
+    },
+    {
+      "name": "TextureAlias",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component TextureAlias version 1",
         "  size 8 align 4",
         "  field text blob @0 size 8"
       ]

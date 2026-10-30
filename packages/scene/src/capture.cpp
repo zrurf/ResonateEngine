@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <string>
 
 #include <resonate/asset/identity.h>
@@ -166,10 +167,16 @@ void appendComponents(std::string& out, ecs::World& world, ecs::Entity entity)
     {
         std::string attributes;
         /* A resolved reference is written back as the authoring form, not as
-           the slot it resolved to: the slot depends on allocation order. */
+           the slot it resolved to: the slot depends on allocation order. An
+           alias is shorter and is what the document said. */
         std::string texture;
-        if (const auto* reference = world.get<render::TextureRef>(entity);
-            reference != nullptr && reference->sub_id != 0U)
+        if (const auto* alias = world.get<TextureAlias>(entity);
+            alias != nullptr && !blobText(world, alias->text).empty())
+        {
+            texture = "#" + std::string(blobText(world, alias->text));
+        }
+        else if (const auto* reference = world.get<render::TextureRef>(entity);
+                 reference != nullptr && reference->sub_id != 0U)
         {
             const asset::AssetId id{reference->guid_low, reference->guid_high,
                                     reference->sub_id};
@@ -260,6 +267,28 @@ void appendComponents(std::string& out, ecs::World& world, ecs::Entity entity)
     }
 }
 
+/* The aliases a subtree references: a material authored through "#name" names
+   the asset its TextureRef resolved to, so the capture can write one Resource
+   per name it uses. Sorted by name for a stable document. */
+void collectAliases(ecs::World& world, ecs::Entity entity,
+                    std::map<std::string, asset::AssetId>& out)
+{
+    if (const auto* alias = world.get<TextureAlias>(entity); alias != nullptr)
+    {
+        const std::string_view name = blobText(world, alias->text);
+        const auto* reference = world.get<render::TextureRef>(entity);
+        if (!name.empty() && reference != nullptr)
+        {
+            out[std::string(name)] = asset::AssetId{reference->guid_low, reference->guid_high,
+                                                    reference->sub_id};
+        }
+    }
+    for (const ecs::Entity child : hierarchy::children(world, entity))
+    {
+        collectAliases(world, child, out);
+    }
+}
+
 void appendObject(std::string& out, ecs::World& world, ecs::Entity entity, std::size_t depth)
 {
     const std::string indent(static_cast<std::size_t>(4 + depth * 2U), ' ');
@@ -313,6 +342,23 @@ bool capture(ecs::World& world, ecs::Entity root, std::string& out_xml, std::str
     out_xml += "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
     out_xml += "<document version=\"1\" schemas=\"resonate.scene\">\n";
     out_xml += "  <Scene>\n";
+    std::map<std::string, asset::AssetId> aliases;
+    collectAliases(world, root, aliases);
+    if (!aliases.empty())
+    {
+        out_xml += "    <Resources>\n";
+        for (const auto& [name, id] : aliases)
+        {
+            std::string asset_text = "@" + asset::formatGuid(id);
+            if (id.sub_id != 1U)
+            {
+                asset_text += ":" + std::to_string(id.sub_id);
+            }
+            out_xml += "      <Resource key=\"" + escaped(name) + "\" asset=\"" + asset_text +
+                       "\"/>\n";
+        }
+        out_xml += "    </Resources>\n";
+    }
     appendObject(out_xml, world, root, 0U);
     out_xml += "  </Scene>\n";
     out_xml += "</document>\n";

@@ -9,13 +9,29 @@
        names no component layout of its own. -->
 
   <!-- A scene document's root. It is not an entity; its Object children are
-       the scene's roots. -->
+       the scene's roots, and an optional Resources block names the assets
+       those objects reference. -->
   <node name="Scene" version="1"/>
+
+  <!-- The alias table: a name a document references as "#name", mapped to the
+       asset it stands for, so a repeated asset is written once. -->
+  <node name="Resources" version="1"/>
+
+  <node name="Resource" version="1">
+    <field name="asset" type="string"/>
+  </node>
 
   <!-- The document key an object was instantiated from, kept as text so a
        capture writes the same key back. Runtime data the adapter attaches;
        the binder refuses blobs, so a document cannot author it. -->
   <component name="SourceKey" version="1" derived="true">
+    <field name="text" type="blob"/>
+  </component>
+
+  <!-- The alias a material's texture was authored through, kept as text so a
+       capture writes the reference back as "#name" rather than the asset id it
+       resolved to. Runtime data the adapter attaches. -->
+  <component name="TextureAlias" version="1" derived="true">
     <field name="text" type="blob"/>
   </component>
 
