@@ -714,6 +714,35 @@ bool redoEdit(void* context, resonate::ecs::World&, resonate::ecs::Entity,
     return true;
 }
 
+/* The editor's keyboard pass: Ctrl+Z and Ctrl+Y reach the same undo and redo
+   the toolbar buttons run, unless a text field owns the keys (the field's own
+   editing history is not the scene's). */
+bool editorKeys(void* context, resonate::ecs::World& world, const ResonateInput* input)
+{
+    auto* state = static_cast<EditorState*>(context);
+    if (input == nullptr || resonate::ui::focusedTextEditable(world, state->canvas))
+    {
+        return false;
+    }
+    const bool ctrl = input->key_down(input->self, RESONATE_KEY_LCTRL) != 0 ||
+                      input->key_down(input->self, RESONATE_KEY_RCTRL) != 0;
+    if (!ctrl)
+    {
+        return false;
+    }
+    if (input->key_pressed(input->self, RESONATE_KEY_Z) != 0)
+    {
+        state->undo_pending = true;
+        return true;
+    }
+    if (input->key_pressed(input->self, RESONATE_KEY_Y) != 0)
+    {
+        state->redo_pending = true;
+        return true;
+    }
+    return false;
+}
+
 /* A pane toggle flips its flag, re-derives the geometry and records the result
    at once: a click is deliberate, unlike a drag that settles first. */
 void togglePane(EditorState& state, resonate::ecs::World& world, bool Layout::*flag)
@@ -857,7 +886,8 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         state->save_pending = false;
         /* Any scene object reaches the root: the capture walks the subtree of
-           the demo document. */
+           the demo document, and the procedural light grid (outside it) stays
+           procedural. */
         Entity any_object{};
         for (const auto& [row, box] : state->box_rows)
         {
@@ -1321,6 +1351,8 @@ int runEditor(const std::vector<std::string>& arguments)
                                                            &state});
     extension.ready = &ready;
     extension.ready_context = &state;
+    extension.keys = &editorKeys;
+    extension.keys_context = &state;
     return resonate::startup::run(editor_arguments, "Resonate Editor", extension);
 }
 

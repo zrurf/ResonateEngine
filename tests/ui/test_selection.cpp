@@ -206,6 +206,115 @@ TEST_CASE("ui selection: the highlight draws behind the glyphs", "[ui][text][sel
     CHECK(highlighted_width > metrics->advance * 0.9F);
 }
 
+TEST_CASE("ui selection: shift arrows grow and shrink the range", "[ui][text][selection]")
+{
+    Fixture fixture;
+    SelectionFixture selection(fixture.world);
+    const float mid_y = selection.rect.y + selection.rect.height * 0.5F;
+    REQUIRE(resonate::ui::updateInput(selection.world, selection.root, selection.rect.x + 1.0F,
+                                      mid_y, true));
+    REQUIRE(resonate::ui::updateInput(selection.world, selection.root, selection.rect.x + 1.0F,
+                                      mid_y, false));
+
+    std::uint32_t select_begin = 0U;
+    std::uint32_t select_end = 0U;
+    REQUIRE(resonate::ui::moveCaret(selection.world, selection.root,
+                                    resonate::ui::CaretMotion::Right, true));
+    REQUIRE(resonate::ui::moveCaret(selection.world, selection.root,
+                                    resonate::ui::CaretMotion::Right, true));
+    REQUIRE(resonate::ui::selectionRange(selection.world, selection.field, select_begin,
+                                         select_end));
+    CHECK(select_begin == 0U);
+    CHECK(select_end == 2U);
+
+    /* Shift+Left shrinks the same range from the moving edge. */
+    REQUIRE(resonate::ui::moveCaret(selection.world, selection.root,
+                                    resonate::ui::CaretMotion::Left, true));
+    REQUIRE(resonate::ui::selectionRange(selection.world, selection.field, select_begin,
+                                         select_end));
+    CHECK(select_begin == 0U);
+    CHECK(select_end == 1U);
+
+    /* Shift+End keeps the anchor and takes the caret to the end. */
+    REQUIRE(resonate::ui::moveCaret(selection.world, selection.root,
+                                    resonate::ui::CaretMotion::End, true));
+    REQUIRE(resonate::ui::selectionRange(selection.world, selection.field, select_begin,
+                                         select_end));
+    CHECK(select_begin == 0U);
+    CHECK(select_end == selection.content().size());
+
+    std::string error;
+    REQUIRE(resonate::ui::updateTextInput(selection.world, selection.root, selection.runtime, "X",
+                                          false, false, error));
+    CHECK(selection.content() == "X");
+}
+
+TEST_CASE("ui selection: word motions step over separator runs", "[ui][text][selection]")
+{
+    Fixture fixture;
+    SelectionFixture selection(fixture.world);
+    const float mid_y = selection.rect.y + selection.rect.height * 0.5F;
+    REQUIRE(resonate::ui::updateInput(selection.world, selection.root, selection.rect.x + 1.0F,
+                                      mid_y, true));
+    REQUIRE(resonate::ui::updateInput(selection.world, selection.root, selection.rect.x + 1.0F,
+                                      mid_y, false));
+
+    /* "hello world": caret at 0, the word motions land at the ends of the
+       words and at their starts on the way back. */
+    const auto caret = [&]()
+    {
+        const resonate::ui::TextCaret* component =
+            selection.world.get<resonate::ui::TextCaret>(selection.field);
+        REQUIRE(component != nullptr);
+        return component->offset;
+    };
+    REQUIRE(resonate::ui::moveCaret(selection.world, selection.root,
+                                    resonate::ui::CaretMotion::WordRight));
+    CHECK(caret() == 5U);
+    REQUIRE(resonate::ui::moveCaret(selection.world, selection.root,
+                                    resonate::ui::CaretMotion::WordRight));
+    CHECK(caret() == 11U);
+    REQUIRE(resonate::ui::moveCaret(selection.world, selection.root,
+                                    resonate::ui::CaretMotion::WordLeft));
+    CHECK(caret() == 6U);
+    REQUIRE(resonate::ui::moveCaret(selection.world, selection.root,
+                                    resonate::ui::CaretMotion::WordLeft));
+    CHECK(caret() == 0U);
+
+    /* A word motion with the anchor held selects the whole word. */
+    REQUIRE(resonate::ui::moveCaret(selection.world, selection.root,
+                                    resonate::ui::CaretMotion::WordRight, true));
+    std::uint32_t select_begin = 0U;
+    std::uint32_t select_end = 0U;
+    REQUIRE(resonate::ui::selectionRange(selection.world, selection.field, select_begin,
+                                         select_end));
+    CHECK(selection.content().substr(select_begin, select_end - select_begin) == "hello");
+}
+
+TEST_CASE("ui selection: select all covers the field without a drag", "[ui][text][selection]")
+{
+    Fixture fixture;
+    SelectionFixture selection(fixture.world);
+    const float mid_y = selection.rect.y + selection.rect.height * 0.5F;
+    REQUIRE(resonate::ui::updateInput(selection.world, selection.root, selection.rect.x + 1.0F,
+                                      mid_y, true));
+    REQUIRE(resonate::ui::updateInput(selection.world, selection.root, selection.rect.x + 1.0F,
+                                      mid_y, false));
+
+    REQUIRE(resonate::ui::selectAll(selection.world, selection.root));
+    std::uint32_t select_begin = 0U;
+    std::uint32_t select_end = 0U;
+    REQUIRE(resonate::ui::selectionRange(selection.world, selection.field, select_begin,
+                                         select_end));
+    CHECK(select_begin == 0U);
+    CHECK(select_end == selection.content().size());
+
+    std::string error;
+    REQUIRE(resonate::ui::updateTextInput(selection.world, selection.root, selection.runtime, "",
+                                          true, false, error));
+    CHECK(selection.content().empty());
+}
+
 TEST_CASE("ui selection: a double click selects the word under the pointer",
           "[ui][text][selection]")
 {

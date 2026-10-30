@@ -59,13 +59,16 @@ struct TextRuntimeAccess
                                   std::string_view utf8, std::string& error);
 };
 
-/* Where a caret key takes the offset. */
+/* Where a caret key takes the offset. The word motions skip separators and
+   the word they land on, the unit Ctrl+Left/Right selects. */
 enum class CaretMotion : std::uint8_t
 {
     Left,
     Right,
     Home,
     End,
+    WordLeft,
+    WordRight,
 };
 
 /* The canvas' text runtime, attached at instantiation so application code can
@@ -114,9 +117,16 @@ struct TextRuntimeRef
 [[nodiscard]] bool selectionRange(ecs::World& world, ecs::Entity entity,
                                   std::uint32_t& out_begin, std::uint32_t& out_end);
 
-/* Moves the focused field's caret one code point or to an edge; false when no
-   text field has focus. */
-[[nodiscard]] bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion);
+/* Moves the focused field's caret one code point, one word or to an edge;
+   false when no text field has focus. With `extend` the anchor holds the old
+   caret, so shift+arrow grows or shrinks the range. Without it a spread range
+   collapses at the edge the motion points at. */
+[[nodiscard]] bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion,
+                             bool extend = false);
+
+/* Selects the focused field from start to end. False when no text field has
+   focus. */
+[[nodiscard]] bool selectAll(ecs::World& world, ecs::Entity canvas);
 
 /* Shows an IME preedit in the focused field without committing it: the field
    renders its committed text followed by `utf8`. An empty preedit restores the

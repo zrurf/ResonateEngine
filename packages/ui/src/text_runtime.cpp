@@ -161,6 +161,36 @@ bool isWordCodepoint(std::uint32_t value)
     return alpha || upper || digit || underscore;
 }
 
+/* Word motion with the same classes: a word is a run of word code points, a
+   separator run is skipped whole. */
+std::size_t wordBack(const std::string& content, std::size_t offset)
+{
+    std::size_t at = offset;
+    while (at > 0U && !isWordCodepoint(codepointAt(content, previousCodepoint(content, at))))
+    {
+        at = previousCodepoint(content, at);
+    }
+    while (at > 0U && isWordCodepoint(codepointAt(content, previousCodepoint(content, at))))
+    {
+        at = previousCodepoint(content, at);
+    }
+    return at;
+}
+
+std::size_t wordForward(const std::string& content, std::size_t offset)
+{
+    std::size_t at = offset;
+    while (at < content.size() && !isWordCodepoint(codepointAt(content, at)))
+    {
+        at = nextCodepoint(content, at);
+    }
+    while (at < content.size() && isWordCodepoint(codepointAt(content, at)))
+    {
+        at = nextCodepoint(content, at);
+    }
+    return at;
+}
+
 } // namespace
 
 struct TextRuntime::Impl
@@ -716,7 +746,7 @@ bool selectWordAt(ecs::World& world, ecs::Entity entity, float local_x)
     return world.add(entity, TextSelection{static_cast<std::uint32_t>(begin)}) != nullptr;
 }
 
-bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion)
+bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion, bool extend)
 {
     const PointerState* pointer = world.get<PointerState>(canvas);
     if (pointer == nullptr || !pointer->focused.valid() ||
@@ -724,52 +754,95 @@ bool moveCaret(ecs::World& world, ecs::Entity canvas, CaretMotion motion)
     {
         return false;
     }
-    const std::string content = readContent(world, pointer->focused);
-    const std::size_t caret = caretOffset(world, pointer->focused, content.size());
+    const ecs::Entity field = pointer->focused;
+    const std::string content = readContent(world, field);
+    const std::size_t caret = caretOffset(world, field, content.size());
     std::size_t moved = caret;
     std::size_t select_begin = 0U;
     std::size_t select_end = 0U;
-    selectionRangeOf(world, pointer->focused, content.size(), select_begin, select_end);
-    if (select_begin < select_end)
+    selectionRangeOf(world, field, content.size(), select_begin, select_end);
+    if (select_begin < select_end && !extend)
     {
-        /* A selection collapses at the edge the motion points at; a second
-           press of the same key then moves from there. */
+        /* A collapse lands on the edge the motion points at; Home and End are
+           absolute, so they ignore the range. */
         switch (motion)
         {
-            case CaretMotion::Left:
-                moved = select_begin;
-                break;
-            case CaretMotion::Right:
-                moved = select_end;
-                break;
-            case CaretMotion::Home:
-                moved = 0U;
-                break;
-            case CaretMotion::End:
-                moved = content.size();
-                break;
+        case CaretMotion::Left:
+        case CaretMotion::WordLeft:
+            moved = select_begin;
+            break;
+        case CaretMotion::Right:
+        case CaretMotion::WordRight:
+            moved = select_end;
+            break;
+        case CaretMotion::Home:
+            moved = 0U;
+            break;
+        case CaretMotion::End:
+            moved = content.size();
+            break;
         }
     }
     else
     {
         switch (motion)
         {
-            case CaretMotion::Left:
-                moved = previousCodepoint(content, caret);
-                break;
-            case CaretMotion::Right:
-                moved = nextCodepoint(content, caret);
-                break;
-            case CaretMotion::Home:
-                moved = 0U;
-                break;
-            case CaretMotion::End:
-                moved = content.size();
-                break;
+        case CaretMotion::Left:
+            moved = previousCodepoint(content, caret);
+            break;
+        case CaretMotion::Right:
+            moved = nextCodepoint(content, caret);
+            break;
+        case CaretMotion::WordLeft:
+            moved = wordBack(content, caret);
+            break;
+        case CaretMotion::WordRight:
+            moved = wordForward(content, caret);
+            break;
+        case CaretMotion::Home:
+            moved = 0U;
+            break;
+        case CaretMotion::End:
+            moved = content.size();
+            break;
         }
     }
-    clearSelection(world, pointer->focused);
-    return setCaret(world, pointer->focused, moved);
+    if (!extend)
+    {
+        clearSelection(world, field);
+        return setCaret(world, field, moved);
+    }
+    /* The anchor holds the caret the extension started from; a range already
+       spread keeps its own. */
+    if (world.get<TextSelection>(field) == nullptr &&
+        world.add(field, TextSelection{static_cast<std::uint32_t>(caret)}) == nullptr)
+    {
+        return false;
+    }
+    return setCaret(world, field, moved);
+}
+
+bool selectAll(ecs::World& world, ecs::Entity canvas)
+{
+    const PointerState* pointer = world.get<PointerState>(canvas);
+    if (pointer == nullptr || !pointer->focused.valid() ||
+        !isTextField(world, pointer->focused))
+    {
+        return false;
+    }
+    const ecs::Entity field = pointer->focused;
+    if (!setCaret(world, field, readContent(world, field).size()))
+    {
+        return false;
+    }
+    TextSelection* selection = world.get<TextSelection>(field);
+    if (selection != nullptr)
+    {
+        selection->anchor = 0U;
+        world.markChanged<TextSelection>(field);
+        return true;
+    }
+    return world.add(field, TextSelection{0U}) != nullptr;
 }
 
 bool updateTextComposition(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime,

@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <resonate/application/systems.h>
+#include <resonate/window/input.h>
 
 namespace resonate::startup
 {
@@ -55,6 +56,11 @@ struct HostExtension
        engine's own keys: the application reads and applies them and binds
        more. */
     CVarHost* cvars = nullptr;
+    /* The host's shortcut pass: called once per frame after the UI has taken
+       the keys it owns. The hook polls the keys it handles from `input`, so a
+       chord a focused text field consumed is not replayed here. */
+    bool (*keys)(void* context, ecs::World& world, const ResonateInput* input) = nullptr;
+    void* keys_context = nullptr;
 };
 
 /* Parses the command line, composes a windowed or an offscreen run, and returns

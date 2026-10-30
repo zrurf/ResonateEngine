@@ -222,6 +222,9 @@ struct UiFrame
     double input_clock = 0.0;
     /* The pointer shape last handed to the platform. */
     ResonateCursorShape cursor = RESONATE_CURSOR_DEFAULT;
+    /* The host's shortcut pass, after the UI has taken the keys it owns. */
+    bool (*keys)(void* context, ecs::World& world, const ResonateInput* input) = nullptr;
+    void* keys_context = nullptr;
 
     static void invoke(void* context, ecs::World& world, ecs::CommandBuffer&, float delta_seconds)
     {
@@ -307,31 +310,44 @@ struct UiFrame
             }
             if (frame->text != nullptr)
             {
+                /* The modifiers a caret key reads: Shift holds the anchor so
+                   the range grows, Ctrl steps by word. */
+                const bool shift =
+                    frame->input->key_down(frame->input->self, RESONATE_KEY_LSHIFT) != 0 ||
+                    frame->input->key_down(frame->input->self, RESONATE_KEY_RSHIFT) != 0;
+                const bool ctrl =
+                    frame->input->key_down(frame->input->self, RESONATE_KEY_LCTRL) != 0 ||
+                    frame->input->key_down(frame->input->self, RESONATE_KEY_RCTRL) != 0;
                 struct CaretKey
                 {
                     ResonateKey key;
-                    ui::CaretMotion motion;
+                    ui::CaretMotion plain;
+                    ui::CaretMotion word;
                 };
                 static constexpr CaretKey kCaretKeys[] = {
-                    {RESONATE_KEY_LEFT, ui::CaretMotion::Left},
-                    {RESONATE_KEY_RIGHT, ui::CaretMotion::Right},
-                    {RESONATE_KEY_HOME, ui::CaretMotion::Home},
-                    {RESONATE_KEY_END, ui::CaretMotion::End},
+                    {RESONATE_KEY_LEFT, ui::CaretMotion::Left, ui::CaretMotion::WordLeft},
+                    {RESONATE_KEY_RIGHT, ui::CaretMotion::Right, ui::CaretMotion::WordRight},
+                    {RESONATE_KEY_HOME, ui::CaretMotion::Home, ui::CaretMotion::Home},
+                    {RESONATE_KEY_END, ui::CaretMotion::End, ui::CaretMotion::End},
                 };
                 for (const CaretKey& caret_key : kCaretKeys)
                 {
                     if (frame->input->key_pressed(frame->input->self, caret_key.key) != 0)
                     {
-                        (void)ui::moveCaret(world, frame->canvas, caret_key.motion);
+                        (void)ui::moveCaret(world, frame->canvas,
+                                            ctrl ? caret_key.word : caret_key.plain, shift);
                         text_activity = true;
                     }
+                }
+                if (ctrl &&
+                    frame->input->key_pressed(frame->input->self, RESONATE_KEY_A) != 0)
+                {
+                    (void)ui::selectAll(world, frame->canvas);
+                    text_activity = true;
                 }
                 /* Clipboard chords on the focused field: copy and cut take the
                    selection, paste lands where the caret is and replaces
                    whatever is selected. */
-                const bool ctrl =
-                    frame->input->key_down(frame->input->self, RESONATE_KEY_LCTRL) != 0 ||
-                    frame->input->key_down(frame->input->self, RESONATE_KEY_RCTRL) != 0;
                 if (ctrl && frame->input->set_clipboard != nullptr &&
                     frame->input->get_clipboard != nullptr)
                 {
@@ -460,6 +476,12 @@ struct UiFrame
                         std::fprintf(stderr, "resonate: ui text input: %s\n", error.c_str());
                     }
                 }
+            }
+            /* The host's own chords, polled after the UI took everything it
+               owns: a field with focus sees its keys first. */
+            if (frame->keys != nullptr)
+            {
+                (void)frame->keys(frame->keys_context, world, frame->input);
             }
         }
         /* The caret blinks while the field sits still and stays lit while it is
@@ -655,7 +677,7 @@ void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player)
     /* A host that stages its assets elsewhere (Android) names the document
        directly; the setting and the content walk cover desktop runs. */
     const char* const staged = std::getenv("RESONATE_SCENE_DOCUMENT");
-    const std::string path = staged != nullptr && *staged != ' '
+    const std::string path = staged != nullptr && *staged != '\0'
                                  ? std::string(staged)
                                  : findContentFile("content/scene/demo.rscene");
     if (path.empty())
@@ -1411,6 +1433,8 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
                 }
             }
             ui_frame.text = ui_text.get();
+            ui_frame.keys = extension.keys;
+            ui_frame.keys_context = extension.keys_context;
             ui_frame.canvas = loadDemoHud(world, ui_document, ui_document_required, *ui_text,
                                           ui_strings.get(), ui_images.get(), ui_icons.get());
             if (!ui_frame.canvas.valid())
