@@ -13,10 +13,13 @@
 #include <string>
 #include <vector>
 
+#include <resonate/dom/document.h>
+#include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/name.h>
 #include <resonate/hierarchy/tree.h>
 #include <resonate/scene/capture.h>
+#include <resonate/scene/document.h>
 #include <resonate/pal/io.h>
 #include <resonate/startup/cvar.h>
 #include "resonate.render/components.gen.h"
@@ -103,6 +106,7 @@ struct EditorState
     bool save_pending = false;
     bool undo_pending = false;
     bool redo_pending = false;
+    bool delete_pending = false;
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -409,6 +413,120 @@ void runRedo(EditorState& state, resonate::ecs::World& world)
     std::string status_error;
     (void)resonate::ui::setText(world, state.canvas, state.status,
                                 "重做 " + state.undo_stack.back().name, status_error);
+}
+
+/* Delete removes the selected object from the scene and from the tree list.
+   The row survives, hidden: it is what an undo shows again and it keeps the
+   caption. The object is captured as a document first, so undo reinstantiates
+   it under the parent it had. */
+void destroySubtree(resonate::ecs::World& world, Entity entity)
+{
+    if (!world.alive(entity))
+    {
+        return;
+    }
+    /* The hierarchy's destroy detaches a node's children, so the walk destroys
+       the children first and keeps the subtree together. */
+    std::vector<Entity> order;
+    std::vector<Entity> stack{entity};
+    while (!stack.empty())
+    {
+        const Entity current = stack.back();
+        stack.pop_back();
+        order.push_back(current);
+        for (const Entity child : resonate::hierarchy::children(world, current))
+        {
+            stack.push_back(child);
+        }
+    }
+    resonate::ecs::CommandBuffer commands(world);
+    for (auto it = order.rbegin(); it != order.rend(); ++it)
+    {
+        resonate::hierarchy::destroyEntity(commands, *it);
+    }
+    world.play(commands);
+}
+
+/* One row selected, every other cleared: the scene list keeps exactly one
+   choice whether the click or the undo made it. */
+void selectRow(resonate::ecs::World& world, Entity container, Entity row)
+{
+    for (const Entity child : resonate::hierarchy::children(world, container))
+    {
+        auto* selectable = world.get<resonate::ui::Selectable>(child);
+        if (selectable == nullptr)
+        {
+            continue;
+        }
+        const bool selected = child == row;
+        if (selectable->selected != selected)
+        {
+            selectable->selected = selected;
+            (void)world.markChanged<resonate::ui::Selectable>(child);
+        }
+    }
+}
+
+void deleteSelected(EditorState& state, resonate::ecs::World& world)
+{
+    const Entity row = resonate::ui::selectedChild(world, state.scene_list);
+    if (!row.valid())
+    {
+        return;
+    }
+    const Entity entity = entityOfRow(state, row);
+    if (!entity.valid() || !world.alive(entity))
+    {
+        return;
+    }
+    std::string xml;
+    std::string error;
+    if (!resonate::scene::capture(world, entity, xml, error))
+    {
+        std::fprintf(stderr, "editor: delete: %s\n", error.c_str());
+        return;
+    }
+    const Entity parent = resonate::hierarchy::parentOf(world, entity);
+    const std::string name = resonate::hierarchy::nameOf(world, entity);
+
+    selectRow(world, state.scene_list, Entity{});
+    (void)resonate::ui::setShown(world, row, false);
+    std::erase_if(state.box_rows, [row](const auto& pair) { return pair.first == row; });
+    destroySubtree(world, entity);
+
+    pushUndo(
+        state, "删除 " + name,
+        [&state, row, parent, xml](resonate::ecs::World& target)
+        {
+            std::vector<resonate::dom::Diagnostic> diagnostics;
+            auto document = resonate::dom::Document::parse(
+                xml, &resonate::startup::contentSchema(), diagnostics);
+            const Entity anchor = target.alive(parent) ? parent : Entity{};
+            Entity restored{};
+            std::string restore_error;
+            if (document == nullptr ||
+                !resonate::scene::instantiateUnder(target, *document,
+                                                   &resonate::startup::contentComponents(), anchor,
+                                                   restored, restore_error))
+            {
+                std::fprintf(stderr, "editor: undo delete: %s\n", restore_error.c_str());
+                return;
+            }
+            (void)resonate::ui::setShown(target, row, true);
+            state.box_rows.emplace_back(row, restored);
+            selectRow(target, state.scene_list, row);
+        },
+        [&state, row](resonate::ecs::World& target)
+        {
+            const Entity current = entityOfRow(state, row);
+            if (current.valid())
+            {
+                destroySubtree(target, current);
+            }
+            selectRow(target, state.scene_list, Entity{});
+            (void)resonate::ui::setShown(target, row, false);
+            std::erase_if(state.box_rows, [row](const auto& pair) { return pair.first == row; });
+        });
 }
 
 std::string layoutPath()
@@ -724,6 +842,11 @@ bool editorKeys(void* context, resonate::ecs::World& world, const ResonateInput*
     {
         return false;
     }
+    if (input->key_pressed(input->self, RESONATE_KEY_DELETE) != 0)
+    {
+        state->delete_pending = true;
+        return true;
+    }
     const bool ctrl = input->key_down(input->self, RESONATE_KEY_LCTRL) != 0 ||
                       input->key_down(input->self, RESONATE_KEY_RCTRL) != 0;
     if (!ctrl)
@@ -886,6 +1009,11 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         state->redo_pending = false;
         runRedo(*state, world);
+    }
+    if (state->delete_pending)
+    {
+        state->delete_pending = false;
+        deleteSelected(*state, world);
     }
     if (state->save_pending)
     {

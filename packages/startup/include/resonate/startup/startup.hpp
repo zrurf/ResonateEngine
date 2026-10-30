@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <resonate/application/systems.h>
+#include <resonate/dom/schema.h>
 #include <resonate/window/input.h>
 
 namespace resonate::startup
@@ -62,6 +63,13 @@ struct HostExtension
     bool (*keys)(void* context, ecs::World& world, const ResonateInput* input) = nullptr;
     void* keys_context = nullptr;
 };
+
+/* The content vocabulary a run composes: every module's generated schema and
+   component tables behind one registry each. A host that reads a document at
+   runtime (an editor restoring a captured object) parses with the same tables
+   the demo was loaded with. */
+[[nodiscard]] const dom::SchemaRegistry& contentSchema();
+[[nodiscard]] const dom::ComponentRegistry& contentComponents();
 
 /* Parses the command line, composes a windowed or an offscreen run, and returns
    the process exit code. `default_title` names the window when the command line

@@ -540,6 +540,8 @@ struct UiFrame
 
 ecs::Entity composeBuiltinHud(ecs::World& world);
 
+} // namespace
+
 /* The content vocabulary is every module's generated table behind one
    registry: a document may mix UI, hierarchy and render nodes. */
 const dom::SchemaRegistry& contentSchema()
@@ -588,6 +590,9 @@ const dom::ComponentRegistry& contentComponents()
         resonate::Span<const dom::ComponentRegistry* const>(tables.data(), tables.size()));
     return registry;
 }
+
+namespace
+{
 
 /* Content lives beside the executable in a shipped layout and in the project
    tree during development; the walk covers both. */
