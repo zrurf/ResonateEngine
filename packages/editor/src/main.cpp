@@ -21,6 +21,7 @@
 #include <resonate/hierarchy/tree.h>
 #include <resonate/scene/capture.h>
 #include <resonate/scene/document.h>
+#include <resonate/pal/dialog.h>
 #include <resonate/pal/io.h>
 #include <resonate/startup/cvar.h>
 #include "resonate.render/components.gen.h"
@@ -111,6 +112,9 @@ struct EditorState
     bool redo_pending = false;
     bool delete_pending = false;
     bool duplicate_pending = false;
+    /* Where the scene was saved last: empty until the chooser picked a path,
+       so the first save asks and later ones write straight to it. */
+    std::string document_path{};
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -644,6 +648,31 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
             state.box_rows.emplace_back(copy_row, restored);
             selectRow(target, state.scene_list, copy_row);
         });
+}
+
+/* The document the demo was loaded from: beside the executable in a shipped
+   layout, in the source tree during development; the walk covers both. This is
+   what the save chooser opens at, and what a platform without a chooser falls
+   back to. */
+std::string defaultDocumentPath()
+{
+    std::filesystem::path directory = resonate_pal_io_executable_directory();
+    for (int level = 0; level < 6; ++level)
+    {
+        const std::filesystem::path candidate = directory / "content" / "scene" / "demo.rscene";
+        std::error_code probe;
+        if (std::filesystem::is_regular_file(candidate, probe))
+        {
+            return candidate.string();
+        }
+        if (!directory.has_parent_path())
+        {
+            break;
+        }
+        directory = directory.parent_path();
+    }
+    return (resonate_pal_io_executable_directory() / std::filesystem::path("demo.rscene"))
+        .string();
 }
 
 std::string layoutPath()
@@ -1185,43 +1214,44 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         std::string error;
         if (any_object.valid() && resonate::scene::capture(world, root, xml, error))
         {
-            /* The demo document: beside the executable in a shipped layout,
-               in the source tree during development; the walk covers both. */
-            std::filesystem::path directory = resonate_pal_io_executable_directory();
-            std::filesystem::path target;
-            for (int level = 0; level < 6; ++level)
+            /* A desktop editor asks the platform where the document goes; the
+               path it answers is remembered, so only the first save asks. A
+               platform without a chooser falls back to where the demo lives. */
+            if (state->document_path.empty())
             {
-                const std::filesystem::path candidate =
-                    directory / "content" / "scene" / "demo.rscene";
-                std::error_code probe;
-                if (std::filesystem::is_regular_file(candidate, probe))
+                const std::string offered = defaultDocumentPath();
+                char chosen[1024] = {};
+                int32_t selected = 0;
+                const ResonatePalStatus status =
+                    resonate_pal_save_dialog("Save Scene", offered.c_str(), "rscene", chosen,
+                                             static_cast<std::uint32_t>(sizeof(chosen)),
+                                             &selected);
+                if (status == RESONATE_PAL_OK && selected != 0)
                 {
-                    target = candidate;
-                    break;
+                    state->document_path = chosen;
                 }
-                if (!directory.has_parent_path())
+                else if (status != RESONATE_PAL_OK)
                 {
-                    break;
+                    state->document_path = offered;
                 }
-                directory = directory.parent_path();
+                /* A cancel leaves the path unset: the next save asks again. */
             }
-            if (target.empty())
+            const std::string target = state->document_path;
+            if (!target.empty())
             {
-                target = resonate_pal_io_executable_directory() /
-                         std::filesystem::path("demo.rscene");
-            }
-            std::ofstream out(target, std::ios::binary);
-            if (out.is_open())
-            {
-                out << xml;
-                std::string status_error;
-                (void)resonate::ui::setText(world, state->canvas, state->status,
-                                            localized("editor.saved"), status_error);
-            }
-            else
-            {
-                std::fprintf(stderr, "editor: %s: cannot write the scene\n",
-                             target.string().c_str());
+                std::ofstream out(target, std::ios::binary);
+                if (out.is_open())
+                {
+                    out << xml;
+                    std::string status_error;
+                    (void)resonate::ui::setText(world, state->canvas, state->status,
+                                                localized("editor.saved"), status_error);
+                }
+                else
+                {
+                    std::fprintf(stderr, "editor: %s: cannot write the scene\n",
+                                 target.c_str());
+                }
             }
         }
         else

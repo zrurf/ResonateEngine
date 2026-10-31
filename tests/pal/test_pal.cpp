@@ -397,3 +397,20 @@ TEST_CASE("a read-write lock is exclusive against a shared holder", "[pal][sync]
     REQUIRE(resonate_pal_thread_join(&thread) == RESONATE_PAL_OK);
     resonate_pal_sync_destroy_read_write_lock(&lock);
 }
+
+TEST_CASE("a file chooser refuses a malformed call before showing anything", "[pal][dialog]")
+{
+    /* The validation is what runs before the platform's modal dialog, so these
+       cases are safe to exercise on a build machine with no user. */
+    int32_t selected = 0;
+    char path[16] = {};
+    CHECK(resonate_pal_save_dialog("Save", "demo.rscene", "rscene", nullptr, 0U, &selected) ==
+          RESONATE_PAL_INVALID);
+    CHECK(resonate_pal_save_dialog("Save", "demo.rscene", "rscene", path, 0U, &selected) ==
+          RESONATE_PAL_INVALID);
+    CHECK(resonate_pal_save_dialog("Save", "demo.rscene", "rscene", path,
+                                   static_cast<uint32_t>(sizeof(path)), nullptr) ==
+          RESONATE_PAL_INVALID);
+    CHECK(resonate_pal_open_dialog("Open", "rscene", path, static_cast<uint32_t>(sizeof(path)),
+                                   nullptr) == RESONATE_PAL_INVALID);
+}

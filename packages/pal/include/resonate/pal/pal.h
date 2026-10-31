@@ -10,6 +10,7 @@
 #include "resonate/pal/status.h"
 
 #include "resonate/pal/chrono.h"
+#include "resonate/pal/dialog.h"
 #include "resonate/pal/event.h"
 #include "resonate/pal/io.h"
 #include "resonate/pal/library.h"

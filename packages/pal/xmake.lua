@@ -15,7 +15,7 @@ target("Resonate.PAL")
 
     if is_plat("windows") then
         add_files("src/platform/os/windows/**.cpp")
-        add_syslinks("user32", "kernel32")
+        add_syslinks("user32", "kernel32", "comdlg32")
     else
         add_files("src/common/posix/**.cpp")
         -- Bionic keeps pthread and dl in libc; the desktop libs do not exist
