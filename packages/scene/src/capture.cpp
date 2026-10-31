@@ -1,7 +1,9 @@
 #include <resonate/scene/capture.h>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <string>
 
@@ -10,8 +12,11 @@
 #include <resonate/hierarchy/tree.h>
 
 #include "resonate.scene/components.gen.h"
+#include "resonate.scene/nodes.gen.h"
 #include "resonate.render/components.gen.h"
+#include "resonate.render/nodes.gen.h"
 #include "resonate.hierarchy/components.gen.h"
+#include "resonate.hierarchy/nodes.gen.h"
 
 namespace resonate::scene
 {
@@ -25,20 +30,6 @@ struct Vec3Default
 {
     float x, y, z;
 };
-
-/* Works for Vec4 and Quat: both carry x/y/z/w. */
-template <typename T>
-bool isDefault(const T& value, float x, float y, float z, float w)
-{
-    return std::fabs(value.x - x) < 1.0e-6F && std::fabs(value.y - y) < 1.0e-6F &&
-           std::fabs(value.z - z) < 1.0e-6F && std::fabs(value.w - w) < 1.0e-6F;
-}
-
-bool isDefault(const resonate::Vec3& value, float x, float y, float z)
-{
-    return std::fabs(value.x - x) < 1.0e-6F && std::fabs(value.y - y) < 1.0e-6F &&
-           std::fabs(value.z - z) < 1.0e-6F;
-}
 
 /* Shortest text that reads back as the same float: "%g" at widening precision
    until an strtod round trip lands on the bit-identical value. */
@@ -57,15 +48,147 @@ std::string formatFloat(float value)
     return text;
 }
 
-std::string formatVec3(const resonate::Vec3& value)
+/* The field kinds the writer formats, by the descriptor's type name and size.
+   The binder reads a vec or a quat as its members in declaration order, so the
+   writer emits them the same way. */
+enum class FieldKind
 {
-    return formatFloat(value.x) + " " + formatFloat(value.y) + " " + formatFloat(value.z);
+    Float,
+    Int32,
+    Uint32,
+    Uint64,
+    Bool,
+    Vec2,
+    Vec3,
+    Vec4,
+    Quat,
+    Unsupported,
+};
+
+FieldKind kindOf(const dom::ComponentFieldDesc& field)
+{
+    const std::string_view type = field.type;
+    if (type == "f32" && field.size == sizeof(float))
+    {
+        return FieldKind::Float;
+    }
+    if (type == "i32" && field.size == sizeof(std::int32_t))
+    {
+        return FieldKind::Int32;
+    }
+    if (type == "u32" && field.size == sizeof(std::uint32_t))
+    {
+        return FieldKind::Uint32;
+    }
+    if (type == "u64" && field.size == sizeof(std::uint64_t))
+    {
+        return FieldKind::Uint64;
+    }
+    if (type == "bool" && field.size == 1U)
+    {
+        return FieldKind::Bool;
+    }
+    if (type == "vec2" && field.size == sizeof(Vec2))
+    {
+        return FieldKind::Vec2;
+    }
+    if (type == "vec3" && field.size == sizeof(Vec3))
+    {
+        return FieldKind::Vec3;
+    }
+    if (type == "vec4" && field.size == sizeof(Vec4))
+    {
+        return FieldKind::Vec4;
+    }
+    if (type == "quat" && field.size == sizeof(Quat))
+    {
+        return FieldKind::Quat;
+    }
+    return FieldKind::Unsupported;
 }
 
-std::string formatQuat(const resonate::Quat& value)
+/* One field's authoring text, or false for a kind the writer cannot format. */
+bool formatField(std::string& out, const dom::ComponentFieldDesc& field,
+                 const std::byte* value)
 {
-    return formatFloat(value.w) + " " + formatFloat(value.x) + " " + formatFloat(value.y) +
-           " " + formatFloat(value.z);
+    const auto floats = [&out](const std::byte* bytes, std::size_t count)
+    {
+        const float* values = reinterpret_cast<const float*>(bytes);
+        for (std::size_t index = 0U; index < count; ++index)
+        {
+            if (index > 0U)
+            {
+                out += " ";
+            }
+            out += formatFloat(values[index]);
+        }
+    };
+    switch (kindOf(field))
+    {
+    case FieldKind::Float:
+    {
+        float scalar = 0.0F;
+        std::memcpy(&scalar, value, sizeof(scalar));
+        out += formatFloat(scalar);
+        return true;
+    }
+    case FieldKind::Int32:
+    {
+        std::int32_t scalar = 0;
+        std::memcpy(&scalar, value, sizeof(scalar));
+        out += std::to_string(scalar);
+        return true;
+    }
+    case FieldKind::Uint32:
+    {
+        std::uint32_t scalar = 0U;
+        std::memcpy(&scalar, value, sizeof(scalar));
+        out += std::to_string(scalar);
+        return true;
+    }
+    case FieldKind::Uint64:
+    {
+        std::uint64_t scalar = 0U;
+        std::memcpy(&scalar, value, sizeof(scalar));
+        out += std::to_string(scalar);
+        return true;
+    }
+    case FieldKind::Bool:
+        out += *value == std::byte{0} ? "false" : "true";
+        return true;
+    case FieldKind::Vec2:
+        floats(value, 2U);
+        return true;
+    case FieldKind::Vec3:
+        floats(value, 3U);
+        return true;
+    case FieldKind::Vec4:
+        floats(value, 4U);
+        return true;
+    case FieldKind::Quat:
+        floats(value, 4U);
+        return true;
+    case FieldKind::Unsupported:
+        break;
+    }
+    return false;
+}
+
+/* Components the adapter owns: parenting is the document's nesting, the name
+   is the Object's core attribute, and the world transform is the hierarchy
+   pass's to write. Authoring any of them would fight the adapter. */
+bool adapterManaged(std::string_view qualified_name)
+{
+    for (const std::string_view name :
+         {"resonate.hierarchy.Name", "resonate.hierarchy.Parent",
+          "resonate.hierarchy.Children", "resonate.hierarchy.WorldTransform"})
+    {
+        if (name == qualified_name)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 void appendAttribute(std::string& out, const char* name, const std::string& value)
@@ -130,140 +253,108 @@ std::string_view nameText(ecs::World& world, ecs::Entity entity)
     return name != nullptr ? blobText(world, name->text) : std::string_view{};
 }
 
-/* One component element, or nothing when every field sits at its default. */
-void appendTransform(std::string& out, const hierarchy::LocalTransform& transform)
-{
-    std::string attributes;
-    appendAttribute(attributes, "position", formatVec3(transform.position));
-    if (!isDefault(transform.rotation, 0.0F, 0.0F, 0.0F, 1.0F))
-    {
-        appendAttribute(attributes, "rotation", formatQuat(transform.rotation));
-    }
-    if (!isDefault(transform.scale, 1.0F, 1.0F, 1.0F))
-    {
-        appendAttribute(attributes, "scale", formatVec3(transform.scale));
-    }
-    out += "      <LocalTransform" + attributes + "/>\n";
-}
-
+/* One component element for an object that carries it: fields equal to the
+   schema default are left out, the element itself is always written so the
+   component survives the round trip. Material's texture is authored from the
+   resolved reference or the alias, never from the slot, so that field is
+   skipped and the attribute supplied here. */
 void appendComponents(std::string& out, ecs::World& world, ecs::Entity entity)
 {
-    if (const auto* transform = world.get<hierarchy::LocalTransform>(entity);
-        transform != nullptr)
+    struct Table
     {
-        appendTransform(out, *transform);
-    }
-    if (const auto* mesh = world.get<render::MeshInstance>(entity); mesh != nullptr)
+        const dom::ComponentDesc* descs;
+        std::size_t count;
+    };
+    const Table tables[] = {
+        {hierarchy::generated::kComponentDescs, hierarchy::generated::kComponentDescCount},
+        {render::generated::kComponentDescs, render::generated::kComponentDescCount},
+        {scene::generated::kComponentDescs, scene::generated::kComponentDescCount}};
+    for (const Table& table : tables)
     {
-        std::string attributes;
-        appendAttribute(attributes, "mesh", formatFloat(static_cast<float>(mesh->mesh)));
-        if (!isDefault(mesh->color, 1.0F, 1.0F, 1.0F))
+        for (std::size_t index = 0U; index < table.count; ++index)
         {
-            appendAttribute(attributes, "color", formatVec3(mesh->color));
-        }
-        out += "      <MeshInstance" + attributes + "/>\n";
-    }
-    if (const auto* material = world.get<render::Material>(entity); material != nullptr)
-    {
-        std::string attributes;
-        /* A resolved reference is written back as the authoring form, not as
-           the slot it resolved to: the slot depends on allocation order. An
-           alias is shorter and is what the document said. */
-        std::string texture;
-        if (const auto* alias = world.get<TextureAlias>(entity);
-            alias != nullptr && !blobText(world, alias->text).empty())
-        {
-            texture = "#" + std::string(blobText(world, alias->text));
-        }
-        else if (const auto* reference = world.get<render::TextureRef>(entity);
-                 reference != nullptr && reference->sub_id != 0U)
-        {
-            const asset::AssetId id{reference->guid_low, reference->guid_high,
-                                    reference->sub_id};
-            texture = "@" + asset::formatGuid(id);
-            if (reference->sub_id != 1U)
+            const dom::ComponentDesc& descriptor = table.descs[index];
+            if (!capturable(descriptor))
             {
-                texture += ":" + std::to_string(reference->sub_id);
+                continue;
             }
+            const ecs::ComponentIndex component =
+                world.findComponent(descriptor.qualified_name);
+            if (component == ecs::kInvalidComponent)
+            {
+                continue;
+            }
+            const void* bytes = world.get(entity, component);
+            if (bytes == nullptr)
+            {
+                continue;
+            }
+            const auto* base = static_cast<const std::byte*>(bytes);
+            const auto* defaults = static_cast<const std::byte*>(descriptor.defaults);
+            const bool material = std::string_view(descriptor.name) == "Material";
+            std::string attributes;
+            if (material)
+            {
+                /* A resolved reference is written back as the authoring form,
+                   not as the slot it resolved to: the slot depends on
+                   allocation order. An alias is shorter and is what the
+                   document said. */
+                std::string texture;
+                if (const auto* alias = world.get<TextureAlias>(entity);
+                    alias != nullptr && !blobText(world, alias->text).empty())
+                {
+                    texture = "#" + std::string(blobText(world, alias->text));
+                }
+                else if (const auto* reference = world.get<render::TextureRef>(entity);
+                         reference != nullptr && reference->sub_id != 0U)
+                {
+                    const asset::AssetId id{reference->guid_low, reference->guid_high,
+                                            reference->sub_id};
+                    texture = "@" + asset::formatGuid(id);
+                    if (reference->sub_id != 1U)
+                    {
+                        texture += ":" + std::to_string(reference->sub_id);
+                    }
+                }
+                else if (const auto* saved = world.get<render::Material>(entity);
+                         saved != nullptr && saved->texture != 0U)
+                {
+                    texture = formatFloat(static_cast<float>(saved->texture));
+                }
+                if (!texture.empty())
+                {
+                    appendAttribute(attributes, "texture", texture);
+                }
+            }
+            for (const dom::ComponentFieldDesc& field : descriptor.fields)
+            {
+                if (material && std::string_view(field.name) == "texture")
+                {
+                    continue;
+                }
+                const std::byte* value = base + field.offset;
+                if (defaults != nullptr &&
+                    std::memcmp(value, defaults + field.offset, field.size) == 0)
+                {
+                    continue;
+                }
+                std::string text;
+                if (formatField(text, field, value))
+                {
+                    appendAttribute(attributes, field.name, text);
+                }
+                else
+                {
+                    world.report(ecs::World::Report::Warning,
+                                 "scene capture: %s.%s has a kind it cannot write",
+                                 descriptor.name, field.name);
+                }
+            }
+            out += "      <";
+            out += descriptor.name;
+            out += attributes;
+            out += "/>\n";
         }
-        else if (material->texture != 0U)
-        {
-            texture = formatFloat(static_cast<float>(material->texture));
-        }
-        if (!texture.empty())
-        {
-            appendAttribute(attributes, "texture", texture);
-        }
-        if (!isDefault(material->tint, 1.0F, 1.0F, 1.0F))
-        {
-            appendAttribute(attributes, "tint", formatVec3(material->tint));
-        }
-        if (std::fabs(material->roughness - 0.5F) > 1.0e-6F)
-        {
-            appendAttribute(attributes, "roughness", formatFloat(material->roughness));
-        }
-        if (std::fabs(material->metallic) > 1.0e-6F)
-        {
-            appendAttribute(attributes, "metallic", formatFloat(material->metallic));
-        }
-        if (!attributes.empty())
-        {
-            out += "      <Material" + attributes + "/>\n";
-        }
-    }
-    if (const auto* camera = world.get<render::Camera>(entity); camera != nullptr)
-    {
-        std::string attributes;
-        if (std::fabs(camera->fov_y_degrees - 60.0F) > 1.0e-6F)
-        {
-            appendAttribute(attributes, "fov_y_degrees", formatFloat(camera->fov_y_degrees));
-        }
-        if (std::fabs(camera->near_z - 0.1F) > 1.0e-6F)
-        {
-            appendAttribute(attributes, "near_z", formatFloat(camera->near_z));
-        }
-        if (std::fabs(camera->far_z - 1000.0F) > 1.0e-6F)
-        {
-            appendAttribute(attributes, "far_z", formatFloat(camera->far_z));
-        }
-        if (!attributes.empty())
-        {
-            out += "      <Camera" + attributes + "/>\n";
-        }
-    }
-    if (const auto* light = world.get<render::DirectionalLight>(entity); light != nullptr)
-    {
-        std::string attributes;
-        if (!isDefault(light->direction, 0.0F, -1.0F, 0.0F))
-        {
-            appendAttribute(attributes, "direction", formatVec3(light->direction));
-        }
-        if (!isDefault(light->color, 1.0F, 1.0F, 1.0F))
-        {
-            appendAttribute(attributes, "color", formatVec3(light->color));
-        }
-        if (std::fabs(light->intensity - 1.0F) > 1.0e-6F)
-        {
-            appendAttribute(attributes, "intensity", formatFloat(light->intensity));
-        }
-        out += "      <DirectionalLight" + attributes + "/>\n";
-    }
-    if (const auto* light = world.get<render::PointLight>(entity); light != nullptr)
-    {
-        std::string attributes;
-        if (!isDefault(light->color, 1.0F, 1.0F, 1.0F))
-        {
-            appendAttribute(attributes, "color", formatVec3(light->color));
-        }
-        if (std::fabs(light->intensity - 1.0F) > 1.0e-6F)
-        {
-            appendAttribute(attributes, "intensity", formatFloat(light->intensity));
-        }
-        if (std::fabs(light->radius - 10.0F) > 1.0e-6F)
-        {
-            appendAttribute(attributes, "radius", formatFloat(light->radius));
-        }
-        out += "      <PointLight" + attributes + "/>\n";
     }
 }
 
@@ -315,6 +406,22 @@ void appendObject(std::string& out, ecs::World& world, ecs::Entity entity, std::
 }
 
 } // namespace
+
+bool capturable(const dom::ComponentDesc& component)
+{
+    if (component.derived != 0U || adapterManaged(component.qualified_name))
+    {
+        return false;
+    }
+    for (const dom::ComponentFieldDesc& field : component.fields)
+    {
+        if (kindOf(field) == FieldKind::Unsupported)
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 ecs::Entity rootOf(ecs::World& world, ecs::Entity entity)
 {

@@ -1,10 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <string_view>
 
 #include <resonate/core/allocator.h>
 #include <resonate/dom/document.h>
@@ -248,6 +250,54 @@ TEST_CASE("scene: a capture round trips through a second instantiate", "[scene]"
     CHECK(resonate::hierarchy::nameOf(second, second_lid) == "箱盖");
 }
 
+TEST_CASE("scene: a captured rotation reads back as the same rotation", "[scene]")
+{
+    constexpr const char* kRotated = R"xml(<document version="1" schemas="resonate.scene">
+  <Scene key="yard">
+    <Object key="crate">
+      <LocalTransform position="1 2 3" rotation="0.1 0.2 0.3 0.9"/>
+    </Object>
+  </Scene>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kRotated, &sceneSchemas(), diagnostics);
+    REQUIRE(document != nullptr);
+
+    Fixture fixture;
+    REQUIRE(resonate::ui::registerComponents(fixture.world));
+    Entity root{};
+    std::string error;
+    REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
+                                         error));
+    const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
+    REQUIRE(crate.valid());
+
+    std::string xml;
+    REQUIRE(resonate::scene::capture(fixture.world, crate, xml, error));
+    auto captured = resonate::dom::Document::parse(xml, &sceneSchemas(), diagnostics);
+    REQUIRE(captured != nullptr);
+    World second{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(second));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
+    REQUIRE(resonate::ui::registerComponents(second));
+    Entity second_root{};
+    REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
+                                         error));
+    const Entity restored = resonate::scene::findByKey(second, second_root, "crate");
+    REQUIRE(restored.valid());
+
+    /* The reader takes a quat's tokens in member order (x y z w); a writer that
+       puts w first transposes the rotation. */
+    const auto* before = fixture.world.get<resonate::hierarchy::LocalTransform>(crate);
+    const auto* after = second.get<resonate::hierarchy::LocalTransform>(restored);
+    REQUIRE(before != nullptr);
+    REQUIRE(after != nullptr);
+    CHECK(near(after->rotation.x, before->rotation.x));
+    CHECK(near(after->rotation.y, before->rotation.y));
+    CHECK(near(after->rotation.z, before->rotation.z));
+    CHECK(near(after->rotation.w, before->rotation.w));
+}
+
 TEST_CASE("scene: a capture keeps a texture reference as an asset id", "[scene]")
 {
     constexpr const char* kTextured = R"xml(<document version="1" schemas="resonate.scene">
@@ -468,6 +518,37 @@ TEST_CASE("scene: a Resources alias stands for an asset id", "[scene]")
     CHECK_FALSE(resonate::scene::instantiate(second, *broken, &sceneComponents(), broken_root,
                                              error));
     CHECK(error.find("missing") != std::string::npos);
+}
+
+TEST_CASE("scene: every scene component is capturable or deliberately not", "[scene]")
+{
+    /* The writer walks these tables, so a component added here without being
+       derived, adapter-managed or made of writable field kinds would be
+       silently dropped on save. This is the gate that says so. */
+    const auto expect = [](resonate::Span<const resonate::dom::ComponentDesc> descs,
+                           std::initializer_list<std::string_view> exempt)
+    {
+        for (const resonate::dom::ComponentDesc& desc : descs)
+        {
+            INFO("component " << desc.qualified_name);
+            const bool listed = std::find(exempt.begin(), exempt.end(),
+                                          std::string_view(desc.qualified_name)) != exempt.end();
+            CHECK(resonate::scene::capturable(desc) == !listed);
+        }
+    };
+    expect(resonate::Span<const resonate::dom::ComponentDesc>(
+               resonate::hierarchy::generated::kComponentDescs,
+               resonate::hierarchy::generated::kComponentDescCount),
+           {"resonate.hierarchy.Name", "resonate.hierarchy.Parent",
+            "resonate.hierarchy.Children", "resonate.hierarchy.WorldTransform"});
+    expect(resonate::Span<const resonate::dom::ComponentDesc>(
+               resonate::render::generated::kComponentDescs,
+               resonate::render::generated::kComponentDescCount),
+           {"resonate.render.TextureRef"});
+    expect(resonate::Span<const resonate::dom::ComponentDesc>(
+               resonate::scene::generated::kComponentDescs,
+               resonate::scene::generated::kComponentDescCount),
+           {"resonate.scene.SourceKey", "resonate.scene.TextureAlias"});
 }
 
 TEST_CASE("scene: a malformed document is refused with a reason", "[scene]")

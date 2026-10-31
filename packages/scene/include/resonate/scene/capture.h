@@ -13,11 +13,20 @@
 
 #include <string>
 
+#include <resonate/dom/schema.h>
 #include <resonate/ecs/entity.h>
 #include <resonate/ecs/world.h>
 
 namespace resonate::scene
 {
+
+/* Whether a capture writes this component: not derived, not the adapter's own
+   bookkeeping (parenting, the name attribute, the world transform), and every
+   field a kind the writer can format. A component the writer cannot carry is
+   reported when an object holds one; this predicate is what a test walks the
+   scene's component tables with, so adding a component without teaching the
+   writer fails the suite instead of dropping data on save. */
+[[nodiscard]] bool capturable(const dom::ComponentDesc& component);
 
 /* The topmost ancestor of `entity`: the scene root a capture walks. An entity
    with no Parent answers itself. */
