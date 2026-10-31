@@ -723,6 +723,10 @@ bool loadSceneDocument(EditorState& state, resonate::ecs::World& world, const st
     state.scene_root = root;
     state.document_path = path;
     state.shown_row = Entity{};
+    /* The history belongs to the document that produced it: its closures name
+       entities this load just destroyed. */
+    state.undo_stack.clear();
+    state.redo_stack.clear();
     rebuildSceneList(state, world);
     return true;
 }
