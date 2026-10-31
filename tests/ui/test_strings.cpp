@@ -136,7 +136,8 @@ TEST_CASE("ui strings: the content table parses and carries the editor keys",
 
     /* Every key the editor composes at runtime: a typo in the resource would
        otherwise only show up as the raw key in a status line. */
-    for (const char* key : {"editor.undo", "editor.redo", "editor.saved", "editor.deleted",
+    for (const char* key : {"editor.undo", "editor.redo", "editor.saved", "editor.opened",
+                            "editor.deleted",
                             "editor.copied", "editor.delete", "editor.duplicate",
                             "editor.copy_suffix", "editor.rename", "editor.selected",
                             "editor.no_selection", "editor.objects", "editor.object_fallback",
