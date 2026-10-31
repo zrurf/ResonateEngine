@@ -13,6 +13,7 @@
  */
 
 #include <string>
+#include <vector>
 
 #include <resonate/dom/document.h>
 #include <resonate/dom/schema.h>
@@ -26,10 +27,14 @@ namespace resonate::scene
    object. The registry supplies the component descriptors the document's
    component elements resolve against (a composite over the modules the scene
    names). False with a named error when the root is not a Scene, a component
-   is unknown, or a value does not parse; the partial tree is unwound. */
+   is unknown, or a value does not parse; the partial tree is unwound.
+   `out_roots`, when given, receives every root the document produced: a Scene
+   may hold several objects, and a caller that tears a scene down or writes it
+   back must know all of them. */
 [[nodiscard]] bool instantiate(ecs::World& world, dom::Document& document,
                                const dom::ComponentRegistry* components, ecs::Entity& out_root,
-                               std::string& error);
+                               std::string& error,
+                               std::vector<ecs::Entity>* out_roots = nullptr);
 
 /* As instantiate, but the Scene's objects become children of `parent` — an
    invalid parent makes them roots. This is how a captured subtree goes back
@@ -37,7 +42,8 @@ namespace resonate::scene
 [[nodiscard]] bool instantiateUnder(ecs::World& world, dom::Document& document,
                                     const dom::ComponentRegistry* components,
                                     ecs::Entity parent, ecs::Entity& out_root,
-                                    std::string& error);
+                                    std::string& error,
+                                    std::vector<ecs::Entity>* out_roots = nullptr);
 
 /* The entity authored under `key`, found through the WidgetKey hashes in the
    subtree rooted at `root`. Requires the UI module's components to be

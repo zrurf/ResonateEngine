@@ -411,6 +411,37 @@ TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[sce
               resonate::scene::findByKey(second, second_root, "ground")) == nullptr);
 }
 
+TEST_CASE("scene: a document with several roots reports all of them", "[scene]")
+{
+    constexpr const char* kTwoRoots = R"xml(<document version="1" schemas="resonate.scene">
+  <Scene key="yard">
+    <Object key="left">
+      <LocalTransform position="-1 0 0"/>
+    </Object>
+    <Object key="right">
+      <LocalTransform position="1 0 0"/>
+    </Object>
+  </Scene>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kTwoRoots, &sceneSchemas(), diagnostics);
+    REQUIRE(document != nullptr);
+
+    Fixture fixture;
+    REQUIRE(resonate::ui::registerComponents(fixture.world));
+    Entity first{};
+    std::string error;
+    std::vector<Entity> roots;
+    REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), first,
+                                         error, &roots));
+    /* A caller that tears a scene down or writes it back needs every root, not
+       just the one the answer names. */
+    REQUIRE(roots.size() == 2U);
+    CHECK(first == roots[0]);
+    CHECK(resonate::scene::findByKey(fixture.world, first, "left") == roots[0]);
+    CHECK(resonate::scene::findByKey(fixture.world, roots[1], "right") == roots[1]);
+}
+
 TEST_CASE("scene: a captured subtree reinstantiates under its old parent", "[scene]")
 {
     std::vector<resonate::dom::Diagnostic> diagnostics;

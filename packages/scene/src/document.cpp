@@ -233,7 +233,8 @@ ecs::Entity findByKey(ecs::World& world, ecs::Entity root, std::string_view key)
 
 bool instantiateUnder(ecs::World& world, dom::Document& document,
                       const dom::ComponentRegistry* components, ecs::Entity parent,
-                      ecs::Entity& out_root, std::string& error)
+                      ecs::Entity& out_root, std::string& error,
+                      std::vector<ecs::Entity>* out_roots)
 {
     out_root = ecs::Entity{};
     /* The adapter's own components ride on keyed objects and aliased materials;
@@ -289,6 +290,10 @@ bool instantiateUnder(ecs::World& world, dom::Document& document,
         {
             first = entity;
         }
+        if (out_roots != nullptr)
+        {
+            out_roots->push_back(entity);
+        }
     }
     world.play(commands);
     out_root = first;
@@ -297,9 +302,10 @@ bool instantiateUnder(ecs::World& world, dom::Document& document,
 
 bool instantiate(ecs::World& world, dom::Document& document,
                  const dom::ComponentRegistry* components, ecs::Entity& out_root,
-                 std::string& error)
+                 std::string& error, std::vector<ecs::Entity>* out_roots)
 {
-    return instantiateUnder(world, document, components, ecs::Entity{}, out_root, error);
+    return instantiateUnder(world, document, components, ecs::Entity{}, out_root, error,
+                            out_roots);
 }
 
 } // namespace resonate::scene

@@ -706,16 +706,29 @@ bool loadSceneDocument(EditorState& state, resonate::ecs::World& world, const st
         resonate::dom::Document::parse(text, &resonate::startup::contentSchema(), diagnostics);
     Entity root{};
     std::string error;
+    std::vector<Entity> roots;
     if (document == nullptr ||
         !resonate::scene::instantiate(world, *document, &resonate::startup::contentComponents(),
-                                      root, error))
+                                      root, error, &roots))
     {
         std::fprintf(stderr, "editor: %s: %s\n", path.c_str(),
                      error.empty() ? "the document did not parse" : error.c_str());
         return false;
     }
-    /* The demo document has one root; a document with more would leave the
-       others running, which the editor does not show and this does not solve. */
+    if (roots.size() != 1U)
+    {
+        /* The save writes one subtree, so a document with more than one root
+           would lose the others on the next save. Refuse it rather than edit
+           half a scene. */
+        for (const Entity each : roots)
+        {
+            destroySubtree(world, each);
+        }
+        world.report(resonate::ecs::World::Report::Error,
+                     "editor: this document has %u roots; the editor edits one",
+                     static_cast<unsigned>(roots.size()));
+        return false;
+    }
     if (world.alive(state.scene_root))
     {
         destroySubtree(world, state.scene_root);
@@ -1333,7 +1346,26 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         const Entity root = resonate::scene::rootOf(world, any_object);
         std::string xml;
         std::string error;
-        if (any_object.valid() && resonate::scene::capture(world, root, xml, error))
+        /* The save writes one subtree. A scene the run loaded from a
+           multi-root document would lose the other roots, so say so rather
+           than write a partial scene. */
+        bool single_root = true;
+        for (const auto& [row, box] : state->box_rows)
+        {
+            (void)row;
+            if (box.valid() && world.alive(box) &&
+                resonate::scene::rootOf(world, box) != root)
+            {
+                single_root = false;
+                break;
+            }
+        }
+        if (!single_root)
+        {
+            world.report(resonate::ecs::World::Report::Error,
+                         "editor: the scene has more than one root; the save writes one");
+        }
+        else if (any_object.valid() && resonate::scene::capture(world, root, xml, error))
         {
             /* A desktop editor asks the platform where the document goes; the
                path it answers is remembered, so only the first save asks. A
