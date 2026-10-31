@@ -333,6 +333,35 @@ TEST_CASE("offscreen: the editor shell renders", "[render][editor]")
             INFO("golden: " << changed << " of " << count << " pixels differ, mean " << mean);
             CHECK(changed * 100U < count * 2U);
             CHECK(mean < 3.0);
+
+            /* The editor is a desktop target and nothing in its toolbar band is
+               timing-dependent, so that band gets a strict check: a shifted
+               button or a recooked icon moves most of it, which the whole-frame
+               tolerance above is loose enough to miss. The small allowance is
+               for GPU-to-GPU filtering differences, not for layout changes. */
+            constexpr std::uint32_t kToolbarPixels = 40U;
+            const std::uint32_t toolbar_rows = kToolbarPixels / kBlocks;
+            std::size_t toolbar_changed = 0U;
+            for (std::uint32_t y = 0U; y < toolbar_rows; ++y)
+            {
+                for (std::uint32_t x = 0U; x < golden_width; ++x)
+                {
+                    const std::size_t index =
+                        (static_cast<std::size_t>(y) * golden_width + x) * 4U;
+                    int delta = 0;
+                    for (std::uint32_t channel = 0U; channel < 4U; ++channel)
+                    {
+                        delta = std::max(
+                            delta, std::abs(static_cast<int>(golden[index + channel]) -
+                                            static_cast<int>(stored[index + channel])));
+                    }
+                    toolbar_changed += delta > 16 ? 1U : 0U;
+                }
+            }
+            const std::size_t toolbar_count =
+                static_cast<std::size_t>(toolbar_rows) * golden_width;
+            INFO("toolbar: " << toolbar_changed << " of " << toolbar_count << " blocks differ");
+            CHECK(toolbar_changed * 100U < toolbar_count);
         }
     }
 
