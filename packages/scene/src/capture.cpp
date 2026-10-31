@@ -438,19 +438,31 @@ ecs::Entity rootOf(ecs::World& world, ecs::Entity entity)
     return top;
 }
 
-bool capture(ecs::World& world, ecs::Entity root, std::string& out_xml, std::string& error)
+bool capture(ecs::World& world, resonate::Span<const ecs::Entity> roots,
+             std::string& out_xml, std::string& error)
 {
-    if (!world.alive(root))
+    if (roots.empty())
     {
-        error = "the scene root is not alive";
+        error = "the scene has no roots";
         return false;
+    }
+    for (const ecs::Entity root : roots)
+    {
+        if (!world.alive(root))
+        {
+            error = "a scene root is not alive";
+            return false;
+        }
     }
     out_xml.clear();
     out_xml += "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
     out_xml += "<document version=\"1\" schemas=\"resonate.scene\">\n";
     out_xml += "  <Scene>\n";
     std::map<std::string, asset::AssetId> aliases;
-    collectAliases(world, root, aliases);
+    for (const ecs::Entity root : roots)
+    {
+        collectAliases(world, root, aliases);
+    }
     if (!aliases.empty())
     {
         out_xml += "    <Resources>\n";
@@ -466,10 +478,19 @@ bool capture(ecs::World& world, ecs::Entity root, std::string& out_xml, std::str
         }
         out_xml += "    </Resources>\n";
     }
-    appendObject(out_xml, world, root, 0U);
+    for (const ecs::Entity root : roots)
+    {
+        appendObject(out_xml, world, root, 0U);
+    }
     out_xml += "  </Scene>\n";
     out_xml += "</document>\n";
     return true;
+}
+
+bool capture(ecs::World& world, ecs::Entity root, std::string& out_xml, std::string& error)
+{
+    const ecs::Entity roots[] = {root};
+    return capture(world, resonate::Span<const ecs::Entity>(roots, 1U), out_xml, error);
 }
 
 } // namespace resonate::scene

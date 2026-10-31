@@ -116,10 +116,10 @@ struct EditorState
        so the first save asks and later ones write straight to it. */
     std::string document_path{};
     bool open_pending = false;
-    /* The scene root the load produced, and the hidden row every visible tree
-       row is cloned from: both let an open replace the scene without losing
-       the list's shape. */
-    Entity scene_root{};
+    /* The scene roots the run or the last open produced, and the hidden row
+       every visible tree row is cloned from: both let an open replace the
+       scene without losing the list's shape. */
+    std::vector<Entity> scene_roots{};
     Entity row_prototype{};
 
     /* The status bar's segments, rewritten only when their text changes. */
@@ -667,10 +667,6 @@ void rebuildSceneList(EditorState& state, resonate::ecs::World& world)
             }
         },
         &boxes);
-    if (!boxes.empty())
-    {
-        state.scene_root = resonate::scene::rootOf(world, boxes[0]);
-    }
     /* An unnamed object falls back to its position in the list. */
     const auto nameOf = [&world, &boxes](std::size_t index)
     {
@@ -715,25 +711,17 @@ bool loadSceneDocument(EditorState& state, resonate::ecs::World& world, const st
                      error.empty() ? "the document did not parse" : error.c_str());
         return false;
     }
-    if (roots.size() != 1U)
+    if (roots.empty())
     {
-        /* The save writes one subtree, so a document with more than one root
-           would lose the others on the next save. Refuse it rather than edit
-           half a scene. */
-        for (const Entity each : roots)
-        {
-            destroySubtree(world, each);
-        }
         world.report(resonate::ecs::World::Report::Error,
-                     "editor: this document has %u roots; the editor edits one",
-                     static_cast<unsigned>(roots.size()));
+                     "editor: the document has no scene objects");
         return false;
     }
-    if (world.alive(state.scene_root))
+    for (const Entity each : state.scene_roots)
     {
-        destroySubtree(world, state.scene_root);
+        destroySubtree(world, each);
     }
-    state.scene_root = root;
+    state.scene_roots = roots;
     state.document_path = path;
     state.shown_row = Entity{};
     /* The history belongs to the document that produced it: its closures name
@@ -1106,6 +1094,13 @@ bool deleteEdit(void* context, resonate::ecs::World&, resonate::ecs::Entity,
     return true;
 }
 
+/* The run hands over the roots its scene document produced, before ready
+   addresses the scene: a save or an open replaces the whole list at once. */
+void sceneRootsLoaded(void* context, resonate::ecs::World&, const std::vector<Entity>& roots)
+{
+    static_cast<EditorState*>(context)->scene_roots = roots;
+}
+
 /* The editor's keyboard pass: Ctrl+S saves, Ctrl+Z and Ctrl+Y run the same
    undo and redo the toolbar buttons do, unless a text field owns the keys (a
    field's own editing is not the scene's). */
@@ -1343,29 +1338,20 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                 break;
             }
         }
-        const Entity root = resonate::scene::rootOf(world, any_object);
         std::string xml;
         std::string error;
-        /* The save writes one subtree. A scene the run loaded from a
-           multi-root document would lose the other roots, so say so rather
-           than write a partial scene. */
-        bool single_root = true;
-        for (const auto& [row, box] : state->box_rows)
+        /* The roots the run loaded or the last open installed; a scene the
+           editor never learned about falls back to the one the first object
+           leads to. */
+        std::vector<Entity> roots = state->scene_roots;
+        if (roots.empty() && any_object.valid())
         {
-            (void)row;
-            if (box.valid() && world.alive(box) &&
-                resonate::scene::rootOf(world, box) != root)
-            {
-                single_root = false;
-                break;
-            }
+            roots.push_back(resonate::scene::rootOf(world, any_object));
         }
-        if (!single_root)
-        {
-            world.report(resonate::ecs::World::Report::Error,
-                         "editor: the scene has more than one root; the save writes one");
-        }
-        else if (any_object.valid() && resonate::scene::capture(world, root, xml, error))
+        if (!roots.empty() &&
+            resonate::scene::capture(world,
+                                     resonate::Span<const Entity>(roots.data(), roots.size()),
+                                     xml, error))
         {
             /* A desktop editor asks the platform where the document goes; the
                path it answers is remembered, so only the first save asks. A
@@ -1795,6 +1781,8 @@ int runEditor(const std::vector<std::string>& arguments)
     extension.ready_context = &state;
     extension.keys = &editorKeys;
     extension.keys_context = &state;
+    extension.scene = &sceneRootsLoaded;
+    extension.scene_context = &state;
     return resonate::startup::run(editor_arguments, "Resonate Editor", extension);
 }
 

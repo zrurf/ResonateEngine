@@ -690,7 +690,8 @@ bool readTextFile(const std::string& path, std::string& out)
 /* The demo scene: content/scene/demo.rscene instantiated through the scene
    adapter. The middle box's state machine and the ceiling light grid stay
    procedural: animation authoring and stress fixtures are not content yet. */
-void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player)
+void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player,
+                      std::vector<ecs::Entity>& out_roots)
 {
     /* A host that stages its assets elsewhere (Android) names the document
        directly; the setting and the content walk cover desktop runs. */
@@ -723,7 +724,7 @@ void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player)
 
     ecs::Entity root{};
     std::string error;
-    if (!scene::instantiate(world, *document, &contentComponents(), root, error))
+    if (!scene::instantiate(world, *document, &contentComponents(), root, error, &out_roots))
     {
         std::fprintf(stderr, "resonate: scene: %s: %s\n", path.c_str(), error.c_str());
         return;
@@ -1507,7 +1508,12 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
 #endif
         /* The demo scene is what the window shows until scenes load from disk;
            it is plain ECS entities, created before the frame loop starts. */
-        composeDemoScene(world, &animation_player);
+        std::vector<ecs::Entity> scene_roots;
+        composeDemoScene(world, &animation_player, scene_roots);
+        if (extension.scene != nullptr)
+        {
+            extension.scene(extension.scene_context, world, scene_roots);
+        }
         /* The host's own schedule entries come after the engine's, so they see
            this frame's layout results; the ready hook runs once the document
            exists. */

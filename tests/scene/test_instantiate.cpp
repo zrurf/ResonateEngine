@@ -582,6 +582,46 @@ TEST_CASE("scene: every scene component is capturable or deliberately not", "[sc
            {"resonate.scene.SourceKey", "resonate.scene.TextureAlias"});
 }
 
+TEST_CASE("scene: several roots write back as one document", "[scene]")
+{
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kScene, &sceneSchemas(), diagnostics);
+    REQUIRE(document != nullptr);
+
+    Fixture fixture;
+    REQUIRE(resonate::ui::registerComponents(fixture.world));
+    Entity root{};
+    std::string error;
+    REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
+                                         error));
+    const Entity ground = resonate::scene::findByKey(fixture.world, root, "ground");
+    REQUIRE(ground.valid());
+
+    /* The document's root object and the ground become siblings. */
+    resonate::ecs::CommandBuffer commands(fixture.world);
+    resonate::hierarchy::clearParent(commands, ground);
+    fixture.world.play(commands);
+    const std::array<resonate::ecs::Entity, 2> roots{root, ground};
+    std::string xml;
+    REQUIRE(resonate::scene::capture(fixture.world,
+                                     resonate::Span<const resonate::ecs::Entity>(roots.data(), 2U),
+                                     xml, error));
+    auto captured = resonate::dom::Document::parse(xml, &sceneSchemas(), diagnostics);
+    REQUIRE(captured != nullptr);
+
+    World second{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(second));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
+    REQUIRE(resonate::ui::registerComponents(second));
+    Entity first_root{};
+    std::vector<Entity> restored;
+    REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), first_root, error,
+                                         &restored));
+    CHECK(restored.size() == 2U);
+    CHECK(resonate::scene::findByKey(second, restored[0], "yard-root").valid());
+    CHECK(resonate::scene::findByKey(second, restored[1], "ground").valid());
+}
+
 TEST_CASE("scene: a malformed document is refused with a reason", "[scene]")
 {
     const char* const broken = R"xml(<document version="1" schemas="resonate.scene">

@@ -32,6 +32,12 @@ namespace resonate::scene
    with no Parent answers itself. */
 [[nodiscard]] ecs::Entity rootOf(ecs::World& world, ecs::Entity entity);
 
+/* Writes several scene roots as one document: one Scene, one Object per root,
+   and one Resources block covering every alias they use. False with a named
+   error when a root is not alive. */
+[[nodiscard]] bool capture(ecs::World& world, resonate::Span<const ecs::Entity> roots,
+                           std::string& out_xml, std::string& error);
+
 /* Writes the subtree rooted at `root` as a scene document. False with a named
    error when the root is not alive. */
 [[nodiscard]] bool capture(ecs::World& world, ecs::Entity root, std::string& out_xml,

@@ -67,6 +67,12 @@ struct HostExtension
        chord a focused text field consumed is not replayed here. */
     bool (*keys)(void* context, ecs::World& world, const ResonateInput* input) = nullptr;
     void* keys_context = nullptr;
+    /* The scene roots the run's document produced, handed over once the scene
+       is composed: a host that tears the scene down or writes it back needs
+       every one of them. Empty when the run loaded no scene document. */
+    void (*scene)(void* context, ecs::World& world,
+                  const std::vector<ecs::Entity>& roots) = nullptr;
+    void* scene_context = nullptr;
 };
 
 /* The content vocabulary a run composes: every module's generated schema and
