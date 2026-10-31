@@ -15,6 +15,10 @@
       <Label key="brand" class="label" width="150" height="24" text="Resonate Editor"
              font_size="13" font_weight="600" v_align="Middle"/>
       <Box key="tb-sep-1" class="separator" width="1" height="18"/>
+      <Button key="tb-open" class="tool" width="24" height="24">
+        <Icon key="tb-open-icon" class="icon" x="4" y="4" width="16" height="16"
+              icon="folder-open"/>
+      </Button>
       <Button key="tb-save" class="tool" width="24" height="24">
         <Icon key="tb-save-icon" class="icon" x="4" y="4" width="16" height="16" icon="save"/>
       </Button>

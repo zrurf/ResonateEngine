@@ -115,6 +115,12 @@ struct EditorState
     /* Where the scene was saved last: empty until the chooser picked a path,
        so the first save asks and later ones write straight to it. */
     std::string document_path{};
+    bool open_pending = false;
+    /* The scene root the load produced, and the hidden row every visible tree
+       row is cloned from: both let an open replace the scene without losing
+       the list's shape. */
+    Entity scene_root{};
+    Entity row_prototype{};
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -311,21 +317,6 @@ resonate::ecs::Entity cloneRow(EditorState& state, resonate::ecs::World& world, 
     }
     world.play(commands);
     return row;
-}
-
-/* Reshapes a row's caption to `name`: the row's first child carrying text. */
-void setRowCaption(EditorState& state, resonate::ecs::World& world, Entity row,
-                   const std::string& name)
-{
-    std::string error;
-    for (const Entity child : resonate::hierarchy::children(world, row))
-    {
-        if (world.get<resonate::ui::Text>(child) != nullptr)
-        {
-            (void)resonate::ui::setText(world, state.canvas, child, name, error);
-            return;
-        }
-    }
 }
 
 /* The world's report sink: the console's ring keeps the latest lines. */
@@ -649,6 +640,93 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
             selectRow(target, state.scene_list, copy_row);
         });
 }
+void rebuildSceneList(EditorState& state, resonate::ecs::World& world)
+{
+    if (!state.row_prototype.valid() || !world.alive(state.row_prototype))
+    {
+        return;
+    }
+    for (const auto& [row, box] : state.box_rows)
+    {
+        (void)box;
+        if (world.alive(row))
+        {
+            destroySubtree(world, row);
+        }
+    }
+    state.box_rows.clear();
+
+    std::vector<Entity> boxes;
+    state.boxes.forEachChunk(
+        [](void* context, resonate::ecs::ChunkView view)
+        {
+            auto* collected = static_cast<std::vector<Entity>*>(context);
+            for (std::uint32_t row = 0U; row < view.count; ++row)
+            {
+                collected->push_back(view.entities[row]);
+            }
+        },
+        &boxes);
+    if (!boxes.empty())
+    {
+        state.scene_root = resonate::scene::rootOf(world, boxes[0]);
+    }
+    /* An unnamed object falls back to its position in the list. */
+    const auto nameOf = [&world, &boxes](std::size_t index)
+    {
+        std::string name = resonate::hierarchy::nameOf(world, boxes[index]);
+        if (name.empty())
+        {
+            name = localized("editor.object_fallback") + " " + std::to_string(index + 1U);
+        }
+        return name;
+    };
+    for (std::size_t index = 0U; index < boxes.size(); ++index)
+    {
+        const Entity row =
+            cloneRow(state, world, state.row_prototype, state.scene_list, nameOf(index));
+        state.box_rows.emplace_back(row, boxes[index]);
+    }
+}
+
+/* Replaces the scene with the document at `path`. The new one parses and
+   instantiates first, so a broken file leaves the running scene alone. */
+bool loadSceneDocument(EditorState& state, resonate::ecs::World& world, const std::string& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open())
+    {
+        std::fprintf(stderr, "editor: %s: cannot read the scene\n", path.c_str());
+        return false;
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document =
+        resonate::dom::Document::parse(text, &resonate::startup::contentSchema(), diagnostics);
+    Entity root{};
+    std::string error;
+    if (document == nullptr ||
+        !resonate::scene::instantiate(world, *document, &resonate::startup::contentComponents(),
+                                      root, error))
+    {
+        std::fprintf(stderr, "editor: %s: %s\n", path.c_str(),
+                     error.empty() ? "the document did not parse" : error.c_str());
+        return false;
+    }
+    /* The demo document has one root; a document with more would leave the
+       others running, which the editor does not show and this does not solve. */
+    if (world.alive(state.scene_root))
+    {
+        destroySubtree(world, state.scene_root);
+    }
+    state.scene_root = root;
+    state.document_path = path;
+    state.shown_row = Entity{};
+    rebuildSceneList(state, world);
+    return true;
+}
+
 
 /* The document the demo was loaded from: beside the executable in a shipped
    layout, in the source tree during development; the walk covers both. This is
@@ -956,6 +1034,17 @@ bool saveScene(void* context, resonate::ecs::World& world, resonate::ecs::Entity
     return true;
 }
 
+bool openScene(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+               resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->open_pending = true;
+    return true;
+}
+
 bool undoEdit(void* context, resonate::ecs::World&, resonate::ecs::Entity,
               resonate::ui::EventPhase phase, resonate::ui::Event&)
 {
@@ -1029,6 +1118,11 @@ bool editorKeys(void* context, resonate::ecs::World& world, const ResonateInput*
     if (input->key_pressed(input->self, RESONATE_KEY_D) != 0)
     {
         state->duplicate_pending = true;
+        return true;
+    }
+    if (input->key_pressed(input->self, RESONATE_KEY_O) != 0)
+    {
+        state->open_pending = true;
         return true;
     }
     if (input->key_pressed(input->self, RESONATE_KEY_Z) != 0)
@@ -1192,6 +1286,29 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         state->duplicate_pending = false;
         duplicateSelected(*state, world);
+    }
+    if (state->open_pending)
+    {
+        state->open_pending = false;
+        char chosen[1024] = {};
+        int32_t selected = 0;
+        const ResonatePalStatus status = resonate_pal_open_dialog(
+            "Open Scene", "rscene", chosen, static_cast<std::uint32_t>(sizeof(chosen)),
+            &selected);
+        if (status == RESONATE_PAL_OK && selected != 0)
+        {
+            if (loadSceneDocument(*state, world, chosen))
+            {
+                std::string status_error;
+                (void)resonate::ui::setText(world, state->canvas, state->status,
+                                            localized("editor.opened"), status_error);
+            }
+        }
+        else if (status != RESONATE_PAL_OK)
+        {
+            world.report(resonate::ecs::World::Report::Warning,
+                         "editor: no file chooser on this platform");
+        }
     }
     if (state->save_pending)
     {
@@ -1512,6 +1629,10 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
 
 /* Runs once the document exists: every widget the editor drives is addressed by
    its authored key. */
+/* The scene tree lists the real scene: one row per object, cloned from the
+   hidden prototype so the list can be rebuilt without losing its shape. The
+   query only collects, because cloning is a structural change and the world
+   refuses one while a query is walking its chunks. */
 void ready(void* context, resonate::ecs::World& world, Entity canvas)
 {
     auto* state = static_cast<EditorState*>(context);
@@ -1580,6 +1701,7 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
         }
     };
     attachClick("file", &saveScene);
+    attachClick("tb-open", &openScene);
     attachClick("tb-undo", &undoEdit);
     attachClick("tb-redo", &redoEdit);
     attachClick("tb-duplicate", &duplicateEdit);
@@ -1602,47 +1724,16 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     desc.all = resonate::Span<const resonate::ecs::ComponentIndex>(all, 2U);
     state->boxes = world.createQuery(desc);
 
-    /* The scene tree lists the real scene: the authored row stands for the
-       first object and is cloned for the rest. The query only collects, because
-       cloning is a structural change and the world refuses one while a query is
-       walking its chunks. */
-    const resonate::ecs::Entity template_row =
-        resonate::ui::findByKey(world, canvas, "crate-a");
+    /* The scene tree lists the real scene. The authored row becomes the hidden
+       prototype every visible row is cloned from, so an open can rebuild the
+       list after destroying the old rows. */
+    const resonate::ecs::Entity template_row = resonate::ui::findByKey(world, canvas, "crate-a");
     const resonate::ecs::Entity scene_list = state->scene_list;
     if (template_row.valid() && scene_list.valid())
     {
-        std::vector<resonate::ecs::Entity> boxes;
-        state->boxes.forEachChunk(
-            [](void* context, resonate::ecs::ChunkView view)
-            {
-                auto* collected = static_cast<std::vector<resonate::ecs::Entity>*>(context);
-                for (std::uint32_t row = 0; row < view.count; ++row)
-                {
-                    collected->push_back(view.entities[row]);
-                }
-            },
-            &boxes);
-        /* An unnamed object falls back to its position in the list. */
-        const auto nameOf = [&world, &boxes](std::size_t index)
-        {
-            std::string name = resonate::hierarchy::nameOf(world, boxes[index]);
-            if (name.empty())
-            {
-                name = localized("editor.object_fallback") + " " + std::to_string(index + 1U);
-            }
-            return name;
-        };
-        if (!boxes.empty())
-        {
-            setRowCaption(*state, world, template_row, nameOf(0U));
-            state->box_rows.emplace_back(template_row, boxes[0]);
-        }
-        for (std::size_t index = 1U; index < boxes.size(); ++index)
-        {
-            const resonate::ecs::Entity tree_row =
-                cloneRow(*state, world, template_row, scene_list, nameOf(index));
-            state->box_rows.emplace_back(tree_row, boxes[index]);
-        }
+        resonate::ui::setShown(world, template_row, false);
+        state->row_prototype = template_row;
+        rebuildSceneList(*state, world);
     }
 }
 

@@ -9,6 +9,7 @@
   <entry key="editor.undo">撤销</entry>
   <entry key="editor.redo">重做</entry>
   <entry key="editor.saved">已保存 场景</entry>
+  <entry key="editor.opened">已打开 场景</entry>
   <entry key="editor.deleted">已删除</entry>
   <entry key="editor.copied">已复制</entry>
   <entry key="editor.delete">删除</entry>
