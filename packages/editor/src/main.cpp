@@ -10,6 +10,7 @@
 #include <functional>
 #include <system_error>
 #include <limits>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -423,18 +424,15 @@ void runRedo(EditorState& state, resonate::ecs::World& world)
                                 localized("editor.redo") + " " + state.undo_stack.back().name, status_error);
 }
 
-/* Delete removes the selected object from the scene and from the tree list.
-   The row survives, hidden: it is what an undo shows again and it keeps the
-   caption. The object is captured as a document first, so undo reinstantiates
-   it under the parent it had. */
+/* Deletes an entity with everything under it: the hierarchy's own destroy
+   command detaches the children first, so a post-order walk keeps the subtree
+   together. */
 void destroySubtree(resonate::ecs::World& world, Entity entity)
 {
     if (!world.alive(entity))
     {
         return;
     }
-    /* The hierarchy's destroy detaches a node's children, so the walk destroys
-       the children first and keeps the subtree together. */
     std::vector<Entity> order;
     std::vector<Entity> stack{entity};
     while (!stack.empty())
@@ -475,6 +473,32 @@ void selectRow(resonate::ecs::World& world, Entity container, Entity row)
     }
 }
 
+void rebuildSceneList(EditorState& state, resonate::ecs::World& world);
+
+/* The row showing `entity`, or an invalid one when the scene no longer has it
+   (a rebuild replaces every row). */
+Entity rowOf(const EditorState& state, Entity entity)
+{
+    for (const auto& [row, object] : state.box_rows)
+    {
+        if (object == entity)
+        {
+            return row;
+        }
+    }
+    return Entity{};
+}
+
+/* Points the inspector at `entity`: what an undo or a duplicate leaves
+   selected. */
+void selectEntity(EditorState& state, resonate::ecs::World& world, Entity entity)
+{
+    selectRow(world, state.scene_list, rowOf(state, entity));
+}
+
+/* Delete removes the selected object from the scene and from the tree list.
+   The object is captured as a document first, so undo reinstantiates it under
+   the parent it had. The list rebuilds around the change. */
 void deleteSelected(EditorState& state, resonate::ecs::World& world)
 {
     const Entity row = resonate::ui::selectedChild(world, state.scene_list);
@@ -496,20 +520,21 @@ void deleteSelected(EditorState& state, resonate::ecs::World& world)
     }
     const Entity parent = resonate::hierarchy::parentOf(world, entity);
     const std::string name = resonate::hierarchy::nameOf(world, entity);
-
-    selectRow(world, state.scene_list, Entity{});
-    (void)resonate::ui::setShown(world, row, false);
-    std::erase_if(state.box_rows, [row](const auto& pair) { return pair.first == row; });
     destroySubtree(world, entity);
+    /* Rows are derived from the hierarchy, so the subtree's rows went with it. */
+    rebuildSceneList(state, world);
     {
         std::string status_error;
-        (void)resonate::ui::setText(world, state.canvas, state.status, localized("editor.deleted") + " " + name,
-                                    status_error);
+        (void)resonate::ui::setText(world, state.canvas, state.status,
+                                    localized("editor.deleted") + " " + name, status_error);
     }
 
+    /* Both closures need the object the other side created: an undo makes a
+       new entity, and the redo has to delete that one. */
+    auto current = std::make_shared<Entity>();
     pushUndo(
         state, localized("editor.delete") + " " + name,
-        [&state, row, parent, xml](resonate::ecs::World& target)
+        [&state, parent, xml, current](resonate::ecs::World& target)
         {
             std::vector<resonate::dom::Diagnostic> diagnostics;
             auto document = resonate::dom::Document::parse(
@@ -525,27 +550,24 @@ void deleteSelected(EditorState& state, resonate::ecs::World& world)
                 std::fprintf(stderr, "editor: undo delete: %s\n", restore_error.c_str());
                 return;
             }
-            (void)resonate::ui::setShown(target, row, true);
-            state.box_rows.emplace_back(row, restored);
-            selectRow(target, state.scene_list, row);
+            *current = restored;
+            rebuildSceneList(state, target);
+            selectEntity(state, target, restored);
         },
-        [&state, row](resonate::ecs::World& target)
+        [&state, current](resonate::ecs::World& target)
         {
-            const Entity current = entityOfRow(state, row);
-            if (current.valid())
+            if (target.alive(*current))
             {
-                destroySubtree(target, current);
+                destroySubtree(target, *current);
             }
-            selectRow(target, state.scene_list, Entity{});
-            (void)resonate::ui::setShown(target, row, false);
-            std::erase_if(state.box_rows, [row](const auto& pair) { return pair.first == row; });
+            rebuildSceneList(state, target);
         });
 }
 
 /* Duplicate copies the selected object through the same capture the delete
    uses and instantiates it beside its original. The copy drops the authored
-   key -- a stable id names one object -- and takes a copy-suffixed name; its row is
-   cloned from the row of the object it came from. */
+   key -- a stable id names one object -- and takes a copy-suffixed name; the
+   list rebuilds and selects it. */
 void duplicateSelected(EditorState& state, resonate::ecs::World& world)
 {
     const Entity row = resonate::ui::selectedChild(world, state.scene_list);
@@ -589,37 +611,33 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
     std::string name_error;
     (void)resonate::hierarchy::setName(world, copy, name, name_error);
 
-    const Entity copy_row = cloneRow(state, world, row, state.scene_list, name);
-    state.box_rows.emplace_back(copy_row, copy);
-    selectRow(world, state.scene_list, copy_row);
+    rebuildSceneList(state, world);
+    selectEntity(state, world, copy);
     {
         std::string status_error;
-        (void)resonate::ui::setText(world, state.canvas, state.status, localized("editor.copied") + " " + name,
-                                    status_error);
+        (void)resonate::ui::setText(world, state.canvas, state.status,
+                                    localized("editor.copied") + " " + name, status_error);
     }
 
-    /* The redo reinstantiates the copy as it stands now (its own name, no key),
-       so the entry stores a capture of the copy itself. */
+    /* The redo reinstantiates the copy as it stands now (its own name, no
+       key), so the entry stores a capture of the copy itself. */
     std::string copy_xml;
     if (!resonate::scene::capture(world, copy, copy_xml, error))
     {
         copy_xml = xml;
     }
+    auto current = std::make_shared<Entity>(copy);
     pushUndo(
         state, localized("editor.duplicate") + " " + name,
-        [&state, copy_row](resonate::ecs::World& target)
+        [&state, current](resonate::ecs::World& target)
         {
-            const Entity current = entityOfRow(state, copy_row);
-            if (current.valid())
+            if (target.alive(*current))
             {
-                destroySubtree(target, current);
+                destroySubtree(target, *current);
             }
-            selectRow(target, state.scene_list, Entity{});
-            (void)resonate::ui::setShown(target, copy_row, false);
-            std::erase_if(state.box_rows,
-                          [copy_row](const auto& pair) { return pair.first == copy_row; });
+            rebuildSceneList(state, target);
         },
-        [&state, copy_row, parent, copy_xml](resonate::ecs::World& target)
+        [&state, current, parent, copy_xml](resonate::ecs::World& target)
         {
             std::vector<resonate::dom::Diagnostic> redo_diagnostics;
             auto redo_document = resonate::dom::Document::parse(
@@ -635,20 +653,51 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
                 std::fprintf(stderr, "editor: redo duplicate: %s\n", redo_error.c_str());
                 return;
             }
-            (void)resonate::ui::setShown(target, copy_row, true);
-            state.box_rows.emplace_back(copy_row, restored);
-            selectRow(target, state.scene_list, copy_row);
+            *current = restored;
+            rebuildSceneList(state, target);
+            selectEntity(state, target, restored);
         });
 }
+
+/* Every object under the scene roots, parents before children, with its depth:
+   the tree's row order. */
+void collectSceneTree(resonate::ecs::World& world, const std::vector<Entity>& roots,
+                      std::vector<std::pair<Entity, std::uint32_t>>& out)
+{
+    std::vector<std::pair<Entity, std::uint32_t>> stack;
+    for (std::size_t index = roots.size(); index > 0U; --index)
+    {
+        stack.emplace_back(roots[index - 1U], 0U);
+    }
+    while (!stack.empty())
+    {
+        const std::pair<Entity, std::uint32_t> entry = stack.back();
+        stack.pop_back();
+        if (!world.alive(entry.first))
+        {
+            continue;
+        }
+        out.push_back(entry);
+        const auto children = resonate::hierarchy::children(world, entry.first);
+        for (std::size_t index = children.size(); index > 0U; --index)
+        {
+            stack.emplace_back(children[index - 1U], entry.second + 1U);
+        }
+    }
+}
+
+/* Rebuilds the scene tree: one row per object, its depth as a left margin, all
+   cloned from the hidden prototype. Rows are derived state, so every edit that
+   changes the hierarchy calls this rather than patching rows. */
 void rebuildSceneList(EditorState& state, resonate::ecs::World& world)
 {
     if (!state.row_prototype.valid() || !world.alive(state.row_prototype))
     {
         return;
     }
-    for (const auto& [row, box] : state.box_rows)
+    for (const auto& [row, object] : state.box_rows)
     {
-        (void)box;
+        (void)object;
         if (world.alive(row))
         {
             destroySubtree(world, row);
@@ -656,32 +705,50 @@ void rebuildSceneList(EditorState& state, resonate::ecs::World& world)
     }
     state.box_rows.clear();
 
-    std::vector<Entity> boxes;
-    state.boxes.forEachChunk(
-        [](void* context, resonate::ecs::ChunkView view)
-        {
-            auto* collected = static_cast<std::vector<Entity>*>(context);
-            for (std::uint32_t row = 0U; row < view.count; ++row)
-            {
-                collected->push_back(view.entities[row]);
-            }
-        },
-        &boxes);
-    /* An unnamed object falls back to its position in the list. */
-    const auto nameOf = [&world, &boxes](std::size_t index)
+    std::vector<Entity> roots = state.scene_roots;
+    if (roots.empty())
     {
-        std::string name = resonate::hierarchy::nameOf(world, boxes[index]);
+        /* A scene nobody declared: the root each mesh object leads to. */
+        std::vector<Entity> boxes;
+        state.boxes.forEachChunk(
+            [](void* context, resonate::ecs::ChunkView view)
+            {
+                auto* collected = static_cast<std::vector<Entity>*>(context);
+                for (std::uint32_t row = 0U; row < view.count; ++row)
+                {
+                    collected->push_back(view.entities[row]);
+                }
+            },
+            &boxes);
+        for (const Entity box : boxes)
+        {
+            const Entity root = resonate::scene::rootOf(world, box);
+            if (root.valid() && std::find(roots.begin(), roots.end(), root) == roots.end())
+            {
+                roots.push_back(root);
+            }
+        }
+    }
+
+    std::vector<std::pair<Entity, std::uint32_t>> objects;
+    collectSceneTree(world, roots, objects);
+    for (std::size_t index = 0U; index < objects.size(); ++index)
+    {
+        const Entity object = objects[index].first;
+        const std::uint32_t depth = objects[index].second;
+        std::string name = resonate::hierarchy::nameOf(world, object);
         if (name.empty())
         {
             name = localized("editor.object_fallback") + " " + std::to_string(index + 1U);
         }
-        return name;
-    };
-    for (std::size_t index = 0U; index < boxes.size(); ++index)
-    {
-        const Entity row =
-            cloneRow(state, world, state.row_prototype, state.scene_list, nameOf(index));
-        state.box_rows.emplace_back(row, boxes[index]);
+        const Entity row = cloneRow(state, world, state.row_prototype, state.scene_list, name);
+        if (depth > 0U)
+        {
+            resonate::ui::LayoutItem item;
+            item.margin_left = 12.0F * static_cast<float>(depth);
+            (void)world.add(row, item);
+        }
+        state.box_rows.emplace_back(row, object);
     }
 }
 
