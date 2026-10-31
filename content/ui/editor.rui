@@ -24,6 +24,15 @@
       <Button key="tb-redo" class="tool" width="24" height="24">
         <Icon key="tb-redo-icon" class="icon" x="4" y="4" width="16" height="16" icon="redo-2"/>
       </Button>
+      <Box key="tb-sep-edit" class="separator" width="1" height="18"/>
+      <Button key="tb-duplicate" class="tool" width="24" height="24">
+        <Icon key="tb-duplicate-icon" class="icon" x="4" y="4" width="16" height="16"
+              icon="copy"/>
+      </Button>
+      <Button key="tb-delete" class="tool" width="24" height="24">
+        <Icon key="tb-delete-icon" class="icon" x="4" y="4" width="16" height="16"
+              icon="trash-2"/>
+      </Button>
       <Box key="tb-sep-2" class="separator" width="1" height="18"/>
       <Button key="tb-play" class="tool" width="24" height="24">
         <Icon key="tb-play-icon" class="icon-accent" x="4" y="4" width="16" height="16"

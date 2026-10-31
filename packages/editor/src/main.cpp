@@ -949,6 +949,28 @@ bool redoEdit(void* context, resonate::ecs::World&, resonate::ecs::Entity,
     return true;
 }
 
+bool duplicateEdit(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+                   resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->duplicate_pending = true;
+    return true;
+}
+
+bool deleteEdit(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+                resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->delete_pending = true;
+    return true;
+}
+
 /* The editor's keyboard pass: Ctrl+S saves, Ctrl+Z and Ctrl+Y run the same
    undo and redo the toolbar buttons do, unless a text field owns the keys (a
    field's own editing is not the scene's). */
@@ -1530,6 +1552,8 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     attachClick("file", &saveScene);
     attachClick("tb-undo", &undoEdit);
     attachClick("tb-redo", &redoEdit);
+    attachClick("tb-duplicate", &duplicateEdit);
+    attachClick("tb-delete", &deleteEdit);
     attachToggle("tb-scene-pane", &toggleScene);
     attachToggle("tb-inspector", &toggleInspector);
     attachToggle("tb-console", &toggleConsole);
