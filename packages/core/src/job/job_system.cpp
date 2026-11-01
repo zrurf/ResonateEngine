@@ -92,12 +92,37 @@ class JobSystemImpl final : public JobSystem
   public:
     explicit JobSystemImpl(std::uint32_t worker_limit)
     {
-        if (resonate_pal_sync_create_semaphore(&classSemaphore_[0], 0) != RESONATE_PAL_OK ||
-            resonate_pal_sync_create_semaphore(&classSemaphore_[1], 0) != RESONATE_PAL_OK ||
-            resonate_pal_sync_create_semaphore(&excessSemaphore_, 0) != RESONATE_PAL_OK ||
-            resonate_pal_sync_create_mutex(&dagMutex_, 0) != RESONATE_PAL_OK ||
-            resonate_pal_sync_create_mutex(&globalMutex_, 0) != RESONATE_PAL_OK)
+        /* Every handle the pool needs is created up front; a partial set would
+           let submissions run without the locks that order them. A failure
+           leaves nothing behind, and the factory reports it as null. */
+        if (resonate_pal_sync_create_semaphore(&classSemaphore_[0], 0) != RESONATE_PAL_OK)
         {
+            return;
+        }
+        if (resonate_pal_sync_create_semaphore(&classSemaphore_[1], 0) != RESONATE_PAL_OK)
+        {
+            resonate_pal_sync_destroy_semaphore(&classSemaphore_[0]);
+            return;
+        }
+        if (resonate_pal_sync_create_semaphore(&excessSemaphore_, 0) != RESONATE_PAL_OK)
+        {
+            resonate_pal_sync_destroy_semaphore(&classSemaphore_[1]);
+            resonate_pal_sync_destroy_semaphore(&classSemaphore_[0]);
+            return;
+        }
+        if (resonate_pal_sync_create_mutex(&dagMutex_, 0) != RESONATE_PAL_OK)
+        {
+            resonate_pal_sync_destroy_semaphore(&excessSemaphore_);
+            resonate_pal_sync_destroy_semaphore(&classSemaphore_[1]);
+            resonate_pal_sync_destroy_semaphore(&classSemaphore_[0]);
+            return;
+        }
+        if (resonate_pal_sync_create_mutex(&globalMutex_, 0) != RESONATE_PAL_OK)
+        {
+            resonate_pal_sync_destroy_mutex(&dagMutex_);
+            resonate_pal_sync_destroy_semaphore(&excessSemaphore_);
+            resonate_pal_sync_destroy_semaphore(&classSemaphore_[1]);
+            resonate_pal_sync_destroy_semaphore(&classSemaphore_[0]);
             return;
         }
         sync_ = true;
@@ -158,6 +183,8 @@ class JobSystemImpl final : public JobSystem
            in is only fully built here. */
         ready_.store(true, std::memory_order_release);
     }
+
+    [[nodiscard]] bool initialized() const noexcept { return sync_; }
 
     ~JobSystemImpl() override
     {
@@ -856,7 +883,13 @@ class JobSystemImpl final : public JobSystem
 
 JobSystem* createJobSystem(std::uint32_t worker_limit)
 {
-    return new JobSystemImpl(worker_limit);
+    auto* system = new JobSystemImpl(worker_limit);
+    if (!system->initialized())
+    {
+        delete system;
+        return nullptr;
+    }
+    return system;
 }
 
 } // namespace resonate

@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <new>
+#include <type_traits>
 #include <vector>
 
 #include "resonate/core/allocator.h"
@@ -28,13 +30,19 @@ class Arena
     Arena(const Arena&) = delete;
     Arena& operator=(const Arena&) = delete;
 
-    /* Never null; the address is stable until reset. */
+    /* Null only when the backing allocator refuses a new block; the address is
+       stable until reset. */
     void* allocate(std::size_t size, std::size_t alignment = alignof(std::max_align_t));
 
-    /* Default-constructs one T from the bump. */
+    /* Default-constructs one T from the bump, or null when the block could not
+       be had. reset() runs no destructor, so T must be trivially
+       destructible. */
     template <typename T> T* allocate()
     {
-        return static_cast<T*>(allocate(sizeof(T), alignof(T)));
+        static_assert(std::is_trivially_destructible_v<T>,
+                      "arena storage is released without running destructors");
+        void* memory = allocate(sizeof(T), alignof(T));
+        return memory != nullptr ? ::new (memory) T() : nullptr;
     }
 
     /* Releases every block but the largest, which is kept for the next span. */

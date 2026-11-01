@@ -202,7 +202,7 @@ TEST_CASE("components follow the entity across archetype moves", "[ecs][world]")
     REQUIRE(world.entityCount() == 1U);
 
     /* Removing what is not there is a no-op, not a failure. */
-    REQUIRE_FALSE(world.remove<Position>(entity));
+    REQUIRE(world.remove<Position>(entity));
 
     const Position replacement{-1.0F, -2.0F, -3.0F};
     REQUIRE(world.add(entity, replacement) != nullptr);

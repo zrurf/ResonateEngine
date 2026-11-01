@@ -366,7 +366,8 @@ bool World::remove(Entity entity, ComponentIndex component)
     Archetype& source = *record->chunk->archetype;
     if (!source.mask.has(component))
     {
-        return false;
+        /* Nothing to do is the no-op the header promises. */
+        return true;
     }
 
     Archetype* target = impl_->edge(source, component, false);

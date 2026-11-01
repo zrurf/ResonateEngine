@@ -16,6 +16,12 @@ using resonate::FrameArenas;
 namespace
 {
 
+struct Initialized
+{
+    std::uint32_t value = 0x5A5A5A5AU;
+    std::uint8_t flag = 3U;
+};
+
 /* Records the exact sizes it handed out, so the test can return them the way
    the allocator interface demands. */
 class TrackingAllocator final : public Allocator
@@ -89,6 +95,17 @@ TEST_CASE("an arena hands out stable, aligned addresses", "[core][arena]")
     /* Addresses never move, whatever came between. */
     REQUIRE(*first == 0x1234);
     REQUIRE(aligned != reinterpret_cast<std::uint64_t*>(first));
+}
+
+TEST_CASE("an arena value is constructed from the bump", "[core][arena]")
+{
+    TrackingAllocator allocator;
+    Arena arena(allocator, 1024);
+
+    Initialized* value = arena.allocate<Initialized>();
+    REQUIRE(value != nullptr);
+    CHECK(value->value == 0x5A5A5A5AU);
+    CHECK(value->flag == 3U);
 }
 
 TEST_CASE("an arena reset releases its blocks and keeps one for reuse", "[core][arena]")
