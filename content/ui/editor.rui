@@ -226,8 +226,7 @@
               step="24" anchor_min="0 0" anchor_max="1 1"
               direction="Column" align="Stretch" gap="0"
               padding_left="0" padding_top="0" padding_right="0" padding_bottom="0">
-        <Panel key="machine-canvas" position="Absolute" x="0" y="0" width="0" height="320"
-               color="0.12 0.13 0.15 1">
+        <Panel key="machine-canvas" height="320" color="0.12 0.13 0.15 1">
         </Panel>
         <Panel key="machine-node-row" position="Absolute" x="20" y="20" width="120"
                height="56" color="0.2 0.22 0.26 1" shown="false" border_color="0.4 0.42 0.46 1"
