@@ -860,6 +860,14 @@ bool Document::setProperty(NodeHandle node, Field property)
     {
         return false;
     }
+    /* The writer emits these as attributes of the node element; a property
+       with one of those names would make the document re-parse as invalid. */
+    const std::string_view name = text(property.name);
+    if (name == "key" || name == "id" || name == "name" || name == "type" ||
+        name == "class")
+    {
+        return false;
+    }
     for (Field& field : slot->properties)
     {
         if (field.name == property.name)

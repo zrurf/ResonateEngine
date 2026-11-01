@@ -174,3 +174,18 @@ TEST_CASE("document: clone copies the subtree and chooses its identity", "[docum
     CHECK(document.name(stripped) == resonate::dom::kInvalidString);
     CHECK(document.classes(stripped).empty());
 }
+
+TEST_CASE("document: a property cannot shadow a node attribute", "[document]")
+{
+    Document document;
+    const NodeHandle node = document.create(document.intern("Panel"));
+    REQUIRE(document.setRoot(node));
+    for (const char* reserved : {"key", "id", "name", "type", "class"})
+    {
+        INFO("reserved attribute: " << reserved);
+        CHECK_FALSE(document.setProperty(node, Field{document.intern(reserved), "value"}));
+    }
+    CHECK(document.properties(node).empty());
+    CHECK(document.setProperty(node, Field{document.intern("text"), "value"}));
+    CHECK(document.properties(node).size() == 1U);
+}
