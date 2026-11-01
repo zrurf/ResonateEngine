@@ -375,6 +375,46 @@ TEST_CASE("scene: a capture keeps a texture reference as an asset id", "[scene]"
     CHECK(second_reference->guid_high == reference->guid_high);
 }
 
+/* The demo's authored clips and a manifest naming them, staged in a throwaway
+   directory: the machine's clip ids resolve through it. Answers the manifest
+   path. */
+std::string stageDemoClips()
+{
+    const std::filesystem::path staged =
+        std::filesystem::temp_directory_path() / "resonate_demo_clips";
+    std::filesystem::create_directories(staged);
+    std::string manifest;
+    for (const char* name : {"bob", "spin"})
+    {
+        const std::string source = std::string(RESONATE_SOURCE_DIR) + "/content/animation/" +
+                                   name + ".rclip";
+        std::ifstream in(source, std::ios::binary);
+        REQUIRE(in.is_open());
+        const std::string clip((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        std::ofstream out(staged / (std::string(name) + ".rclip"), std::ios::binary);
+        out << clip;
+        const std::string sidecar = std::string(RESONATE_SOURCE_DIR) + "/content/animation/" +
+                                    name + ".rclip.meta";
+        std::ifstream meta_in(sidecar, std::ios::binary);
+        REQUIRE(meta_in.is_open());
+        const std::string meta((std::istreambuf_iterator<char>(meta_in)),
+                               std::istreambuf_iterator<char>());
+        const std::size_t begin = meta.find('"');
+        const std::size_t end = meta.find('"', begin + 1U);
+        REQUIRE(begin != std::string::npos);
+        REQUIRE(end != std::string::npos);
+        const std::string guid = meta.substr(begin + 1U, end - begin - 1U);
+        manifest += "[[product]]\n";
+        manifest += "guid = \"" + guid + "\"\n";
+        manifest += "sub_id = 1\n";
+        manifest += std::string("path = \"") + name + ".rclip\"\n";
+    }
+    std::ofstream manifest_out(staged / "products.toml", std::ios::binary);
+    manifest_out << manifest;
+    return (staged / "products.toml").string();
+}
+
 TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[scene]")
 {
     std::string text;
@@ -390,10 +430,13 @@ TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[sce
 
     Fixture fixture;
     REQUIRE(resonate::ui::registerComponents(fixture.world));
-    Entity root{};
+    resonate::animation::AnimationPlayer player;
     std::string error;
+    const std::string demo_manifest = stageDemoClips();
+    REQUIRE(player.loadManifest(demo_manifest, error));
+    Entity root{};
     REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
-                                         error));
+                                         error, nullptr, &player));
     INFO("instantiate: " << error);
 
     /* The editor's save writes this capture back over the authored file: every
@@ -420,9 +463,13 @@ TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[sce
     REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
     REQUIRE(resonate::ui::registerComponents(second));
     REQUIRE(resonate::animation::AnimationPlayer::registerComponents(second));
+    resonate::animation::AnimationPlayer second_player;
+    REQUIRE(second_player.loadManifest(demo_manifest, error));
     Entity second_root{};
-    REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
-                                         error));
+    const bool ok = resonate::scene::instantiate(second, *captured, &sceneComponents(),
+                                                 second_root, error, nullptr, &second_player);
+    INFO("instantiate: " << error);
+    REQUIRE(ok);
     for (const char* const key : {"box-a1", "box-a2", "box-a3", "box-b1", "box-center",
                                   "box-b3", "box-c1", "box-c2", "box-c3"})
     {
@@ -433,6 +480,18 @@ TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[sce
     }
     CHECK(second.get<resonate::render::TextureRef>(
               resonate::scene::findByKey(second, second_root, "ground")) == nullptr);
+
+    /* The machine survives the save: the middle box still cross-fades. */
+    const Entity center = resonate::scene::findByKey(second, second_root, "box-center");
+    REQUIRE(center.valid());
+    const auto* machine_state = second.get<resonate::animation::MachineState>(center);
+    REQUIRE(machine_state != nullptr);
+    const resonate::animation::StateMachine* machine =
+        second_player.machine(machine_state->machine);
+    REQUIRE(machine != nullptr);
+    CHECK(machine->states.size() == 2U);
+    CHECK(machine->initial == 0U);
+    CHECK(machine->transitions.size() == 2U);
 }
 
 TEST_CASE("scene: a document with several roots reports all of them", "[scene]")

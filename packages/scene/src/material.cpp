@@ -268,11 +268,15 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
 {
     if (player == nullptr)
     {
-        error = "a Machine needs the run's animation player";
-        return false;
+        /* A host without an animation player loads the scene without the
+           machine: the objects stand still rather than the load failing. */
+        world.report(ecs::World::Report::Warning,
+                     "animation: the scene has a machine but the run has no player");
+        return true;
     }
     animation::StateMachine machine;
     std::map<std::string, std::uint16_t> names;
+    std::vector<std::pair<std::string, asset::AssetId>> machine_aliases;
     std::string entry_name;
     /* The authored element, rebuilt from what the document actually said: the
        built definition lives in the player, so this text is what a capture
@@ -331,6 +335,7 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
                 return false;
             }
             id = found->second;
+            machine_aliases.emplace_back(alias_name, id);
         }
         else
         {
@@ -451,6 +456,19 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
         return false;
     }
     fragment += "</Machine>";
+    /* The alias references travel with the machine: a capture rebuilds the
+       Resources block from them, since nothing else remembers a machine
+       state's clip alias. */
+    for (const auto& [alias_name, id] : machine_aliases)
+    {
+        std::string asset_text = "@" + asset::formatGuid(id);
+        if (id.sub_id != 1U)
+        {
+            asset_text += ":" + std::to_string(id.sub_id);
+        }
+        fragment = "    <Resource key=\"" + escapeAttribute(alias_name) + "\" asset=\"" +
+                   asset_text + "\"/>\n" + fragment;
+    }
 
     const std::uint16_t initial = machine.initial;
     const animation::State& entry_state = machine.states[initial];

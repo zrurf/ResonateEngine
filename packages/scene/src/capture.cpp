@@ -20,6 +20,8 @@
 #include "resonate.hierarchy/components.gen.h"
 #include "resonate.hierarchy/nodes.gen.h"
 
+#include "material.h"
+
 namespace resonate::scene
 {
 namespace
@@ -301,7 +303,13 @@ void appendComponents(std::string& out, ecs::World& world, ecs::Entity entity)
                     const std::size_t line_end = text.find('\n', at);
                     const std::size_t stop =
                         line_end == std::string_view::npos ? text.size() : line_end;
-                    out += "      " + std::string(text.substr(at, stop - at)) + "\n";
+                    /* Resource lines already went into the document's
+                       Resources block. */
+                    if (text.substr(at, stop - at).find("<Resource ") ==
+                        std::string_view::npos)
+                    {
+                        out += "      " + std::string(text.substr(at, stop - at)) + "\n";
+                    }
                     at = stop + 1U;
                 }
                 continue;
@@ -416,6 +424,41 @@ void collectAliases(ecs::World& world, ecs::Entity entity,
         {
             out[std::string(name)] = asset::AssetId{reference->guid_low, reference->guid_high,
                                                     reference->sub_id};
+        }
+    }
+    /* A machine's clip aliases travel in its stored fragment as Resource
+       lines: they feed the document's Resources block, since nothing else
+       remembers what a machine state's alias meant. */
+    if (const auto* source = world.get<MachineSource>(entity); source != nullptr)
+    {
+        const std::string_view text = blobText(world, source->text);
+        for (std::size_t at = text.find("<Resource key=\""); at != std::string_view::npos;
+             at = text.find("<Resource key=\"", at + 1U))
+        {
+            const std::size_t key_begin = at + std::strlen("<Resource key=\"");
+            const std::size_t key_end = text.find('"', key_begin);
+            const std::size_t asset_begin = text.find("asset=\"@", key_end);
+            if (key_end == std::string_view::npos || asset_begin == std::string_view::npos)
+            {
+                continue;
+            }
+            const std::size_t asset_end = text.find('"', asset_begin + 8U);
+            if (asset_end == std::string_view::npos)
+            {
+                continue;
+            }
+            std::string_view id_text = text.substr(asset_begin + 8U, asset_end - asset_begin - 8U);
+            asset::AssetId id;
+            std::string id_error;
+            if (!parseAssetId(id_text, id, id_error))
+            {
+                continue;
+            }
+            const std::string name(text.substr(key_begin, key_end - key_begin));
+            if (out.find(name) == out.end())
+            {
+                out.emplace(std::move(name), id);
+            }
         }
     }
     for (const ecs::Entity child : hierarchy::children(world, entity))
