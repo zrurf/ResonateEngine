@@ -215,8 +215,14 @@ struct EditorState
     /* The entry field mirrors the machine's entry; a diff commits an edit. */
     Entity machine_entry_field{};
     std::string machine_entry_mirror{};
+    Entity machine_params_field{};
+    std::string machine_params_mirror{};
     Entity machine_loop_button{};
     Entity machine_clip_button{};
+    Entity machine_condition_add{};
+    Entity machine_condition_delete{};
+    bool machine_condition_add_pending = false;
+    bool machine_condition_delete_pending = false;
     /* A node drag: pressed on a box, the handler captures the pointer and
        moves the box live; the release latches the commit for the tick. */
     bool node_dragging = false;
@@ -641,6 +647,9 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
     (void)resonate::ui::setText(world, state.canvas, state.machine_entry_field, model.entry,
                                 entry_error);
     state.machine_entry_mirror = model.entry;
+    (void)resonate::ui::setText(world, state.canvas, state.machine_params_field,
+                                model.parameters, entry_error);
+    state.machine_params_mirror = model.parameters;
     if (!has_machine)
     {
         return;
@@ -1904,6 +1913,28 @@ bool machineCycleLoop(void* context, resonate::ecs::World&, resonate::ecs::Entit
     return true;
 }
 
+bool machineAddCondition(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+                         resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->machine_condition_add_pending = true;
+    return true;
+}
+
+bool machineDeleteCondition(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+                            resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->machine_condition_delete_pending = true;
+    return true;
+}
+
 bool machineCycleClip(void* context, resonate::ecs::World&, resonate::ecs::Entity,
                       resonate::ui::EventPhase phase, resonate::ui::Event&)
 {
@@ -2142,6 +2173,133 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                                 rebuildMachineRows(*state, target);
                             });
                     }
+                }
+            }
+        }
+    }
+    /* The parameters field commits like the entry field: a text that differs
+       from the mirror rewrites the machine's parameter list. */
+    if (state->machine_params_field.valid())
+    {
+        const std::string params_text =
+            resonate::ui::widgetText(world, state->machine_params_field);
+        if (params_text != state->machine_params_mirror)
+        {
+            state->machine_params_mirror = params_text;
+            const Entity entity = state->machine_shown_entity;
+            if (entity.valid() && world.alive(entity))
+            {
+                std::string before;
+                if (const auto* source = world.get<resonate::scene::MachineSource>(entity);
+                    source != nullptr && world.alive(source->text))
+                {
+                    const auto* bytes =
+                        static_cast<const char*>(world.blobData(source->text));
+                    const std::size_t size = world.blobSize(source->text);
+                    if (bytes != nullptr && size != 0U)
+                    {
+                        before.assign(bytes, size);
+                    }
+                }
+                resonate::scene::MachineModel model;
+                std::string parse_error;
+                if (!before.empty() &&
+                    resonate::scene::parseMachineFragment(before, model, parse_error))
+                {
+                    model.parameters = params_text;
+                    const std::string after =
+                        resonate::scene::serializeMachineFragment(model);
+                    if (after != before)
+                    {
+                        writeMachineFragment(world, entity, after);
+                        rebuildMachineRows(*state, world);
+                        pushUndo(
+                            *state, localized("editor.parameters") + " " + params_text,
+                            [&state, entity, before](resonate::ecs::World& target)
+                            {
+                                writeMachineFragment(target, entity, before);
+                                rebuildMachineRows(*state, target);
+                            },
+                            [&state, entity, after](resonate::ecs::World& target)
+                            {
+                                writeMachineFragment(target, entity, after);
+                                rebuildMachineRows(*state, target);
+                            });
+                    }
+                }
+            }
+        }
+    }
+    /* Condition add/delete on the selected transition. */
+    if (state->machine_condition_add_pending || state->machine_condition_delete_pending)
+    {
+        const bool add = state->machine_condition_add_pending;
+        const bool remove = state->machine_condition_delete_pending;
+        state->machine_condition_add_pending = false;
+        state->machine_condition_delete_pending = false;
+        const Entity entity = state->machine_shown_entity;
+        const Entity selected = resonate::ui::selectedChild(world, state->machine_list);
+        const auto transition_at = std::find(state->machine_transition_rows.begin(),
+                                             state->machine_transition_rows.end(), selected);
+        if (entity.valid() && world.alive(entity) &&
+            transition_at != state->machine_transition_rows.end())
+        {
+            const std::size_t index = static_cast<std::size_t>(
+                transition_at - state->machine_transition_rows.begin());
+            std::string before;
+            if (const auto* source = world.get<resonate::scene::MachineSource>(entity);
+                source != nullptr && world.alive(source->text))
+            {
+                const auto* bytes = static_cast<const char*>(world.blobData(source->text));
+                const std::size_t size = world.blobSize(source->text);
+                if (bytes != nullptr && size != 0U)
+                {
+                    before.assign(bytes, size);
+                }
+            }
+            resonate::scene::MachineModel model;
+            std::string parse_error;
+            if (!before.empty() &&
+                resonate::scene::parseMachineFragment(before, model, parse_error) &&
+                index < model.transitions.size())
+            {
+                std::string entry_name;
+                auto& conditions = model.transitions[index].conditions;
+                if (add)
+                {
+                    const std::string parameter =
+                        model.parameters.empty() ? "p0"
+                                                 : model.parameters.substr(
+                                                       0U, model.parameters.find(' '));
+                    conditions.push_back({parameter, "greater", "0"});
+                    entry_name = localized("editor.add_condition") + " " +
+                                 model.transitions[index].from + "->" +
+                                 model.transitions[index].to;
+                }
+                else if (!conditions.empty())
+                {
+                    entry_name = localized("editor.delete_condition") + " " +
+                                 conditions.back().parameter;
+                    conditions.pop_back();
+                }
+                if (!entry_name.empty())
+                {
+                    const std::string after =
+                        resonate::scene::serializeMachineFragment(model);
+                    writeMachineFragment(world, entity, after);
+                    rebuildMachineRows(*state, world);
+                    pushUndo(
+                        *state, entry_name,
+                        [&state, entity, before](resonate::ecs::World& target)
+                        {
+                            writeMachineFragment(target, entity, before);
+                            rebuildMachineRows(*state, target);
+                        },
+                        [&state, entity, after](resonate::ecs::World& target)
+                        {
+                            writeMachineFragment(target, entity, after);
+                            rebuildMachineRows(*state, target);
+                        });
                 }
             }
         }
@@ -2909,6 +3067,12 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
         resonate::ui::findByKey(world, canvas, "machine-entry-field");
     state->machine_loop_button = resonate::ui::findByKey(world, canvas, "machine-loop");
     state->machine_clip_button = resonate::ui::findByKey(world, canvas, "machine-clip");
+    state->machine_params_field =
+        resonate::ui::findByKey(world, canvas, "machine-params-field");
+    state->machine_condition_add =
+        resonate::ui::findByKey(world, canvas, "machine-add-condition");
+    state->machine_condition_delete =
+        resonate::ui::findByKey(world, canvas, "machine-delete-condition");
     state->splitter_console = resonate::ui::findByKey(world, canvas, "splitter-console");
     state->inspector = resonate::ui::findByKey(world, canvas, "inspector");
     state->console_pane = resonate::ui::findByKey(world, canvas, "console");
@@ -2960,6 +3124,8 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     attachClick("machine-delete", &machineDelete);
     attachClick("machine-loop", &machineCycleLoop);
     attachClick("machine-clip", &machineCycleClip);
+    attachClick("machine-add-condition", &machineAddCondition);
+    attachClick("machine-delete-condition", &machineDeleteCondition);
     state->status_fps = resonate::ui::findByKey(world, canvas, "status-fps");
     state->animation_value = resonate::ui::findByKey(world, canvas, "animation-value");
     if (const std::string products = productsPath(); !products.empty())
