@@ -68,6 +68,10 @@
         <Icon key="tb-console-icon" class="icon" x="4" y="4" width="16" height="16"
               icon="terminal"/>
       </Button>
+      <Button key="tb-machine" class="tool" width="24" height="24">
+        <Icon key="tb-machine-icon" class="icon" x="4" y="4" width="16" height="16"
+              icon="git-branch"/>
+      </Button>
     </Panel>
     <Box key="toolbar-line" class="separator" x="0" y="36" width="0" height="1"
          anchor_min="0 0" anchor_max="1 0"/>
@@ -148,6 +152,43 @@
     <Box key="splitter-console" class="splitter" x="286" y="-272" width="-572" height="6"
          anchor_min="0 1" anchor_max="1 1">
       <Splitter axis="1" target="console"/>
+    </Box>
+
+    <Panel key="machine" class="panel" x="-566" y="37" width="280" height="-63"
+           anchor_min="1 0" anchor_max="1 1"
+           direction="Column" align="Stretch" gap="0"
+           padding_left="0" padding_top="0" padding_right="0" padding_bottom="12">
+      <Label key="machine-header" class="pane-title" height="28" text="状态机"
+             font_size="12" font_weight="600" v_align="Middle" padding_left="12"/>
+      <Box key="machine-header-line" class="separator" height="1"/>
+      <Label key="machine-empty" class="label-dim" height="22" text="选中带状态机的对象"
+             font_size="12" v_align="Middle" padding_left="12"/>
+      <Scroll key="machine-scroll" position="Absolute" x="0" y="29" width="0" height="-30"
+              step="24" anchor_min="0 0" anchor_max="1 1"
+              direction="Column" align="Stretch" gap="0"
+              padding_left="0" padding_top="0" padding_right="0" padding_bottom="0">
+        <Panel key="machine-state-row" height="24" direction="Row" align="Center" gap="6"
+               padding_left="12" padding_right="12">
+          <Label key="machine-state-caption" class="label" height="24" text="状态"
+                 font_size="12" v_align="Middle">
+            <LayoutItem grow="1"/>
+          </Label>
+          <Selectable color="0.16 0.17 0.19 1"/>
+        </Panel>
+        <Panel key="machine-transition-row" height="24" direction="Row" align="Center" gap="6"
+               padding_left="12" padding_right="12">
+          <Label key="machine-transition-caption" class="label-dim" height="24" text="转换"
+                 font_size="12" v_align="Middle">
+            <LayoutItem grow="1"/>
+          </Label>
+          <Selectable color="0.16 0.17 0.19 1"/>
+        </Panel>
+      </Scroll>
+    </Panel>
+
+    <Box key="splitter-machine" class="splitter" x="-572" y="37" width="6" height="-63"
+         anchor_min="1 0" anchor_max="1 1">
+      <Splitter axis="0" target="machine"/>
     </Box>
 
     <Panel key="inspector" class="panel" x="-280" y="37" width="280" height="-63"

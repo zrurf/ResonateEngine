@@ -29,6 +29,7 @@
 #include "resonate.render/components.gen.h"
 #include "resonate.animation/components.gen.h"
 #include "resonate.scene/components.gen.h"
+#include <resonate/scene/machine_model.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/event.h>
 #include <resonate/ui/string_table.h>
@@ -47,15 +48,17 @@ namespace
 using resonate::ecs::Entity;
 
 /* The editor's pane geometry, beside the executable: the splitters own the
-   three sizes, the toolbar owns the three visibility flags. A missing or
-   malformed file keeps the authored defaults. */
+   sizes, the toolbar owns the visibility flags. A missing or malformed file
+   keeps the authored defaults. */
 struct Layout
 {
     float scene_width = 280.0F;
     float inspector_width = 280.0F;
+    float machine_width = 260.0F;
     float console_height = 240.0F;
     bool scene_shown = true;
     bool inspector_shown = true;
+    bool machine_shown = false;
     bool console_shown = true;
 };
 
@@ -140,6 +143,16 @@ struct EditorState
     Entity animation_value{};
     resonate::asset::Identity asset_ids;
     bool asset_ids_loaded = false;
+    /* The state machine pane: the pane and its divider, the two hidden row
+       prototypes, and the rows the selected object's machine currently has. */
+    Entity machine_pane{};
+    Entity splitter_machine{};
+    Entity machine_empty{};
+    Entity state_row_prototype{};
+    Entity transition_row_prototype{};
+    Entity machine_list{};
+    std::vector<Entity> machine_rows;
+    Entity machine_shown_entity{};
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -488,6 +501,87 @@ void selectRow(resonate::ecs::World& world, Entity container, Entity row)
             selectable->selected = selected;
             (void)world.markChanged<resonate::ui::Selectable>(child);
         }
+    }
+}
+
+/* Rebuilds the machine pane's rows from the selected object's stored
+   fragment: one row per state and one per transition, captions carrying the
+   authoring. Rows are derived state, so the pane rebuilds whole. */
+void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
+{
+    if (!state.state_row_prototype.valid() || !state.transition_row_prototype.valid() ||
+        !state.machine_list.valid() || !world.alive(state.state_row_prototype) ||
+        !world.alive(state.transition_row_prototype) || !world.alive(state.machine_list))
+    {
+        return;
+    }
+    for (const Entity row : state.machine_rows)
+    {
+        if (world.alive(row))
+        {
+            destroySubtree(world, row);
+        }
+    }
+    state.machine_rows.clear();
+
+    const Entity entity = state.machine_shown_entity;
+    resonate::scene::MachineModel model;
+    bool has_machine = false;
+    if (entity.valid() && world.alive(entity))
+    {
+        if (const auto* source = world.get<resonate::scene::MachineSource>(entity);
+            source != nullptr && world.alive(source->text))
+        {
+            const auto* bytes = static_cast<const char*>(world.blobData(source->text));
+            const std::size_t size = world.blobSize(source->text);
+            if (bytes != nullptr && size != 0U)
+            {
+                std::string parse_error;
+                has_machine = resonate::scene::parseMachineFragment(
+                    std::string_view(bytes, size), model, parse_error);
+            }
+        }
+    }
+    (void)resonate::ui::setShown(world, state.machine_empty, !has_machine);
+    if (!has_machine)
+    {
+        return;
+    }
+    for (const resonate::scene::MachineModelState& machine_state : model.states)
+    {
+        std::string caption = machine_state.name + " · " + machine_state.clip;
+        if (machine_state.looping == "false")
+        {
+            caption += " · 不循环";
+        }
+        const Entity row =
+            cloneRow(state, world, state.state_row_prototype, state.machine_list, caption);
+        state.machine_rows.push_back(row);
+    }
+    for (const resonate::scene::MachineModelTransition& transition : model.transitions)
+    {
+        std::string caption =
+            transition.from + " → " + transition.to;
+        if (!transition.fade.empty())
+        {
+            caption += " · " + transition.fade + "s";
+        }
+        if (transition.at_end == "true")
+        {
+            caption += " · 结束时";
+        }
+        if (transition.sync == "true")
+        {
+            caption += " · 同步";
+        }
+        for (const resonate::scene::MachineModelCondition& condition : transition.conditions)
+        {
+            caption += " · " + condition.parameter + " " + condition.test + " " +
+                       condition.value;
+        }
+        const Entity row = cloneRow(state, world, state.transition_row_prototype,
+                                    state.machine_list, caption);
+        state.machine_rows.push_back(row);
     }
 }
 
@@ -1040,6 +1134,14 @@ Layout loadLayout()
             {
                 layout.console_shown = value != 0.0F;
             }
+            else if (name == "machine-shown")
+            {
+                layout.machine_shown = value != 0.0F;
+            }
+            else if (name == "machine-width" && value > 0.0F)
+            {
+                layout.machine_width = value;
+            }
         }
     }
     std::fclose(file);
@@ -1056,8 +1158,10 @@ void saveLayout(const Layout& layout)
     std::fprintf(file, "scene-width=%.0f\n", static_cast<double>(layout.scene_width));
     std::fprintf(file, "inspector-width=%.0f\n", static_cast<double>(layout.inspector_width));
     std::fprintf(file, "console-height=%.0f\n", static_cast<double>(layout.console_height));
+    std::fprintf(file, "machine-width=%.0f\n", static_cast<double>(layout.machine_width));
     std::fprintf(file, "scene-shown=%d\n", layout.scene_shown ? 1 : 0);
     std::fprintf(file, "inspector-shown=%d\n", layout.inspector_shown ? 1 : 0);
+    std::fprintf(file, "machine-shown=%d\n", layout.machine_shown ? 1 : 0);
     std::fprintf(file, "console-shown=%d\n", layout.console_shown ? 1 : 0);
     std::fclose(file);
 }
@@ -1100,10 +1204,16 @@ void applyLayout(const EditorState& state, resonate::ecs::World& world, const La
 
     place(state.scene_pane, 0.0F, scene_width);
     place(state.splitter_left, scene_width, layout.scene_shown ? 6.0F : 0.0F);
-    const float middle_width = -(scene_width + inspector_width + 12.0F);
+    const float machine_width = layout.machine_shown ? layout.machine_width : 0.0F;
+    const float machine_gap = layout.machine_shown ? 6.0F : 0.0F;
+    const float middle_width =
+        -(scene_width + machine_width + inspector_width + 12.0F + machine_gap);
     place(state.viewport, scene_width + 6.0F, middle_width);
     place(state.console_pane, scene_width + 6.0F, middle_width);
     place(state.splitter_console, scene_width + 6.0F, middle_width);
+    place(state.splitter_machine,
+          -(machine_width + inspector_width + 6.0F + machine_gap), machine_gap);
+    place(state.machine_pane, -(machine_width + inspector_width + 6.0F), machine_width);
     place(state.splitter_right, -(inspector_width + 6.0F), layout.inspector_shown ? 6.0F : 0.0F);
     place(state.inspector, -inspector_width, inspector_width);
     if (resonate::ui::RectTransform* hint =
@@ -1127,12 +1237,16 @@ void applyLayout(const EditorState& state, resonate::ecs::World& world, const La
     placeVertical(state.scene_pane, false, kToolbarHeight, -(kToolbarHeight + kStatusHeight));
     placeVertical(state.splitter_left, false, kToolbarHeight, -(kToolbarHeight + kStatusHeight));
     placeVertical(state.splitter_right, false, kToolbarHeight, -(kToolbarHeight + kStatusHeight));
+    placeVertical(state.machine_pane, false, kToolbarHeight, -(kToolbarHeight + kStatusHeight));
+    placeVertical(state.splitter_machine, false, kToolbarHeight, -(kToolbarHeight + kStatusHeight));
     placeVertical(state.inspector, false, kToolbarHeight, -(kToolbarHeight + kStatusHeight));
 
     resonate::ui::setShown(world, state.scene_pane, layout.scene_shown);
     resonate::ui::setShown(world, state.splitter_left, layout.scene_shown);
     resonate::ui::setShown(world, state.inspector, layout.inspector_shown);
     resonate::ui::setShown(world, state.splitter_right, layout.inspector_shown);
+    resonate::ui::setShown(world, state.machine_pane, layout.machine_shown);
+    resonate::ui::setShown(world, state.splitter_machine, layout.machine_shown);
     resonate::ui::setShown(world, state.console_pane, layout.console_shown);
     resonate::ui::setShown(world, state.splitter_console, layout.console_shown);
 }
@@ -1477,6 +1591,17 @@ bool toggleConsole(void* context, resonate::ecs::World& world, resonate::ecs::En
     return true;
 }
 
+bool toggleMachine(void* context, resonate::ecs::World& world, resonate::ecs::Entity,
+                   resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    togglePane(*static_cast<EditorState*>(context), world, &Layout::machine_shown);
+    return true;
+}
+
 /* One axis of the position: the field shows it, a typed number writes it.
    A field that does not parse keeps its text and is not retried until the
    next edit. Each accepted write pushes one undo entry whose closures also
@@ -1741,6 +1866,16 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                 next.inspector_width = inspector->width;
             }
         }
+        if (next.machine_shown)
+        {
+            if (const resonate::ui::RectTransform* machine =
+                    world.get<resonate::ui::RectTransform>(state->machine_pane))
+            {
+                next.machine_width =
+                    std::clamp(machine->width, 160.0F,
+                               std::fmax(800.0F - 2.0F * next.inspector_width, 160.0F));
+            }
+        }
         /* The console's divider sizes the console itself, so its height is the
            signal; the clamp keeps a drag from eating the viewport. */
         if (next.console_shown)
@@ -1761,6 +1896,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         }
         if (std::fabs(next.scene_width - state->layout.scene_width) > 0.5F ||
             std::fabs(next.inspector_width - state->layout.inspector_width) > 0.5F ||
+            std::fabs(next.machine_width - state->layout.machine_width) > 0.5F ||
             std::fabs(next.console_height - state->layout.console_height) > 0.5F)
         {
             state->layout = next;
@@ -1907,6 +2043,8 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         return;
     }
     state->shown_row = selected;
+    state->machine_shown_entity = selected.valid() ? entityOfRow(*state, selected) : Entity{};
+    rebuildMachineRows(*state, world);
     std::string error;
     if (selected.valid())
     {
@@ -1982,6 +2120,13 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->viewport = resonate::ui::findByKey(world, canvas, "viewport");
     state->viewport_hint = resonate::ui::findByKey(world, canvas, "viewport-hint");
     state->splitter_right = resonate::ui::findByKey(world, canvas, "splitter-right");
+    state->machine_pane = resonate::ui::findByKey(world, canvas, "machine");
+    state->splitter_machine = resonate::ui::findByKey(world, canvas, "splitter-machine");
+    state->machine_empty = resonate::ui::findByKey(world, canvas, "machine-empty");
+    state->state_row_prototype = resonate::ui::findByKey(world, canvas, "machine-state-row");
+    state->transition_row_prototype =
+        resonate::ui::findByKey(world, canvas, "machine-transition-row");
+    state->machine_list = resonate::ui::findByKey(world, canvas, "machine-scroll");
     state->splitter_console = resonate::ui::findByKey(world, canvas, "splitter-console");
     state->inspector = resonate::ui::findByKey(world, canvas, "inspector");
     state->console_pane = resonate::ui::findByKey(world, canvas, "console");
@@ -2027,6 +2172,7 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     attachToggle("tb-scene-pane", &toggleScene);
     attachToggle("tb-inspector", &toggleInspector);
     attachToggle("tb-console", &toggleConsole);
+    attachToggle("tb-machine", &toggleMachine);
     state->status_fps = resonate::ui::findByKey(world, canvas, "status-fps");
     state->animation_value = resonate::ui::findByKey(world, canvas, "animation-value");
     if (const std::string products = productsPath(); !products.empty())
