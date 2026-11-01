@@ -13,6 +13,8 @@
 
 #include "resonate.scene/components.gen.h"
 #include "resonate.scene/nodes.gen.h"
+#include "resonate.animation/components.gen.h"
+#include "resonate.animation/nodes.gen.h"
 #include "resonate.render/components.gen.h"
 #include "resonate.render/nodes.gen.h"
 #include "resonate.hierarchy/components.gen.h"
@@ -268,6 +270,7 @@ void appendComponents(std::string& out, ecs::World& world, ecs::Entity entity)
     const Table tables[] = {
         {hierarchy::generated::kComponentDescs, hierarchy::generated::kComponentDescCount},
         {render::generated::kComponentDescs, render::generated::kComponentDescCount},
+        {animation::generated::kComponentDescs, animation::generated::kComponentDescCount},
         {scene::generated::kComponentDescs, scene::generated::kComponentDescCount}};
     for (const Table& table : tables)
     {
@@ -292,7 +295,28 @@ void appendComponents(std::string& out, ecs::World& world, ecs::Entity entity)
             const auto* base = static_cast<const std::byte*>(bytes);
             const auto* defaults = static_cast<const std::byte*>(descriptor.defaults);
             const bool material = std::string_view(descriptor.name) == "Material";
+            const bool animation = std::string_view(descriptor.qualified_name) ==
+                                   "resonate.animation.Animation";
             std::string attributes;
+            bool emit = true;
+            if (animation)
+            {
+                /* The two halves are one asset id; the authoring form is the
+                   @guid, not the numbers. A sub id other than one is not
+                   representable here and the authored default is one. The node
+                   composition hangs a default Animation on every object, and a
+                   null id is no reference at all. */
+                const auto* saved = static_cast<const animation::Animation*>(bytes);
+                if (saved->clip_low == 0U && saved->clip_high == 0U)
+                {
+                    emit = false;
+                }
+                else
+                {
+                    asset::AssetId id{saved->clip_low, saved->clip_high, 1U};
+                    appendAttribute(attributes, "clip", "@" + asset::formatGuid(id));
+                }
+            }
             if (material)
             {
                 /* A resolved reference is written back as the authoring form,
@@ -328,7 +352,9 @@ void appendComponents(std::string& out, ecs::World& world, ecs::Entity entity)
             }
             for (const dom::ComponentFieldDesc& field : descriptor.fields)
             {
-                if (material && std::string_view(field.name) == "texture")
+                if ((material && std::string_view(field.name) == "texture") ||
+                    (animation && (std::string_view(field.name) == "clip_low" ||
+                                   std::string_view(field.name) == "clip_high")))
                 {
                     continue;
                 }

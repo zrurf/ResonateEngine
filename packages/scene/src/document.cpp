@@ -103,6 +103,16 @@ ecs::Entity instantiateObject(ecs::World& world, const dom::Document& document,
                     std::string(component_name) + "' is not in the registry";
             return ecs::Entity{};
         }
+        if (component_name == "Animation")
+        {
+            if (!applyAnimation(world, document, component, *descriptor, aliases, entity,
+                                error))
+            {
+                error = "node '" + std::string(nodeLabel(document, node)) + "': " + error;
+                return ecs::Entity{};
+            }
+            continue;
+        }
         if (component_name == "Material")
         {
             if (descriptor == nullptr)

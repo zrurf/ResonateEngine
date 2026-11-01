@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The demo's spin: one full yaw turn over three seconds. The last key
+     answers identity rather than w -1, so the loop's slerp never crosses the
+     antipodal seam. -->
+<clip duration="3">
+  <track field="rotation">
+    <key t="0" value="0 0 0 1"/>
+    <key t="1.5" value="0 1 0 0"/>
+    <key t="3" value="0 0 0 1"/>
+  </track>
+</clip>

@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <document version="1" schemas="resonate.scene">
   <!-- The demo's scene: one root, the camera and sun, the ground plane and the
-       nine checker boxes. The 12x12 light grid stays procedural (a rendering
-       stress fixture, not content), and the middle box's state machine is
-       attached by key at start-up -- data-driven animation authoring comes
-       with the animation schema. -->
+       nine checker boxes. The middle box bobs through the authored #bob clip;
+       the spin clip waits for machine authoring (design note 26). -->
 
   <Scene key="demo">
     <Resources>
       <Resource key="checker" asset="@0704c7df-7013-4c31-818d-b515207bb7df"/>
+      <Resource key="bob" asset="@15cc75a0-14ca-4c8e-b752-bf5ac010bc9a"/>
+      <Resource key="spin" asset="@075a7fcb-478e-4962-b2ef-0b37cdf9641a"/>
     </Resources>
     <Object key="scene-root" name="动作演示">
       <Object key="camera" name="主相机">
@@ -47,6 +47,7 @@
       <Object key="box-center" name="箱子 B">
         <MeshInstance mesh="1" color="0.4 0.55 0.9"/>
         <Material texture="#checker"/>
+        <Animation clip="#bob"/>
         <LocalTransform position="0 0.5 2.5"/>
       </Object>
       <Object key="box-b3" name="箱子 B">

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The demo's bob: the middle box rises one unit and returns, over two
+     seconds. Positions are the authored ones (the box sits at y 0.5). -->
+<clip duration="2">
+  <track field="position">
+    <key t="0" value="0 0.5 2.5"/>
+    <key t="1" value="0 1.5 2.5"/>
+    <key t="2" value="0 0.5 2.5"/>
+  </track>
+</clip>

@@ -21,6 +21,8 @@
 #include <resonate/ui/document.h>
 #include <resonate/ui/layout.h>
 
+#include "resonate.animation/components.gen.h"
+#include "resonate.animation/nodes.gen.h"
 #include "resonate.hierarchy/nodes.gen.h"
 #include "resonate.render/nodes.gen.h"
 #include "resonate.scene/nodes.gen.h"
@@ -68,6 +70,7 @@ struct Fixture
     {
         REQUIRE(resonate::hierarchy::registerComponents(world));
         REQUIRE(resonate::renderer::RenderSystem::registerComponents(world));
+        REQUIRE(resonate::animation::AnimationPlayer::registerComponents(world));
     }
 };
 
@@ -83,8 +86,12 @@ const resonate::dom::ComponentRegistry& sceneComponents()
         resonate::Span<const resonate::dom::ComponentDesc>(
             resonate::render::generated::kComponentDescs,
             resonate::render::generated::kComponentDescCount));
-    static const std::array<const resonate::dom::ComponentRegistry*, 2> tables{
-        &hierarchy_table, &render_table};
+    static const resonate::dom::TableComponentRegistry animation_table(
+        resonate::Span<const resonate::dom::ComponentDesc>(
+            resonate::animation::generated::kComponentDescs,
+            resonate::animation::generated::kComponentDescCount));
+    static const std::array<const resonate::dom::ComponentRegistry*, 3> tables{
+        &hierarchy_table, &render_table, &animation_table};
     static const resonate::dom::CompositeComponentRegistry registry(
         resonate::Span<const resonate::dom::ComponentRegistry* const>(tables.data(),
                                                                      tables.size()));
@@ -107,14 +114,20 @@ const resonate::dom::SchemaRegistry& sceneSchemas()
             resonate::render::generated::kNodeTypeCount),
         resonate::Span<const char* const>(resonate::render::generated::kComponents,
                                           resonate::render::generated::kComponentCount));
+    static const resonate::dom::TableSchemaRegistry animation_table(
+        resonate::Span<const resonate::dom::NodeTypeDesc>(
+            resonate::animation::generated::kNodeTypes,
+            resonate::animation::generated::kNodeTypeCount),
+        resonate::Span<const char* const>(resonate::animation::generated::kComponents,
+                                          resonate::animation::generated::kComponentCount));
     static const resonate::dom::TableSchemaRegistry scene_table(
         resonate::Span<const resonate::dom::NodeTypeDesc>(
             resonate::scene::generated::kNodeTypes,
             resonate::scene::generated::kNodeTypeCount),
         resonate::Span<const char* const>(resonate::scene::generated::kComponents,
                                           resonate::scene::generated::kComponentCount));
-    static const std::array<const resonate::dom::SchemaRegistry*, 3> tables{
-        &hierarchy_table, &render_table, &scene_table};
+    static const std::array<const resonate::dom::SchemaRegistry*, 4> tables{
+        &hierarchy_table, &render_table, &animation_table, &scene_table};
     static const resonate::dom::CompositeSchemaRegistry registry(
         resonate::Span<const resonate::dom::SchemaRegistry* const>(tables.data(),
                                                                    tables.size()));
@@ -197,6 +210,7 @@ TEST_CASE("scene: a capture round trips through a second instantiate", "[scene]"
     REQUIRE(resonate::ui::registerComponents(fixture.world));
     Entity root{};
     std::string error;
+    INFO("instantiate: " << error);
     REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
                                          error));
 
@@ -229,6 +243,7 @@ TEST_CASE("scene: a capture round trips through a second instantiate", "[scene]"
     REQUIRE(resonate::hierarchy::registerComponents(second));
     REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
     REQUIRE(resonate::ui::registerComponents(second));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(second));
     Entity second_root{};
     REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
                                          error));
@@ -280,6 +295,7 @@ TEST_CASE("scene: a captured rotation reads back as the same rotation", "[scene]
     REQUIRE(resonate::hierarchy::registerComponents(second));
     REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
     REQUIRE(resonate::ui::registerComponents(second));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(second));
     Entity second_root{};
     REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
                                          error));
@@ -342,6 +358,7 @@ TEST_CASE("scene: a capture keeps a texture reference as an asset id", "[scene]"
     REQUIRE(resonate::hierarchy::registerComponents(second));
     REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
     REQUIRE(resonate::ui::registerComponents(second));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(second));
     Entity second_root{};
     REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
                                          error));
@@ -396,7 +413,9 @@ TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[sce
     REQUIRE(resonate::hierarchy::registerComponents(second));
     REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
     REQUIRE(resonate::ui::registerComponents(second));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(second));
     Entity second_root{};
+    INFO("instantiate: " << error);
     REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
                                          error));
     for (const char* const key : {"box-a1", "box-a2", "box-a3", "box-b1", "box-center",
@@ -545,6 +564,7 @@ TEST_CASE("scene: a Resources alias stands for an asset id", "[scene]")
     REQUIRE(resonate::hierarchy::registerComponents(second));
     REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
     REQUIRE(resonate::ui::registerComponents(second));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(second));
     Entity broken_root{};
     CHECK_FALSE(resonate::scene::instantiate(second, *broken, &sceneComponents(), broken_root,
                                              error));
@@ -613,6 +633,7 @@ TEST_CASE("scene: several roots write back as one document", "[scene]")
     REQUIRE(resonate::hierarchy::registerComponents(second));
     REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
     REQUIRE(resonate::ui::registerComponents(second));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(second));
     Entity first_root{};
     std::vector<Entity> restored;
     REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), first_root, error,
@@ -620,6 +641,62 @@ TEST_CASE("scene: several roots write back as one document", "[scene]")
     CHECK(restored.size() == 2U);
     CHECK(resonate::scene::findByKey(second, restored[0], "yard-root").valid());
     CHECK(resonate::scene::findByKey(second, restored[1], "ground").valid());
+}
+
+TEST_CASE("scene: an Animation component round trips as an asset id", "[scene]")
+{
+    constexpr const char* kAnimated = R"xml(<document version="1" schemas="resonate.scene">
+  <Scene key="yard">
+    <Object key="crate">
+      <Animation clip="@0704c7df-7013-4c31-818d-b515207bb7df" speed="2"/>
+    </Object>
+  </Scene>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kAnimated, &sceneSchemas(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    Fixture fixture;
+    REQUIRE(resonate::ui::registerComponents(fixture.world));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(fixture.world));
+    Entity root{};
+    std::string error;
+    REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
+                                         error));
+    const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
+    REQUIRE(crate.valid());
+    const auto* authored = fixture.world.get<resonate::animation::Animation>(crate);
+    REQUIRE(authored != nullptr);
+    CHECK(authored->speed == 2.0F);
+    CHECK(authored->clip_high != 0U);
+
+    std::string xml;
+    REQUIRE(resonate::scene::capture(fixture.world, crate, xml, error));
+    INFO("capture: " << xml);
+    /* The authoring form, not the two numbers the struct carries. */
+    CHECK(xml.find("clip=\"@0704c7df-7013-4c31-818d-b515207bb7df\"") != std::string::npos);
+    CHECK(xml.find("clip_low") == std::string::npos);
+    CHECK(xml.find("speed=\"2\"") != std::string::npos);
+
+    auto captured = resonate::dom::Document::parse(xml, &sceneSchemas(), diagnostics);
+    REQUIRE(captured != nullptr);
+    World second{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(second));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
+    REQUIRE(resonate::ui::registerComponents(second));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(second));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(second));
+    Entity second_root{};
+    REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
+                                         error));
+    const Entity restored = resonate::scene::findByKey(second, second_root, "crate");
+    REQUIRE(restored.valid());
+    const auto* again = second.get<resonate::animation::Animation>(restored);
+    REQUIRE(again != nullptr);
+    CHECK(again->clip_low == authored->clip_low);
+    CHECK(again->clip_high == authored->clip_high);
+    CHECK(again->speed == 2.0F);
 }
 
 TEST_CASE("scene: a malformed document is refused with a reason", "[scene]")

@@ -24,6 +24,8 @@
 
 #include <cstdio>
 
+#include "resonate.animation/components.gen.h"
+#include "resonate.animation/nodes.gen.h"
 #include "resonate.hierarchy/nodes.gen.h"
 #include "resonate.render/nodes.gen.h"
 #include "resonate.scene/nodes.gen.h"
@@ -56,6 +58,12 @@ bool readSourceFile(const std::string& relative, std::string& out_text)
 
 const resonate::dom::SchemaRegistry& sceneSchemas()
 {
+    static const resonate::dom::TableSchemaRegistry animation_table(
+        resonate::Span<const resonate::dom::NodeTypeDesc>(
+            resonate::animation::generated::kNodeTypes,
+            resonate::animation::generated::kNodeTypeCount),
+        resonate::Span<const char* const>(resonate::animation::generated::kComponents,
+                                          resonate::animation::generated::kComponentCount));
     static const resonate::dom::TableSchemaRegistry hierarchy_table(
         resonate::Span<const resonate::dom::NodeTypeDesc>(
             resonate::hierarchy::generated::kNodeTypes,
@@ -74,8 +82,8 @@ const resonate::dom::SchemaRegistry& sceneSchemas()
             resonate::scene::generated::kNodeTypeCount),
         resonate::Span<const char* const>(resonate::scene::generated::kComponents,
                                           resonate::scene::generated::kComponentCount));
-    static const std::array<const resonate::dom::SchemaRegistry*, 3> tables{
-        &hierarchy_table, &render_table, &scene_table};
+    static const std::array<const resonate::dom::SchemaRegistry*, 4> tables{
+        &hierarchy_table, &render_table, &animation_table, &scene_table};
     static const resonate::dom::CompositeSchemaRegistry registry(
         resonate::Span<const resonate::dom::SchemaRegistry* const>(tables.data(),
                                                                    tables.size()));
@@ -92,8 +100,12 @@ const resonate::dom::ComponentRegistry& sceneComponents()
         resonate::Span<const resonate::dom::ComponentDesc>(
             resonate::render::generated::kComponentDescs,
             resonate::render::generated::kComponentDescCount));
-    static const std::array<const resonate::dom::ComponentRegistry*, 2> tables{
-        &hierarchy_table, &render_table};
+    static const resonate::dom::TableComponentRegistry animation_table(
+        resonate::Span<const resonate::dom::ComponentDesc>(
+            resonate::animation::generated::kComponentDescs,
+            resonate::animation::generated::kComponentDescCount));
+    static const std::array<const resonate::dom::ComponentRegistry*, 3> tables{
+        &hierarchy_table, &render_table, &animation_table};
     static const resonate::dom::CompositeComponentRegistry registry(
         resonate::Span<const resonate::dom::ComponentRegistry* const>(tables.data(),
                                                                      tables.size()));
@@ -126,6 +138,7 @@ TEST_CASE("scene render: a guid texture reference resolves to the cooked texture
     REQUIRE(resonate::hierarchy::registerComponents(world));
     REQUIRE(resonate::renderer::RenderSystem::registerComponents(world));
     REQUIRE(resonate::ui::registerComponents(world));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(world));
 
     std::string scene_text;
     REQUIRE(readSourceFile("content/scene/demo.rscene", scene_text));

@@ -7,6 +7,7 @@
 
 #include "resonate.render/components.gen.h"
 #include "resonate.scene/components.gen.h"
+#include "resonate.animation/components.gen.h"
 
 namespace resonate::scene
 {
@@ -152,6 +153,83 @@ bool applyMaterial(ecs::World& world, const dom::Document& document,
             error = "TextureAlias could not be attached";
             return false;
         }
+    }
+    return true;
+}
+
+bool applyAnimation(ecs::World& world, const dom::Document& document,
+                    const dom::Component& component, const dom::ComponentDesc& descriptor,
+                    const ResourceAliases* aliases, ecs::Entity entity, std::string& error)
+{
+    animation::Animation authored;
+    bool has_clip = false;
+    asset::AssetId clip{};
+    for (const dom::Field& field : component.fields)
+    {
+        const std::string_view name = document.text(field.name);
+        if (name == "clip" && !field.value.empty() &&
+            (field.value.front() == '@' || field.value.front() == '#'))
+        {
+            if (field.value.front() == '#')
+            {
+                const std::string alias_name(field.value.substr(1U));
+                if (aliases == nullptr)
+                {
+                    error = "Animation.clip: '" + field.value + "' needs a Resources block";
+                    return false;
+                }
+                const auto found = aliases->find(alias_name);
+                if (found == aliases->end())
+                {
+                    error = "Animation.clip: no resource '" + alias_name +
+                            "' in the Resources block";
+                    return false;
+                }
+                clip = found->second;
+            }
+            else
+            {
+                std::string id_error;
+                if (!parseAssetId(field.value, clip, id_error))
+                {
+                    error = "Animation.clip: " + id_error;
+                    return false;
+                }
+            }
+            has_clip = true;
+            continue;
+        }
+        const dom::ComponentFieldDesc* layout = nullptr;
+        for (const dom::ComponentFieldDesc& candidate : descriptor.fields)
+        {
+            if (name == candidate.name)
+            {
+                layout = &candidate;
+                break;
+            }
+        }
+        if (layout == nullptr)
+        {
+            error = "unknown field '" + std::string(name) + "' on Animation";
+            return false;
+        }
+        if (!dom_bind::parseField(*layout, field.value, &authored, error))
+        {
+            error = std::string("Animation.") + std::string(name) + ": " + error;
+            return false;
+        }
+    }
+    if (!has_clip)
+    {
+        error = "Animation needs a clip";
+        return false;
+    }
+    authored.clip_low = clip.guid_low;
+    authored.clip_high = clip.guid_high;
+    if (world.add(entity, authored) == nullptr)
+    {
+        error = "Animation could not be attached";
+        return false;
     }
     return true;
 }

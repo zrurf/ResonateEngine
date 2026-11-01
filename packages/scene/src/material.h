@@ -32,6 +32,13 @@ bool applyMaterial(ecs::World& world, const dom::Document& document,
                    const dom::Component& component, const dom::ComponentDesc& descriptor,
                    const ResourceAliases* aliases, ecs::Entity entity, std::string& error);
 
+/* An Animation's authoring fields: `clip="@<guid>[:<sub>]"` or `clip="#name"`
+   names the clip's asset id (the player resolves it through the products
+   manifest); looping and speed go through the descriptor's own fields. */
+bool applyAnimation(ecs::World& world, const dom::Document& document,
+                    const dom::Component& component, const dom::ComponentDesc& descriptor,
+                    const ResourceAliases* aliases, ecs::Entity entity, std::string& error);
+
 } // namespace resonate::scene
 
 #endif /* RESONATE_SCENE_MATERIAL_H */
