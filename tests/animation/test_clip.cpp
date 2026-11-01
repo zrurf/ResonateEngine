@@ -256,6 +256,13 @@ TEST_CASE("a clip parses from the .rclip XML subset", "[animation]")
     CHECK(near(transform.position.y, 0.8F));
     CHECK(near(transform.rotation.w, 1.0F));
     CHECK(near(transform.rotation.x, 0.0F));
+    CHECK_FALSE(clip.position_root_motion);
+
+    /* The position track can be flagged as a displacement curve. */
+    REQUIRE(Clip::parse(R"xml(<clip duration="1">
+  <track field="position" root_motion="true"><key t="0" value="0 0 0"/></track>
+</clip>)xml", clip, error));
+    CHECK(clip.position_root_motion);
 }
 
 TEST_CASE("a clip refuses what the grammar does not name", "[animation]")
@@ -294,4 +301,53 @@ TEST_CASE("a clip refuses what the grammar does not name", "[animation]")
     /* Errors carry the line the offender sits on. */
     CHECK_FALSE(Clip::parse("<clip duration=\"1\">\n  <beat/>\n</clip>", clip, error));
     CHECK(error.find(":2:") != std::string::npos);
+
+    CHECK_FALSE(Clip::parse(R"xml(<clip duration="1">
+  <track field="position" root_motion="maybe"><key t="0" value="0 0 0"/></track>
+</clip>)xml", clip, error));
+    CHECK(error.find("true or false") != std::string::npos);
+
+    CHECK_FALSE(Clip::parse(R"xml(<clip duration="1">
+  <track field="rotation" root_motion="true"><key t="0" value="0 0 0 1"/></track>
+</clip>)xml", clip, error));
+    CHECK(error.find("position track only") != std::string::npos);
+}
+
+TEST_CASE("animation: a root-motion clip moves the entity instead of its pose", "[animation]")
+{
+    Clip root;
+    root.duration = 1.0F;
+    root.position = positionsOf({{0.0F, Vec3{0.0F, 0.0F, 0.0F}}, {1.0F, Vec3{1.0F, 0.0F, 0.0F}}});
+    root.position_root_motion = true;
+
+    /* The pose keeps its position; the track is a displacement curve. */
+    resonate::hierarchy::LocalTransform transform;
+    transform.position = Vec3{5.0F, 0.0F, 0.0F};
+    root.sample(0.5F, true, transform);
+    CHECK(near(transform.position.x, 5.0F));
+    CHECK(near(root.rootAt(0.5F).x, 0.5F));
+
+    World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(world));
+
+    resonate::animation::AnimationPlayer player;
+    const std::uint32_t clip = player.addClip(root);
+    resonate::hierarchy::LocalTransform start;
+    start.position = Vec3{5.0F, 0.0F, 0.0F};
+    const Entity entity = world.create();
+    world.add(entity, start);
+    world.add(entity, resonate::animation::AnimationState{clip});
+
+    /* Five quarter steps cross the loop border: the displacement accumulates
+       past one cycle instead of snapping back to the clip's start. */
+    for (int step = 0; step < 5; ++step)
+    {
+        player.invoke(world, 0.25F);
+    }
+    const auto* moved = world.get<resonate::hierarchy::LocalTransform>(entity);
+    REQUIRE(moved != nullptr);
+    CHECK(near(moved->position.x, 6.25F));
+    player.invoke(world, 0.2F);
+    CHECK(near(moved->position.x, 6.45F));
 }

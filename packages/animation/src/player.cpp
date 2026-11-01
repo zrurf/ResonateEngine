@@ -1,6 +1,7 @@
 #include <resonate/animation/player.h>
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,6 +13,54 @@
 namespace resonate::animation
 {
 
+namespace
+{
+
+/* The displacement a root-motion track contributes between two clock values.
+   A looping clip's curve is cyclic: crossing the loop border adds the jump
+   from the last key back to the first one, which is what keeps a walk cycle
+   advancing instead of snapping back. Times are the state's raw clock, so a
+   large delta may cross several borders. */
+Vec3 rootDelta(const Clip& clip, float from_time, float to_time, bool looping)
+{
+    const float duration = clip.duration;
+    if (duration <= 0.0F)
+    {
+        return Vec3{};
+    }
+    if (!looping)
+    {
+        return clip.rootAt(to_time) - clip.rootAt(from_time);
+    }
+    const auto wrap = [duration](float time)
+    {
+        float within = std::fmod(time, duration);
+        if (within < 0.0F)
+        {
+            within += duration;
+        }
+        return within;
+    };
+    /* The borders crossed, computed from the raw clock so a frame longer than
+       the clip still lands on the right number of cycles. */
+    const float cycles =
+        std::floor(to_time / duration) - std::floor(from_time / duration);
+    if (cycles == 0.0F)
+    {
+        return clip.rootAt(wrap(to_time)) - clip.rootAt(wrap(from_time));
+    }
+    const Vec3 start = clip.rootAt(0.0F);
+    const Vec3 end = clip.rootAt(duration);
+    const Vec3 from = clip.rootAt(wrap(from_time));
+    const Vec3 to = clip.rootAt(wrap(to_time));
+    if (cycles > 0.0F)
+    {
+        return (end - from) + (end - start) * (cycles - 1.0F) + (to - start);
+    }
+    return (start - from) + (start - end) * (-cycles - 1.0F) + (to - end);
+}
+
+} // namespace
 bool AnimationPlayer::registerComponents(ecs::World& world)
 {
     bool ok = world.registerComponent<AnimationState>() != ecs::kInvalidComponent;
@@ -270,6 +319,33 @@ void AnimationPlayer::invoke(ecs::World& world, float delta_seconds)
                 {
                     played->sample(state.time, state.looping, *transform);
                 }
+                /* Root motion adds its delta onto the transform instead of
+                   writing a pose; the incoming clip's delta ramps in with the
+                   blend. A clip switch or a clock reset restarts the delta at
+                   zero so the entity does not jump. */
+                if (state.root_clip != state.clip ||
+                    (state.speed >= 0.0F && state.time < state.root_time))
+                {
+                    state.root_clip = state.clip;
+                    state.root_time = 0.0F;
+                }
+                if (played->position_root_motion)
+                {
+                    float weight = 1.0F;
+                    if (state.blend < 1.0F && outgoing != nullptr &&
+                        state.previous_clip != state.clip)
+                    {
+                        weight = state.blend < 0.0F ? 0.0F : state.blend;
+                    }
+                    if (weight > 0.0F)
+                    {
+                        transform->position =
+                            transform->position +
+                            rootDelta(*played, state.root_time, state.time, state.looping) *
+                                weight;
+                    }
+                }
+                state.root_time = state.time;
                 (void)update->world->markChanged<hierarchy::LocalTransform>(entity);
             }
         },

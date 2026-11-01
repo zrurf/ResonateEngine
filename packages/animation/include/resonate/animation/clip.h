@@ -51,13 +51,23 @@ struct Clip
        last value to the end) but not later. */
     float duration = 0.0F;
     Vec3Track position;
+    /* A position track authored `root_motion="true"` is a displacement curve,
+       not a pose: it never writes LocalTransform.position; the player
+       accumulates its per-frame delta there instead (a walk cycle moves the
+       entity, the pose stays in place). */
+    bool position_root_motion = false;
     QuatTrack rotation;
     Vec3Track scale;
 
     /* Samples the tracks at `time` into `transform`. Fields without a track
        keep what they had. Time is taken modulo the duration when the clip
-       loops and clamped to it otherwise. */
+       loops and clamped to it otherwise. A root-motion position track leaves
+       the position untouched. */
     void sample(float time, bool looping, hierarchy::LocalTransform& transform) const;
+
+    /* Samples the root-motion position track at a time already inside
+       [0, duration]; zero without a root track. */
+    [[nodiscard]] Vec3 rootAt(float time) const;
 
     /* Samples both clips at `time` and blends: position and scale lerp,
        rotation slerps, `weight` 0 answers `from` and 1 answers `to`. A field
@@ -68,7 +78,8 @@ struct Clip
 
     /* Parses the .rclip XML subset: a <clip duration=".."> root whose children
        are <track field="position|rotation|scale"> elements holding <key
-       t=".." value=".."/> keys. A value is three floats for the vec3 fields
+       t=".." value=".."/> keys. The position track may carry
+       root_motion="true|false". A value is three floats for the vec3 fields
        and four for rotation, in member order. Keys must be present and
        strictly ascend, a field carries one track at most, and anything the
        grammar does not name is an error with a line number. */

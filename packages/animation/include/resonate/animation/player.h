@@ -43,6 +43,10 @@ struct AnimationState
     /* A driver owns the times above: the player samples them without advancing,
        so a machine's clock is the only one running. */
     bool driven = false;
+    /* The clock the last root-motion delta was consumed at, and the clip it
+       belonged to; a clip switch restarts the delta at time zero. */
+    float root_time = 0.0F;
+    std::uint32_t root_clip = 0xFFFFFFFFU;
 };
 
 /* One entity's state machine: an index into the player's machine table and the

@@ -89,7 +89,7 @@ void Clip::sample(float time, bool looping, hierarchy::LocalTransform& transform
         within = duration;
     }
 
-    if (!position.keys.empty())
+    if (!position.keys.empty() && !position_root_motion)
     {
         transform.position = sampleVec3(position, within);
     }
@@ -101,6 +101,17 @@ void Clip::sample(float time, bool looping, hierarchy::LocalTransform& transform
     {
         transform.scale = sampleVec3(scale, within);
     }
+}
+
+Vec3 Clip::rootAt(float time) const
+{
+    if (!position_root_motion || position.keys.empty())
+    {
+        return Vec3{};
+    }
+    const float at =
+        time < 0.0F ? 0.0F : (duration > 0.0F && time > duration ? duration : time);
+    return sampleVec3(position, at);
 }
 
 void Clip::blend(const Clip& from, const Clip& to, float weight, float time, bool looping,
@@ -119,17 +130,19 @@ void Clip::blend(const Clip& from, const Clip& to, float weight, float from_time
 
     const float mixed = weight < 0.0F ? 0.0F : (weight > 1.0F ? 1.0F : weight);
     /* A field both clips drive blends; a field only one drives comes from
-       that clip whole. */
-    if (!from.position.keys.empty() && !to.position.keys.empty())
+       that clip whole. A root-motion position track drives no pose. */
+    const bool from_pose = !from.position.keys.empty() && !from.position_root_motion;
+    const bool to_pose = !to.position.keys.empty() && !to.position_root_motion;
+    if (from_pose && to_pose)
     {
         transform.position =
             from_sample.position + (to_sample.position - from_sample.position) * mixed;
     }
-    else if (!from.position.keys.empty())
+    else if (from_pose)
     {
         transform.position = from_sample.position;
     }
-    else if (!to.position.keys.empty())
+    else if (to_pose)
     {
         transform.position = to_sample.position;
     }
@@ -558,7 +571,7 @@ bool Clip::parse(std::string_view xml, Clip& out, std::string& error)
         }
         for (const ClipAttribute& attribute : tag.attributes)
         {
-            if (attribute.name != "field")
+            if (attribute.name != "field" && attribute.name != "root_motion")
             {
                 error = "clip:" + std::to_string(reader.line()) + ": unknown attribute '" +
                         attribute.name + "' on track";
@@ -584,6 +597,22 @@ bool Clip::parse(std::string_view xml, Clip& out, std::string& error)
             error = "clip:" + std::to_string(reader.line()) + ": unknown field '" +
                     field->value + "'";
             return false;
+        }
+        if (const ClipAttribute* root = reader.find(tag, "root_motion"); root != nullptr)
+        {
+            if (field->value != "position")
+            {
+                error = "clip:" + std::to_string(reader.line()) +
+                        ": root_motion applies to the position track only";
+                return false;
+            }
+            if (root->value != "true" && root->value != "false")
+            {
+                error = "clip:" + std::to_string(reader.line()) +
+                        ": root_motion must be true or false";
+                return false;
+            }
+            out.position_root_motion = root->value == "true";
         }
         if ((vec_track != nullptr && !vec_track->keys.empty()) ||
             (quat_track != nullptr && !quat_track->keys.empty()))
