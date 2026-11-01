@@ -172,6 +172,12 @@
       <Box key="gap-transform" height="8"/>
       <Label key="section-transform" class="section-title" height="24" text="变换"
              font_size="11" font_weight="600" v_align="Middle" padding_left="12"/>
+      <Panel key="animation-row" height="24" direction="Row" align="Center" gap="8" padding_left="12" padding_right="12">
+        <Label key="animation-title" class="prop-label" width="76" height="24" text="动画"
+               font_size="12" v_align="Middle"/>
+        <Label key="animation-value" class="prop-value" width="150" height="24" text="-"
+               font_size="12" v_align="Middle"/>
+      </Panel>
       <Panel key="position-x-row" height="24" direction="Row" align="Center" gap="8" padding_left="12" padding_right="12">
         <Label key="position-x-label" class="prop-label" width="76" height="24" text="位置 X"
                font_size="12" v_align="Middle"/>

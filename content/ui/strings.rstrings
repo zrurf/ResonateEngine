@@ -14,6 +14,8 @@
   <entry key="editor.copied">已复制</entry>
   <entry key="editor.delete">删除</entry>
   <entry key="editor.move">移动</entry>
+  <entry key="editor.animation">动画</entry>
+  <entry key="editor.none">-</entry>
   <entry key="editor.duplicate">复制</entry>
   <entry key="editor.copy_suffix">副本</entry>
   <entry key="editor.rename">名称</entry>

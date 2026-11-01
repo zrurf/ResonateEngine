@@ -22,10 +22,12 @@
 #include <resonate/hierarchy/tree.h>
 #include <resonate/scene/capture.h>
 #include <resonate/scene/document.h>
+#include <resonate/asset/identity.h>
 #include <resonate/pal/dialog.h>
 #include <resonate/pal/io.h>
 #include <resonate/startup/cvar.h>
 #include "resonate.render/components.gen.h"
+#include "resonate.animation/components.gen.h"
 #include "resonate.scene/components.gen.h"
 #include <resonate/ui/document.h>
 #include <resonate/ui/event.h>
@@ -133,6 +135,11 @@ struct EditorState
        scene without losing the list's shape. */
     std::vector<Entity> scene_roots{};
     Entity row_prototype{};
+    /* The inspector's animation line: the widget it writes and the manifest
+       the clip ids resolve through. */
+    Entity animation_value{};
+    resonate::asset::Identity asset_ids;
+    bool asset_ids_loaded = false;
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -883,6 +890,89 @@ bool loadSceneDocument(EditorState& state, resonate::ecs::World& world, const st
    layout, in the source tree during development; the walk covers both. This is
    what the save chooser opens at, and what a platform without a chooser falls
    back to. */
+/* The products manifest the run's asset indexer wrote; a shipped or staged
+   layout may name it through RESONATE_PRODUCTS instead. */
+std::string productsPath()
+{
+    const char* staged = std::getenv("RESONATE_PRODUCTS");
+    if (staged != nullptr && *staged != '\0')
+    {
+        return staged;
+    }
+    std::filesystem::path directory = resonate_pal_io_executable_directory();
+    for (int level = 0; level < 6; ++level)
+    {
+        const std::filesystem::path candidate =
+            directory / "build" / "content" / "products.toml";
+        std::error_code probe;
+        if (std::filesystem::is_regular_file(candidate, probe))
+        {
+            return candidate.string();
+        }
+        if (!directory.has_parent_path())
+        {
+            break;
+        }
+        directory = directory.parent_path();
+    }
+    return {};
+}
+
+/* What the inspector's animation line says for `entity`: the clip's name from
+   the manifest, the machine's first authored state, or the no-reference dash.
+   An id the manifest does not know stays visible as the guid. */
+std::string animationLabel(EditorState& state, resonate::ecs::World& world, Entity entity)
+{
+    const auto blobText = [&world](resonate::ecs::BlobHandle handle) -> std::string_view
+    {
+        if (!handle.valid() || !world.alive(handle))
+        {
+            return {};
+        }
+        const auto* bytes = static_cast<const char*>(world.blobData(handle));
+        const std::size_t size = world.blobSize(handle);
+        if (bytes == nullptr || size == 0U)
+        {
+            return {};
+        }
+        return std::string_view(bytes, size);
+    };
+    if (const auto* animation = world.get<resonate::animation::Animation>(entity);
+        animation != nullptr &&
+        (animation->clip_low != 0U || animation->clip_high != 0U))
+    {
+        const resonate::asset::AssetId id{animation->clip_low, animation->clip_high, 1U};
+        if (state.asset_ids_loaded)
+        {
+            if (const auto path = state.asset_ids.locate(id))
+            {
+                return std::filesystem::path(*path).stem().string();
+            }
+        }
+        return "@" + resonate::asset::formatGuid(id);
+    }
+    if (world.get<resonate::animation::MachineState>(entity) != nullptr)
+    {
+        if (const auto* source = world.get<resonate::scene::MachineSource>(entity);
+            source != nullptr)
+        {
+            const std::string_view text = blobText(source->text);
+            constexpr std::string_view kMarker = "<State name=\"";
+            if (const std::size_t at = text.find(kMarker); at != std::string_view::npos)
+            {
+                const std::size_t begin = at + kMarker.size();
+                const std::size_t end = text.find('"', begin);
+                if (end != std::string_view::npos)
+                {
+                    return std::string(text.substr(begin, end - begin));
+                }
+            }
+        }
+        return localized("editor.animation");
+    }
+    return localized("editor.none");
+}
+
 std::string defaultDocumentPath()
 {
     std::filesystem::path directory = resonate_pal_io_executable_directory();
@@ -1841,6 +1931,8 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                 ? world.get<resonate::hierarchy::LocalTransform>(entity)
                 : nullptr;
         seedPosition(*state, world, transform);
+        (void)resonate::ui::setText(world, state->canvas, state->animation_value,
+                                    animationLabel(*state, world, entity), error);
     }
     else
     {
@@ -1848,6 +1940,8 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         state->mirrored_name.clear();
         (void)resonate::ui::setText(world, state->canvas, state->status, localized("editor.no_selection"), error);
         seedPosition(*state, world, nullptr);
+        (void)resonate::ui::setText(world, state->canvas, state->animation_value,
+                                    localized("editor.none"), error);
     }
 }
 
@@ -1934,6 +2028,12 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     attachToggle("tb-inspector", &toggleInspector);
     attachToggle("tb-console", &toggleConsole);
     state->status_fps = resonate::ui::findByKey(world, canvas, "status-fps");
+    state->animation_value = resonate::ui::findByKey(world, canvas, "animation-value");
+    if (const std::string products = productsPath(); !products.empty())
+    {
+        std::string products_error;
+        state->asset_ids_loaded = state->asset_ids.loadFile(products, products_error);
+    }
     /* The console keeps the last lines only; a host bisecting a report reads
        the same stream on stderr instead. */
     if (std::getenv("RESONATE_EDITOR_REPORTS") == nullptr)
