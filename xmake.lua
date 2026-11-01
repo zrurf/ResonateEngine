@@ -332,6 +332,16 @@ task("csharp-reload")
         description = "Run the managed hot-reload acceptance bench.",
     }
 
+task("assets")
+    set_category("plugin")
+    on_run(function ()
+        os.execv(os.programfile(), {"build", "-y", "Resonate.Tools.AssetIndex"})
+    end)
+    set_menu {
+        usage = "xmake assets",
+        description = "Index the content tree's identity sidecars into the products manifest.",
+    }
+
 task("texcook")
     set_category("plugin")
     on_run(function ()
@@ -426,6 +436,7 @@ end
 if not get_config("engine_only") then
     includes("packages/csharp")
     includes("packages/tools/texcook")
+    includes("packages/tools/assetindex")
     includes("packages/tools/iconcook")
     includes("packages/editor")
     includes("packages/launcher")
