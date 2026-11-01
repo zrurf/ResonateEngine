@@ -204,14 +204,12 @@
               padding_left="0" padding_top="0" padding_right="0" padding_bottom="0">
         <Panel key="machine-canvas" position="Absolute" x="0" y="0" width="0" height="320"
                color="0.12 0.13 0.15 1">
-          <QuadDecals/>
         </Panel>
         <Panel key="machine-node-row" position="Absolute" x="20" y="20" width="120"
                height="56" color="0.2 0.22 0.26 1" shown="false" border_color="0.4 0.42 0.46 1"
                border_width="1">
           <Label key="machine-node-caption" class="label" width="112" height="56" text="状态"
-                 font_size="12" v_align="Middle" align="Center" color="0 0 0 0"
-                 padding_left="4" padding_right="4">
+                 font_size="12" v_align="Middle" align="Center" color="0 0 0 0">
             <LayoutItem grow="1"/>
           </Label>
           <Selectable color="0.28 0.3 0.35 1"/>

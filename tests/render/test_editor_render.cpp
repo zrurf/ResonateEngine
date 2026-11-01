@@ -133,6 +133,10 @@ TEST_CASE("offscreen: the editor shell renders", "[render][editor]")
     std::vector<resonate::dom::Diagnostic> diagnostics;
     auto document =
         resonate::dom::Document::parse(source, &resonate::ui::documentSchema(), diagnostics);
+    for (const auto& diagnostic : diagnostics)
+    {
+        INFO(diagnostic.message);
+    }
     REQUIRE(document != nullptr);
     CHECK(diagnostics.empty());
     REQUIRE(resonate::ui::loadStylesheets(
