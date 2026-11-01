@@ -876,6 +876,69 @@ TEST_CASE("scene: an authored Machine builds a running state machine", "[scene][
     CHECK(rebuilt_machine->states.size() == 2U);
     CHECK(rebuilt_machine->initial == 1U);
 
+    /* Conditions author against the machine's parameter table; the capture
+       keeps them. */
+    {
+        constexpr const char* kConditions = R"xml(<document version="1" schemas="resonate.scene">
+  <Scene key="yard">
+    <Object key="runner">
+      <Machine entry="idle" parameters="input_x jump">
+        <State name="idle" clip="@0704c7df-7013-4c31-818d-b515207bb7df"/>
+        <State name="run" clip="@0704c7df-7013-4c31-818d-b515207bb7df"/>
+        <Transition from="idle" to="run">
+          <Condition parameter="input_x" greater="0.5"/>
+        </Transition>
+        <Transition from="run" to="idle" at_end="true">
+          <Condition parameter="jump" trigger="true"/>
+        </Transition>
+      </Machine>
+    </Object>
+  </Scene>
+</document>)xml";
+        std::vector<resonate::dom::Diagnostic> condition_diagnostics;
+        auto condition_document = resonate::dom::Document::parse(
+            kConditions, &sceneSchemas(), condition_diagnostics);
+        REQUIRE(condition_document != nullptr);
+        CHECK(condition_diagnostics.empty());
+
+        Entity condition_root{};
+        std::string condition_error;
+        const bool condition_ok = resonate::scene::instantiate(
+            fixture.world, *condition_document, &sceneComponents(), condition_root,
+            condition_error, nullptr, &player);
+        INFO("instantiate error: " << condition_error);
+        REQUIRE(condition_ok);
+        const Entity runner = resonate::scene::findByKey(fixture.world, condition_root, "runner");
+        REQUIRE(runner.valid());
+        const auto* runner_state = fixture.world.get<resonate::animation::MachineState>(runner);
+        REQUIRE(runner_state != nullptr);
+        const resonate::animation::StateMachine* runner_machine =
+            player.machine(runner_state->machine);
+        REQUIRE(runner_machine != nullptr);
+        REQUIRE(runner_machine->parameters.size() == 2U);
+        CHECK(runner_machine->parameters[0] == "input_x");
+        CHECK(runner_machine->parameters[1] == "jump");
+        REQUIRE(runner_machine->transitions.size() == 2U);
+        REQUIRE(runner_machine->transitions[0].conditions.size() == 1U);
+        const auto& greater = runner_machine->transitions[0].conditions[0];
+        CHECK(greater.test == resonate::animation::ConditionTest::Greater);
+        CHECK(greater.value == 0.5F);
+        CHECK(greater.parameter == runner_machine->parameterIndex("input_x"));
+        REQUIRE(runner_machine->transitions[1].conditions.size() == 1U);
+        CHECK(runner_machine->transitions[1].conditions[0].test ==
+              resonate::animation::ConditionTest::Triggered);
+        CHECK(runner_machine->transitions[1].conditions[0].parameter ==
+              runner_machine->parameterIndex("jump"));
+
+        std::string condition_xml;
+        REQUIRE(resonate::scene::capture(fixture.world, runner, condition_xml, condition_error));
+        CHECK(condition_xml.find("parameters=\"input_x jump\"") != std::string::npos);
+        CHECK(condition_xml.find("<Condition parameter=\"input_x\" greater=\"0.5\"/>") !=
+              std::string::npos);
+        CHECK(condition_xml.find("<Condition parameter=\"jump\" trigger=\"true\"/>") !=
+              std::string::npos);
+    }
+
     /* An unknown entry or state reference is refused with the name. */
     constexpr const char* kBroken = R"xml(<document version="1" schemas="resonate.scene">
   <Scene key="yard">

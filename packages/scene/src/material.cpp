@@ -288,6 +288,28 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
         entry_name.assign(entry->value);
         fragment += " entry=\"" + escapeAttribute(entry->value) + "\"";
     }
+    std::vector<std::string> parameter_authored;
+    if (const dom::Field* parameters = document.property(node, document.intern("parameters"));
+        parameters != nullptr && !parameters->value.empty())
+    {
+        fragment += " parameters=\"" + escapeAttribute(parameters->value) + "\"";
+        std::string_view rest = parameters->value;
+        while (!rest.empty())
+        {
+            const std::size_t space = rest.find(' ');
+            const std::string_view token =
+                space == std::string_view::npos ? rest : rest.substr(0U, space);
+            if (!token.empty())
+            {
+                parameter_authored.emplace_back(token);
+            }
+            rest = space == std::string_view::npos ? std::string_view{} : rest.substr(space + 1U);
+        }
+        for (const std::string& name : parameter_authored)
+        {
+            machine.parameters.push_back(name);
+        }
+    }
     fragment += ">\n";
     for (dom::NodeHandle child = document.firstChild(node); child.valid();
          child = document.nextSibling(child))
@@ -448,7 +470,134 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
             edge.sync = authored->value == "true";
             fragment += " sync=\"" + authored->value + "\"";
         }
-        fragment += "/>\n";
+        /* The edge's conditions: a parameter name resolved against the
+           machine's table, and exactly one test. */
+        std::string condition_lines;
+        for (dom::NodeHandle condition_node = document.firstChild(child);
+             condition_node.valid(); condition_node = document.nextSibling(condition_node))
+        {
+            if (document.text(document.type(condition_node)) != "Condition")
+            {
+                error = "a Machine transition holds only Condition elements";
+                return false;
+            }
+            const dom::Field* parameter =
+                document.property(condition_node, document.intern("parameter"));
+            if (parameter == nullptr || parameter->value.empty())
+            {
+                error = "a Condition needs a parameter";
+                return false;
+            }
+            const std::string parameter_name(parameter->value);
+            std::uint32_t parameter_index = animation::kUnknownParameter;
+            const auto known = std::find(machine.parameters.begin(), machine.parameters.end(),
+                                         parameter_name);
+            if (known != machine.parameters.end())
+            {
+                parameter_index =
+                    static_cast<std::uint32_t>(known - machine.parameters.begin());
+            }
+            else
+            {
+                if (machine.parameters.size() >= animation::kMaxMachineParameters)
+                {
+                    error = "the Machine declares more parameters than it may hold";
+                    return false;
+                }
+                parameter_index = static_cast<std::uint32_t>(machine.parameters.size());
+                machine.parameters.push_back(parameter_name);
+            }
+            animation::Condition condition;
+            condition.parameter = parameter_index;
+            bool matched = false;
+            std::string condition_fragment = "    <Condition parameter=\"" +
+                                             escapeAttribute(parameter_name) + "\"";
+            const auto compared = [&](const char* attribute,
+                                      animation::ConditionTest test)
+            {
+                matched = true;
+                const dom::Field* authored =
+                    document.property(condition_node, document.intern(attribute));
+                if (authored == nullptr)
+                {
+                    return true;
+                }
+                condition.test = test;
+                const std::string number_text(authored->value);
+                char* stop = nullptr;
+                const float value = std::strtof(number_text.c_str(), &stop);
+                if (stop == number_text.c_str() || stop != number_text.c_str() + number_text.size())
+                {
+                    error = std::string("the condition's ") + attribute +
+                            " must be one number";
+                    return false;
+                }
+                condition.value = value;
+                condition_fragment +=
+                    std::string(" ") + attribute + "=\"" + escapeAttribute(authored->value) +
+                    "\"";
+                return true;
+            };
+            bool parsed = true;
+            const auto take = [&](const char* attribute, animation::ConditionTest test,
+                                  bool* flag)
+            {
+                if (const dom::Field* authored =
+                        document.property(condition_node, document.intern(attribute));
+                    authored != nullptr)
+                {
+                    matched = true;
+                    condition.test = test;
+                    *flag = authored->value == "true";
+                    condition_fragment += std::string(" ") + attribute + "=\"" +
+                                          escapeAttribute(authored->value) + "\"";
+                }
+            };
+            parsed = parsed && compared("greater", animation::ConditionTest::Greater);
+            parsed = parsed && compared("less", animation::ConditionTest::Less);
+            parsed = parsed && compared("equal", animation::ConditionTest::Equal);
+            parsed = parsed && compared("not_equal", animation::ConditionTest::NotEqual);
+            if (!parsed)
+            {
+                return false;
+            }
+            {
+                bool flag = false;
+                take("is", animation::ConditionTest::True, &flag);
+                if (flag)
+                {
+                    matched = true;
+                }
+                else if (document.property(condition_node, document.intern("is")) != nullptr)
+                {
+                    take("is", animation::ConditionTest::False, &flag);
+                }
+            }
+            {
+                bool flag = false;
+                take("trigger", animation::ConditionTest::Triggered, &flag);
+                if (flag)
+                {
+                    matched = true;
+                }
+            }
+            if (!matched)
+            {
+                error = "a Condition carries no test";
+                return false;
+            }
+            condition_fragment += "/>\n";
+            condition_lines += condition_fragment;
+            edge.conditions.push_back(condition);
+        }
+        if (condition_lines.empty())
+        {
+            fragment += "/>\n";
+        }
+        else
+        {
+            fragment += ">\n" + condition_lines + "  </Transition>\n";
+        }
         machine.transitions.push_back(edge);
     }
     if (!machine.validate(error))

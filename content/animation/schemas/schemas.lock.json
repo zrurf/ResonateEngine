@@ -17,12 +17,28 @@
       ]
     },
     {
+      "name": "Condition",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Condition version 1",
+        "  field parameter string",
+        "  field greater string",
+        "  field less string",
+        "  field equal string",
+        "  field not_equal string",
+        "  field trigger string",
+        "  field is string"
+      ]
+    },
+    {
       "name": "Machine",
       "kind": "node",
       "version": 1,
       "shape": [
         "node Machine version 1",
-        "  field entry string"
+        "  field entry string",
+        "  field parameters string"
       ]
     },
     {

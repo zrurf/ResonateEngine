@@ -17,8 +17,11 @@
        states name clips by asset reference and whose edges cross-fade. The
        numbers and flags author as strings and the scene adapter parses them;
        node authoring fields are text only. -->
+  <!-- `parameters` is a space-separated list of the names gameplay writes
+       through MachineRuntime; a Condition's parameter resolves against it. -->
   <node name="Machine" version="1">
     <field name="entry" type="string"/>
+    <field name="parameters" type="string"/>
   </node>
 
   <!-- The state's name is the core `name` attribute, like an Object's. -->
@@ -33,6 +36,19 @@
     <field name="at_end" type="string"/>
     <field name="fade" type="string"/>
     <field name="sync" type="string"/>
+  </node>
+
+  <!-- Exactly one test per condition: greater/less/equal/not_equal carry the
+       compared value, trigger marks the parameter as a trigger, is holds the
+       parameter's truth. -->
+  <node name="Condition" version="1">
+    <field name="parameter" type="string"/>
+    <field name="greater" type="string"/>
+    <field name="less" type="string"/>
+    <field name="equal" type="string"/>
+    <field name="not_equal" type="string"/>
+    <field name="trigger" type="string"/>
+    <field name="is" type="string"/>
   </node>
 
 </schema>
