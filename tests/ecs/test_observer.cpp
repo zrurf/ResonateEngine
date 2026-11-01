@@ -182,6 +182,66 @@ TEST_CASE("an observer may not change structure while it runs", "[ecs][observer]
     REQUIRE_FALSE(world.has(target, mana));
 }
 
+TEST_CASE("an observer may add and remove observers while it runs", "[ecs][observer]")
+{
+    World world(resonate::systemAllocator());
+    const ComponentIndex health = world.registerComponent<Health>();
+    REQUIRE(health != resonate::ecs::kInvalidComponent);
+
+    std::vector<int> order;
+    struct Ordered
+    {
+        std::vector<int>* order = nullptr;
+        int id = 0;
+
+        static void observe(void* user_data, World&, Entity, ComponentIndex)
+        {
+            auto* self = static_cast<Ordered*>(user_data);
+            self->order->push_back(self->id);
+        }
+    };
+
+    Ordered first{&order, 1};
+    Ordered second{&order, 2};
+    Ordered third{&order, 3};
+
+    /* The first observer rewrites the list on its first run: it drops `second`
+       and adds `third`. The round it is running still sees the list it began
+       with; the next round sees the new one. */
+    struct Mutating
+    {
+        std::vector<int>* order = nullptr;
+        Ordered* added = nullptr;
+        Ordered* removed = nullptr;
+        bool done = false;
+
+        static void observe(void* user_data, World& world, Entity, ComponentIndex component)
+        {
+            auto* self = static_cast<Mutating*>(user_data);
+            self->order->push_back(0);
+            if (self->done)
+            {
+                return;
+            }
+            self->done = true;
+            REQUIRE(world.addObserver(component, self->added, &Ordered::observe));
+            world.removeObserver(component, self->removed, &Ordered::observe);
+        }
+    };
+
+    Mutating mutating{&order, &third, &second};
+    REQUIRE(world.addObserver(health, &mutating, &Mutating::observe));
+    REQUIRE(world.addObserver(health, &second, &Ordered::observe));
+
+    const Entity entity = world.create();
+    REQUIRE(world.add(entity, Health{1}) != nullptr);
+    REQUIRE(order == std::vector<int>{0, 2});
+
+    order.clear();
+    world.markChanged(entity, health);
+    REQUIRE(order == std::vector<int>{0, 3});
+}
+
 TEST_CASE("observers of one type run in registration order and can be removed", "[ecs][observer]")
 {
     World world(resonate::systemAllocator());

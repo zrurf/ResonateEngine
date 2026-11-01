@@ -331,11 +331,15 @@ struct WorldImpl
         World::ChangeObserver observer = nullptr;
     };
 
+    /* Registration may race a dispatch on a worker thread, and a dispatch
+       copies the list before calling it, so both sides hold this lock. */
+    std::mutex observerMutex;
     std::vector<ObserverEntry> observers[kMaxComponentTypes];
 
     /* Non-zero while an observer runs: a structural change inside one would move
-       rows under the announcement. */
-    std::uint32_t dispatching = 0;
+       rows under the announcement. Atomic because parallel bodies may mark
+       changes, and a lost decrement would latch the guard on forever. */
+    std::atomic<std::uint32_t> dispatching{0};
 
     /* --- reporting: error paths only, so the cost is the message itself --- */
 
@@ -363,7 +367,7 @@ struct WorldImpl
 
     bool structural()
     {
-        if (dispatching != 0U)
+        if (dispatching.load(std::memory_order_relaxed) != 0U)
         {
             say(World::Report::Error,
                 "structural change refused: a change observer is running; record it in a command "

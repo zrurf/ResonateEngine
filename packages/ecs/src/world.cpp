@@ -138,6 +138,7 @@ bool World::addObserver(ComponentIndex component, void* user_data, ChangeObserve
         return false;
     }
 
+    std::lock_guard<std::mutex> lock(impl_->observerMutex);
     impl_->observers[component].push_back(detail::WorldImpl::ObserverEntry{user_data, observer});
     return true;
 }
@@ -149,6 +150,7 @@ void World::removeObserver(ComponentIndex component, void* user_data, ChangeObse
         return;
     }
 
+    std::lock_guard<std::mutex> lock(impl_->observerMutex);
     std::vector<detail::WorldImpl::ObserverEntry>& entries = impl_->observers[component];
     entries.erase(
         std::remove_if(entries.begin(), entries.end(),
@@ -159,18 +161,24 @@ void World::removeObserver(ComponentIndex component, void* user_data, ChangeObse
 
 void World::notifyChange(Entity entity, ComponentIndex component)
 {
-    const std::vector<detail::WorldImpl::ObserverEntry>& entries = impl_->observers[component];
+    /* A callback may add or remove observers; it cannot be allowed to reallocate
+       or erase the list under the loop, so dispatch over a copy. */
+    std::vector<detail::WorldImpl::ObserverEntry> entries;
+    {
+        std::lock_guard<std::mutex> lock(impl_->observerMutex);
+        entries = impl_->observers[component];
+    }
     if (entries.empty())
     {
         return;
     }
 
-    ++impl_->dispatching;
+    impl_->dispatching.fetch_add(1U, std::memory_order_relaxed);
     for (const detail::WorldImpl::ObserverEntry& entry : entries)
     {
         entry.observer(entry.user_data, *this, entity, component);
     }
-    --impl_->dispatching;
+    impl_->dispatching.fetch_sub(1U, std::memory_order_relaxed);
 }
 
 std::uint32_t World::componentTypeCount() const noexcept

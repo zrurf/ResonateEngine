@@ -211,12 +211,16 @@ class World
        from a played command or a direct write alike, with the world in its
        post-change state; in registration order, on the thread that made the
        change. A callback must not change structure — a structural call from it
-       is refused and reported. Entity destruction is not announced here. */
+       is refused and reported. Entity destruction is not announced here.
+       Adding or removing an observer from inside a dispatch is safe but takes
+       effect at the next change: the running dispatch works from the list as it
+       stood when it began. */
     using ChangeObserver = void (*)(void* user_data, World& world, Entity entity,
                                     ComponentIndex component);
 
     /* False, with a report, for a component this world did not register or an
-       observer that is null. */
+       observer that is null. Safe to call while another thread is marking
+       changes. */
     bool addObserver(ComponentIndex component, void* user_data, ChangeObserver observer);
 
     /* Dropping one that was never added is a no-op. */
