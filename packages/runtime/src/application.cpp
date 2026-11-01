@@ -1,5 +1,6 @@
 #include <resonate/application/application.h>
 
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstddef>
@@ -22,17 +23,16 @@ namespace
 {
 
 /*
- * Set by the SIGINT handler and by requestStop().
- *
- * A plain flag rather than an atomic, because sig_atomic_t is what a handler may
- * write and the shared state is one one-way bit: the worst a race between the two
- * writers can do is have the loop notice a frame later.
+ * Two writers, two flags. A signal handler may only touch sig_atomic_t; a caller
+ * on another thread (a UI or job thread asking the run to end) writes the atomic
+ * one. The loop watches both.
  */
-volatile std::sig_atomic_t g_stop_requested = 0;
+volatile std::sig_atomic_t g_stop_from_signal = 0;
+std::atomic<bool> g_stop_requested{false};
 
 extern "C" void onInterrupt(int)
 {
-    g_stop_requested = 1;
+    g_stop_from_signal = 1;
 }
 
 /* A shipped game keeps its plugins beside the executable. A build tree does not:
@@ -68,7 +68,7 @@ std::string defaultPluginDirectory()
 
 void Application::requestStop()
 {
-    g_stop_requested = 1;
+    g_stop_requested.store(true, std::memory_order_relaxed);
 }
 
 Application::Config Application::configFromCommandLine(int argc, char** argv)
@@ -185,7 +185,8 @@ int Application::run(const Config& config)
 
     /* Cleared so two runs in one process are independent, and restored afterwards
        so a caller that had its own handler gets it back. */
-    g_stop_requested = 0;
+    g_stop_from_signal = 0;
+    g_stop_requested.store(false, std::memory_order_relaxed);
     void (*const previous)(int) = std::signal(SIGINT, &onInterrupt);
 
     if (JobSystem* const jobs = host->jobs(); jobs != nullptr && config.worker_count != 0U)
@@ -196,7 +197,8 @@ int Application::run(const Config& config)
     FrameClock clock(config.frame_clock);
 
     uint64_t previous_ticks = resonate_pal_chrono_ticks();
-    while (g_stop_requested == 0)
+    while (g_stop_from_signal == 0 &&
+           !g_stop_requested.load(std::memory_order_relaxed))
     {
         /* Before the stages, which is what a window capability asks for: input is
            refreshed for the frame, and a quit request ends the run here rather

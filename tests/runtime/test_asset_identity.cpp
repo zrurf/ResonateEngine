@@ -40,11 +40,16 @@ TEST_CASE("asset identity: a GUID round trips through its canonical form", "[ass
     compact.sub_id = id.sub_id;
     CHECK(compact == id);
 
-    /* Wrong length, bad digits and the null id are refused. */
+    /* Wrong length, bad digits and the null id are refused. A GUID has exactly
+       two 16-digit halves; a longer string must not silently keep the last
+       group. */
     AssetId broken = id;
     CHECK_FALSE(resonate::asset::parseGuid("0197d6e4-8a2f-7c31-9b40-5d6e7f8091a", broken));
     CHECK_FALSE(resonate::asset::parseGuid("0197d6e4-8a2f-7c31-9b40-5d6e7f8091zz", broken));
     CHECK_FALSE(resonate::asset::parseGuid("", broken));
+    CHECK_FALSE(resonate::asset::parseGuid("0197d6e48a2f7c319b405d6e7f8091a201", broken));
+    CHECK_FALSE(resonate::asset::parseGuid(
+        "0197d6e48a2f7c319b405d6e7f8091a20197d6e48a2f7c31", broken));
 
     AssetId null_id;
     CHECK_FALSE(null_id.valid());
@@ -110,6 +115,11 @@ TEST_CASE("asset identity: a broken manifest is refused with a reason", "[asset]
          "[[product]]\nguid = \"0197d6e4-8a2f-7c31-9b40-5d6e7f8091a2\"\nsub_id = 1\n"
          "path = \"again.ktx2\"\n",
          "twice"},
+        /* A valid entry before the bad one must not be committed either. */
+        {"[[product]]\nguid = \"0197d6e4-8a2f-7c31-9b40-5d6e7f8091a2\"\nsub_id = 1\n"
+         "path = \"ok.ktx2\"\n\n[[product]]\nguid = \"0197d6e4-8a2f-7c31-9b40-5d6e7f8091a2\"\n"
+         "sub_id = 0\npath = \"bad.ktx2\"\n",
+         "needs a guid, a positive sub_id and a path"},
     };
     for (const Case& scenario : cases)
     {
@@ -118,6 +128,8 @@ TEST_CASE("asset identity: a broken manifest is refused with a reason", "[asset]
         std::string error;
         CHECK_FALSE(identity.loadProducts(scenario.manifest, error));
         CHECK(error.find(scenario.why) != std::string::npos);
+        CHECK(identity.size() == 0U);
+        CHECK_FALSE(identity.locate(fixedId()).has_value());
     }
 }
 

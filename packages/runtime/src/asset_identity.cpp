@@ -1,5 +1,6 @@
 #include <resonate/asset/identity.h>
 
+#include <algorithm>
 #include <cctype>
 #include <fstream>
 #include <iterator>
@@ -30,21 +31,6 @@ int hexValue(char character)
         return character - 'A' + 10;
     }
     return -1;
-}
-
-std::uint64_t readHex(std::string_view text)
-{
-    std::uint64_t value = 0U;
-    for (const char character : text)
-    {
-        const int digit = hexValue(character);
-        if (digit < 0)
-        {
-            return 0U;
-        }
-        value = (value << 4U) | static_cast<std::uint64_t>(digit);
-    }
-    return value;
 }
 
 } // namespace
@@ -95,11 +81,11 @@ bool parseGuid(std::string_view text, AssetId& out)
         ++nibbles;
         if (nibbles == 16)
         {
-            half = 1;
+            ++half;
             nibbles = 0;
         }
     }
-    if (half != 1 || nibbles != 0)
+    if (half != 2 || nibbles != 0)
     {
         return false;
     }
@@ -118,12 +104,16 @@ bool Identity::loadProducts(std::string_view toml, std::string& error)
         error = "the manifest does not parse";
         return false;
     }
-    const toml::array* products = result.table()["product"].as_array();
-    if (products == nullptr)
+    const toml::array* entries = result.table()["product"].as_array();
+    if (entries == nullptr)
     {
         return true;
     }
-    for (const toml::node& entry : *products)
+    /* Parsed aside: a manifest with one bad entry leaves the identity exactly
+       as it was, so a caller that reports the failure never serves half of it. */
+    std::vector<Product> parsed;
+    parsed.reserve(entries->size());
+    for (const toml::node& entry : *entries)
     {
         const toml::table* product = entry.as_table();
         if (product == nullptr)
@@ -146,17 +136,21 @@ bool Identity::loadProducts(std::string_view toml, std::string& error)
             error = "a [[product]] entry needs a guid, a positive sub_id and a path";
             return false;
         }
-        for (const Product& known : products_)
+        const auto duplicates = [&record](const std::vector<Product>& known)
         {
-            if (known.id == record.id)
-            {
-                error = "the manifest names " + formatGuid(record.id) + " twice";
-                return false;
-            }
+            return std::any_of(known.begin(), known.end(),
+                               [&record](const Product& item) { return item.id == record.id; });
+        };
+        if (duplicates(products_) || duplicates(parsed))
+        {
+            error = "the manifest names " + formatGuid(record.id) + " twice";
+            return false;
         }
         record.path = path;
-        products_.push_back(std::move(record));
+        parsed.push_back(std::move(record));
     }
+    products_.insert(products_.end(), std::make_move_iterator(parsed.begin()),
+                     std::make_move_iterator(parsed.end()));
     return true;
 }
 
