@@ -77,6 +77,7 @@ bool parseClipReference(std::string_view text, resonate::asset::AssetId& out)
 #include <resonate/ui/event.h>
 #include <resonate/ui/string_table.h>
 #include <resonate/ui/hit_test.h>
+#include <resonate/ui/display_list.h>
 #include <resonate/ui/text_runtime.h>
 
 #include "resonate.ui/components.gen.h"
@@ -193,7 +194,12 @@ struct EditorState
     Entity machine_empty{};
     Entity state_row_prototype{};
     Entity transition_row_prototype{};
+    Entity node_prototype{};
+    Entity machine_canvas{};
     Entity machine_list{};
+    /* The last edge decals pushed: a tick skips the blob write while the
+       geometry is unchanged. */
+    std::vector<resonate::ui::Quad> machine_edge_quads{};
     std::vector<Entity> machine_state_rows;   /* parallel to model.states */
     std::vector<Entity> machine_transition_rows; /* parallel to model.transitions */
     Entity machine_shown_entity{};
@@ -609,6 +615,11 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
         }
     }
     (void)resonate::ui::setShown(world, state.machine_empty, !has_machine);
+    (void)resonate::ui::setShown(world, state.machine_canvas, has_machine);
+    if (has_machine && world.get<resonate::ui::QuadDecals>(state.machine_canvas) == nullptr)
+    {
+        (void)world.add(state.machine_canvas, resonate::ui::QuadDecals{});
+    }
     std::string entry_error;
     (void)resonate::ui::setText(world, state.canvas, state.machine_entry_field, model.entry,
                                 entry_error);
@@ -617,16 +628,31 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
     {
         return;
     }
+    std::size_t state_index = 0U;
     for (const resonate::scene::MachineModelState& machine_state : model.states)
     {
-        std::string caption = machine_state.name + " · " + machine_state.clip;
-        if (machine_state.looping == "false")
+        const Entity node =
+            cloneRow(state, world, state.node_prototype, state.machine_canvas,
+                     machine_state.name);
+        /* Layout hints when authored; otherwise a grid that keeps nodes apart. */
+        float x = 20.0F + 150.0F * static_cast<float>(state_index % 3U);
+        float y = 20.0F + 90.0F * static_cast<float>(state_index / 3U);
+        if (!machine_state.x.empty())
         {
-            caption += " · 不循环";
+            x = std::strtof(machine_state.x.c_str(), nullptr);
         }
-        const Entity row =
-            cloneRow(state, world, state.state_row_prototype, state.machine_list, caption);
-        state.machine_state_rows.push_back(row);
+        if (!machine_state.y.empty())
+        {
+            y = std::strtof(machine_state.y.c_str(), nullptr);
+        }
+        if (resonate::ui::RectTransform* rect = world.get<resonate::ui::RectTransform>(node))
+        {
+            rect->x = x;
+            rect->y = y;
+            (void)world.markChanged<resonate::ui::RectTransform>(node);
+        }
+        state.machine_state_rows.push_back(node);
+        ++state_index;
     }
     for (const resonate::scene::MachineModelTransition& transition : model.transitions)
     {
@@ -676,6 +702,116 @@ void writeMachineFragment(resonate::ecs::World& world, Entity entity,
     {
         source->text = text;
         (void)world.markChanged<resonate::scene::MachineSource>(entity);
+    }
+}
+
+/* Recomputes the edge decals from the node boxes' placed rectangles: one
+   orthogonal edge per transition, written into the canvas's QuadDecals only
+   when the geometry changed (a tick runs this every frame the pane shows). */
+void rebuildMachineEdges(EditorState& state, resonate::ecs::World& world)
+{
+    if (!state.machine_canvas.valid() || !world.alive(state.machine_canvas) ||
+        state.machine_state_rows.empty())
+    {
+        return;
+    }
+    resonate::scene::MachineModel model;
+    bool has_machine = false;
+    if (const auto* source = world.get<resonate::scene::MachineSource>(state.machine_shown_entity);
+        source != nullptr && world.alive(source->text))
+    {
+        const auto* bytes = static_cast<const char*>(world.blobData(source->text));
+        const std::size_t size = world.blobSize(source->text);
+        if (bytes != nullptr && size != 0U)
+        {
+            std::string parse_error;
+            has_machine = resonate::scene::parseMachineFragment(
+                std::string_view(bytes, size), model, parse_error);
+        }
+    }
+    resonate::ui::DisplayList edges;
+    if (has_machine)
+    {
+        const resonate::Vec4 color{0.55F, 0.58F, 0.62F, 1.0F};
+        for (const resonate::scene::MachineModelTransition& transition : model.transitions)
+        {
+            if (transition.from == "*" || transition.to == "*" ||
+                transition.from == transition.to)
+            {
+                continue;
+            }
+            const auto from_at = std::find_if(
+                model.states.begin(), model.states.end(),
+                [&transition](const resonate::scene::MachineModelState& state)
+                { return state.name == transition.from; });
+            const auto to_at = std::find_if(
+                model.states.begin(), model.states.end(),
+                [&transition](const resonate::scene::MachineModelState& state)
+                { return state.name == transition.to; });
+            if (from_at == model.states.end() || to_at == model.states.end())
+            {
+                continue;
+            }
+            const std::size_t from_index =
+                static_cast<std::size_t>(from_at - model.states.begin());
+            const std::size_t to_index =
+                static_cast<std::size_t>(to_at - model.states.begin());
+            if (from_index >= state.machine_state_rows.size() ||
+                to_index >= state.machine_state_rows.size())
+            {
+                continue;
+            }
+            const auto* from_rect = world.get<resonate::ui::ComputedRect>(
+                state.machine_state_rows[from_index]);
+            const auto* to_rect = world.get<resonate::ui::ComputedRect>(
+                state.machine_state_rows[to_index]);
+            if (from_rect == nullptr || to_rect == nullptr || from_rect->width <= 0.0F ||
+                to_rect->width <= 0.0F)
+            {
+                continue;
+            }
+            edges.pushEdge(
+                resonate::Vec2{from_rect->x + from_rect->width,
+                               from_rect->y + from_rect->height * 0.5F},
+                resonate::Vec2{to_rect->x, to_rect->y + to_rect->height * 0.5F}, 3.0F,
+                color);
+        }
+    }
+    const auto& quads = edges.quads();
+    const bool unchanged =
+        quads.size() == state.machine_edge_quads.size() &&
+        std::equal(quads.begin(), quads.end(), state.machine_edge_quads.begin(),
+                   [](const resonate::ui::Quad& a, const resonate::ui::Quad& b)
+                   {
+                       return a.x == b.x && a.y == b.y && a.width == b.width &&
+                              a.height == b.height && a.color.x == b.color.x &&
+                              a.color.y == b.color.y && a.color.z == b.color.z &&
+                              a.color.w == b.color.w;
+                   });
+    if (unchanged)
+    {
+        return;
+    }
+    state.machine_edge_quads.assign(quads.begin(), quads.end());
+    auto* decals = world.get<resonate::ui::QuadDecals>(state.machine_canvas);
+    if (decals == nullptr)
+    {
+        return;
+    }
+    if (world.alive(decals->quads))
+    {
+        (void)world.destroyBlob(decals->quads);
+    }
+    if (!quads.empty())
+    {
+        const resonate::ecs::BlobHandle blob = world.createBlob(
+            state.machine_canvas, quads.size() * sizeof(resonate::ui::Quad),
+            quads.data());
+        if (blob.valid())
+        {
+            decals->quads = blob;
+            (void)world.markChanged<resonate::ui::QuadDecals>(state.machine_canvas);
+        }
     }
 }
 
@@ -1918,7 +2054,8 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         state->machine_loop_pending = false;
         const Entity entity = state->machine_shown_entity;
-        const Entity selected = resonate::ui::selectedChild(world, state->machine_list);
+        const Entity selected =
+            resonate::ui::selectedChild(world, state->machine_canvas);
         const auto state_at =
             std::find(state->machine_state_rows.begin(), state->machine_state_rows.end(),
                       selected);
@@ -1972,7 +2109,8 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         state->machine_clip_pending = false;
         const Entity entity = state->machine_shown_entity;
-        const Entity selected = resonate::ui::selectedChild(world, state->machine_list);
+        const Entity selected =
+            resonate::ui::selectedChild(world, state->machine_canvas);
         const auto state_at =
             std::find(state->machine_state_rows.begin(), state->machine_state_rows.end(),
                       selected);
@@ -2136,7 +2274,7 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                 if (remove_selected)
                 {
                     const Entity selected =
-                        resonate::ui::selectedChild(world, state->machine_list);
+                        resonate::ui::selectedChild(world, state->machine_canvas);
                     const auto state_at = std::find(state->machine_state_rows.begin(),
                                                     state->machine_state_rows.end(), selected);
                     const auto transition_at =
@@ -2403,6 +2541,10 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     mirrorScrub(state->canvas, world, state->opacity);
     mirrorScrub(state->canvas, world, state->roughness);
     mirrorScrub(state->canvas, world, state->metallic);
+    if (state->layout.machine_shown)
+    {
+        rebuildMachineEdges(*state, world);
+    }
     const Entity selected = resonate::ui::selectedChild(world, state->scene_list);
     /* applyMaterials reads all three scrub values, so it waits until the
        first mirror has read them (the scrubbers answer their authored
@@ -2614,6 +2756,8 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->transition_row_prototype =
         resonate::ui::findByKey(world, canvas, "machine-transition-row");
     state->machine_list = resonate::ui::findByKey(world, canvas, "machine-scroll");
+    state->machine_canvas = resonate::ui::findByKey(world, canvas, "machine-canvas");
+    state->node_prototype = resonate::ui::findByKey(world, canvas, "machine-node-row");
     state->machine_add_state = resonate::ui::findByKey(world, canvas, "machine-add-state");
     state->machine_add_transition =
         resonate::ui::findByKey(world, canvas, "machine-add-transition");
