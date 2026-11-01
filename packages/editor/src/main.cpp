@@ -30,6 +30,49 @@
 #include "resonate.animation/components.gen.h"
 #include "resonate.scene/components.gen.h"
 #include <resonate/scene/machine_model.h>
+
+namespace
+{
+
+/* The editor's own "@guid[:sub]" reader: the scene package's parser is
+   private to it, and the editor only ever handles this one authoring form. */
+bool parseClipReference(std::string_view text, resonate::asset::AssetId& out)
+{
+    if (!text.empty() && text.front() == '@')
+    {
+        text.remove_prefix(1U);
+    }
+    const std::size_t colon = text.find(':');
+    const std::string_view guid = colon == std::string_view::npos
+                                      ? text
+                                      : text.substr(0U, colon);
+    if (!resonate::asset::parseGuid(guid, out))
+    {
+        return false;
+    }
+    out.sub_id = 1U;
+    if (colon != std::string_view::npos)
+    {
+        std::uint64_t sub = 0U;
+        for (const char character : text.substr(colon + 1U))
+        {
+            if (character < '0' || character > '9')
+            {
+                return false;
+            }
+            sub = sub * 10U + static_cast<std::uint64_t>(character - '0');
+            if (sub > 0xFFFFFFFFULL)
+            {
+                return false;
+            }
+        }
+        out.sub_id = static_cast<std::uint32_t>(sub);
+    }
+    return true;
+}
+
+} // namespace
+
 #include <resonate/ui/document.h>
 #include <resonate/ui/event.h>
 #include <resonate/ui/string_table.h>
@@ -162,10 +205,12 @@ struct EditorState
     bool machine_add_transition_pending = false;
     bool machine_delete_pending = false;
     bool machine_loop_pending = false;
+    bool machine_clip_pending = false;
     /* The entry field mirrors the machine's entry; a diff commits an edit. */
     Entity machine_entry_field{};
     std::string machine_entry_mirror{};
     Entity machine_loop_button{};
+    Entity machine_clip_button{};
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -1697,6 +1742,17 @@ bool machineCycleLoop(void* context, resonate::ecs::World&, resonate::ecs::Entit
     return true;
 }
 
+bool machineCycleClip(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+                      resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->machine_clip_pending = true;
+    return true;
+}
+
 /* One axis of the position: the field shows it, a typed number writes it.
    A field that does not parse keeps its text and is not retried until the
    next edit. Each accepted write pushes one undo entry whose closures also
@@ -1909,6 +1965,112 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                         writeMachineFragment(target, entity, after);
                         rebuildMachineRows(*state, target);
                     });
+            }
+        }
+    }
+    if (state->machine_clip_pending)
+    {
+        state->machine_clip_pending = false;
+        const Entity entity = state->machine_shown_entity;
+        const Entity selected = resonate::ui::selectedChild(world, state->machine_list);
+        const auto state_at =
+            std::find(state->machine_state_rows.begin(), state->machine_state_rows.end(),
+                      selected);
+        if (entity.valid() && world.alive(entity) && state->asset_ids_loaded &&
+            state_at != state->machine_state_rows.end())
+        {
+            const std::size_t index =
+                static_cast<std::size_t>(state_at - state->machine_state_rows.begin());
+            std::string before;
+            if (const auto* source = world.get<resonate::scene::MachineSource>(entity);
+                source != nullptr && world.alive(source->text))
+            {
+                const auto* bytes = static_cast<const char*>(world.blobData(source->text));
+                const std::size_t size = world.blobSize(source->text);
+                if (bytes != nullptr && size != 0U)
+                {
+                    before.assign(bytes, size);
+                }
+            }
+            resonate::scene::MachineModel model;
+            std::string parse_error;
+            if (!before.empty() &&
+                resonate::scene::parseMachineFragment(before, model, parse_error) &&
+                index < model.states.size())
+            {
+                /* The clip products the manifest knows: sources ending in
+                   .rclip, which is what a state's clip can reference. */
+                std::vector<resonate::asset::AssetId> clips;
+                for (std::size_t product = 0U; product < state->asset_ids.size();
+                     ++product)
+                {
+                    const auto* known = state->asset_ids.at(product);
+                    if (known != nullptr && known->path.size() > 6U &&
+                        known->path.compare(known->path.size() - 6U, 6U, ".rclip") == 0)
+                    {
+                        clips.push_back(known->id);
+                    }
+                }
+                if (!clips.empty())
+                {
+                    /* The state's current id: a @guid parses directly, a #alias
+                       resolves through the fragment's own Resource lines. */
+                    resonate::asset::AssetId current{};
+                    const std::string& reference = model.states[index].clip;
+                    bool resolved = false;
+                    if (!reference.empty() && reference.front() == '@')
+                    {
+                        std::string id_error;
+                        resolved = parseClipReference(reference, current);
+                    }
+                    else if (!reference.empty() && reference.front() == '#')
+                    {
+                        const std::string marker =
+                            "<Resource key=\"" + reference.substr(1U) + "\" asset=\"@";
+                        const std::size_t at = before.find(marker);
+                        if (at != std::string::npos)
+                        {
+                            const std::size_t begin = at + marker.size();
+                            const std::size_t stop = before.find('"', begin);
+                            if (stop != std::string::npos)
+                            {
+                                std::string id_error;
+                                resolved = parseClipReference(
+                                    std::string_view(before).substr(begin, stop - begin),
+                                    current);
+                            }
+                        }
+                    }
+                    std::size_t next = 0U;
+                    for (std::size_t candidate = 0U; candidate < clips.size(); ++candidate)
+                    {
+                        if (resolved && clips[candidate] == current)
+                        {
+                            next = (candidate + 1U) % clips.size();
+                            break;
+                        }
+                    }
+                    resonate::asset::AssetId chosen = clips[next];
+                    model.states[index].clip =
+                        "@" + resonate::asset::formatGuid(chosen);
+                    const std::string after =
+                        resonate::scene::serializeMachineFragment(model);
+                    writeMachineFragment(world, entity, after);
+                    rebuildMachineRows(*state, world);
+                    pushUndo(
+                        *state,
+                        localized("editor.animation") + " " + model.states[index].name,
+                        [&state, entity, before](resonate::ecs::World& target)
+                        {
+                            writeMachineFragment(target, entity, before);
+                            rebuildMachineRows(*state, target);
+                        },
+                        [&state, entity, after](resonate::ecs::World& target)
+                        {
+                            writeMachineFragment(target, entity, after);
+                            rebuildMachineRows(*state, target);
+                        });
+                }
             }
         }
     }
@@ -2459,6 +2621,7 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->machine_entry_field =
         resonate::ui::findByKey(world, canvas, "machine-entry-field");
     state->machine_loop_button = resonate::ui::findByKey(world, canvas, "machine-loop");
+    state->machine_clip_button = resonate::ui::findByKey(world, canvas, "machine-clip");
     state->splitter_console = resonate::ui::findByKey(world, canvas, "splitter-console");
     state->inspector = resonate::ui::findByKey(world, canvas, "inspector");
     state->console_pane = resonate::ui::findByKey(world, canvas, "console");
@@ -2509,6 +2672,7 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     attachClick("machine-add-transition", &machineAddTransition);
     attachClick("machine-delete", &machineDelete);
     attachClick("machine-loop", &machineCycleLoop);
+    attachClick("machine-clip", &machineCycleClip);
     state->status_fps = resonate::ui::findByKey(world, canvas, "status-fps");
     state->animation_value = resonate::ui::findByKey(world, canvas, "animation-value");
     if (const std::string products = productsPath(); !products.empty())

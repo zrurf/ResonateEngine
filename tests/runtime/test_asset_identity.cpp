@@ -120,3 +120,31 @@ TEST_CASE("asset identity: a broken manifest is refused with a reason", "[asset]
         CHECK(error.find(scenario.why) != std::string::npos);
     }
 }
+
+TEST_CASE("asset identity: the products iterate in manifest order", "[asset]")
+{
+    const char* const manifest = R"toml(
+[[product]]
+guid = "0197d6e4-8a2f-7c31-9b40-5d6e7f8091a2"
+sub_id = 1
+path = "first.ktx2"
+
+[[product]]
+guid = "0197d6e4-8a2f-7c31-9b40-5d6e7f8091a2"
+sub_id = 2
+path = "second.ktx2"
+)toml";
+    resonate::asset::Identity identity;
+    std::string error;
+    REQUIRE(identity.loadProducts(manifest, error));
+    REQUIRE(identity.size() == 2U);
+    const auto* first = identity.at(0U);
+    const auto* second = identity.at(1U);
+    REQUIRE(first != nullptr);
+    REQUIRE(second != nullptr);
+    CHECK(first->path == "first.ktx2");
+    CHECK(first->id.sub_id == 1U);
+    CHECK(second->path == "second.ktx2");
+    CHECK(second->id.sub_id == 2U);
+    CHECK(identity.at(2U) == nullptr);
+}

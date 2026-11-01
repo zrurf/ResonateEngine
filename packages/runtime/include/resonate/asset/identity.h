@@ -74,6 +74,14 @@ class Identity
 
     [[nodiscard]] std::size_t size() const noexcept { return products_.size(); }
 
+    /* The product at `index` (manifest order), or nullptr when out of range.
+       Read-only iteration for tools and editors that enumerate what a run can
+       reference. */
+    [[nodiscard]] const Product* at(std::size_t index) const noexcept
+    {
+        return index < products_.size() ? &products_[index] : nullptr;
+    }
+
   private:
     std::vector<Product> products_;
 };

@@ -193,6 +193,10 @@
           <Label key="machine-loop-label" class="label" width="56" height="24" text="循环"
                  font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
         </Button>
+        <Button key="machine-clip" class="button" width="56" height="24">
+          <Label key="machine-clip-label" class="label" width="56" height="24" text="剪辑"
+                 font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
+        </Button>
       </Panel>
       <Scroll key="machine-scroll" position="Absolute" x="0" y="29" width="0" height="-62"
               step="24" anchor_min="0 0" anchor_max="1 1"
