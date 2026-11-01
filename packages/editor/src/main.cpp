@@ -246,6 +246,9 @@ struct EditorState
     float node_rect_x = 0.0F;
     float node_rect_y = 0.0F;
     std::string node_drag_before{};
+    /* The release names two entities: the box that moved (its row index) and
+       the object whose MachineSource the fragment belongs to. */
+    Entity node_commit_row{};
     Entity node_commit_entity{};
     float node_commit_x = 0.0F;
     float node_commit_y = 0.0F;
@@ -947,6 +950,45 @@ Entity rowUnderList(resonate::ecs::World& world, Entity list, Entity hit)
     return Entity{};
 }
 
+/* A root is an object with no parent; the save captures exactly these. Every
+   structural edit keeps the list in step, or a save names dead handles and
+   silently drops re-created ones. */
+bool sceneRootAt(const EditorState& state, Entity entity, std::size_t& index)
+{
+    const auto found = std::find(state.scene_roots.begin(), state.scene_roots.end(), entity);
+    if (found == state.scene_roots.end())
+    {
+        return false;
+    }
+    index = static_cast<std::size_t>(found - state.scene_roots.begin());
+    return true;
+}
+
+void removeSceneRoot(EditorState& state, Entity entity)
+{
+    const auto found = std::find(state.scene_roots.begin(), state.scene_roots.end(), entity);
+    if (found != state.scene_roots.end())
+    {
+        state.scene_roots.erase(found);
+    }
+}
+
+void addSceneRoot(EditorState& state, Entity entity, std::size_t index)
+{
+    if (!entity.valid())
+    {
+        return;
+    }
+    std::size_t existing = 0;
+    if (sceneRootAt(state, entity, existing))
+    {
+        return;
+    }
+    index = std::min(index, state.scene_roots.size());
+    state.scene_roots.insert(state.scene_roots.begin() + static_cast<std::ptrdiff_t>(index),
+                             entity);
+}
+
 /* Delete removes the selected object from the scene and from the tree list.
    The object is captured as a document first, so undo reinstantiates it under
    the parent it had. The list rebuilds around the change. */
@@ -971,6 +1013,12 @@ void deleteSelected(EditorState& state, resonate::ecs::World& world)
     }
     const Entity parent = resonate::hierarchy::parentOf(world, entity);
     const std::string name = resonate::hierarchy::nameOf(world, entity);
+    std::size_t root_index = 0;
+    const bool was_root = sceneRootAt(state, entity, root_index);
+    if (was_root)
+    {
+        removeSceneRoot(state, entity);
+    }
     destroySubtree(world, entity);
     /* Rows are derived from the hierarchy, so the subtree's rows went with it. */
     rebuildSceneList(state, world);
@@ -985,7 +1033,7 @@ void deleteSelected(EditorState& state, resonate::ecs::World& world)
     auto current = std::make_shared<Entity>();
     pushUndo(
         state, localized("editor.delete") + " " + name,
-        [&state, parent, xml, current](resonate::ecs::World& target)
+        [&state, parent, xml, current, was_root, root_index](resonate::ecs::World& target)
         {
             std::vector<resonate::dom::Diagnostic> diagnostics;
             auto document = resonate::dom::Document::parse(
@@ -1002,6 +1050,10 @@ void deleteSelected(EditorState& state, resonate::ecs::World& world)
                 return;
             }
             *current = restored;
+            if (was_root)
+            {
+                addSceneRoot(state, restored, root_index);
+            }
             rebuildSceneList(state, target);
             selectEntity(state, target, restored);
         },
@@ -1009,6 +1061,7 @@ void deleteSelected(EditorState& state, resonate::ecs::World& world)
         {
             if (target.alive(*current))
             {
+                removeSceneRoot(state, *current);
                 destroySubtree(target, *current);
             }
             rebuildSceneList(state, target);
@@ -1059,6 +1112,26 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
     }
     (void)world.remove<resonate::scene::SourceKey>(copy);
     (void)world.remove<resonate::ui::WidgetKey>(copy);
+    /* A stable id names exactly one object: the copy's whole subtree loses the
+       keys the original still owns. */
+    {
+        const auto copy_children = resonate::hierarchy::children(world, copy);
+        std::vector<Entity> pending(copy_children.begin(), copy_children.end());
+        while (!pending.empty())
+        {
+            const Entity each = pending.back();
+            pending.pop_back();
+            const auto grandchildren = resonate::hierarchy::children(world, each);
+            pending.insert(pending.end(), grandchildren.begin(), grandchildren.end());
+            (void)world.remove<resonate::scene::SourceKey>(each);
+            (void)world.remove<resonate::ui::WidgetKey>(each);
+        }
+    }
+    const bool is_root = !world.alive(parent);
+    if (is_root)
+    {
+        addSceneRoot(state, copy, state.scene_roots.size());
+    }
     std::string name_error;
     (void)resonate::hierarchy::setName(world, copy, name, name_error);
 
@@ -1084,11 +1157,12 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
         {
             if (target.alive(*current))
             {
+                removeSceneRoot(state, *current);
                 destroySubtree(target, *current);
             }
             rebuildSceneList(state, target);
         },
-        [&state, current, parent, copy_xml](resonate::ecs::World& target)
+        [&state, current, parent, copy_xml, is_root](resonate::ecs::World& target)
         {
             std::vector<resonate::dom::Diagnostic> redo_diagnostics;
             auto redo_document = resonate::dom::Document::parse(
@@ -1105,6 +1179,10 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
                 return;
             }
             *current = restored;
+            if (is_root)
+            {
+                addSceneRoot(state, restored, state.scene_roots.size());
+            }
             rebuildSceneList(state, target);
             selectEntity(state, target, restored);
         });
@@ -1132,25 +1210,38 @@ void reparentObject(EditorState& state, resonate::ecs::World& world, Entity enti
         return;
     }
     const std::string name = resonate::hierarchy::nameOf(world, entity);
+    std::size_t root_index = 0;
+    (void)sceneRootAt(state, entity, root_index);
+    /* Undo moves the object back to the parent it came from; a root that was
+       dropped under another object becomes a root again. */
+    const auto move = [&state, entity, root_index](resonate::ecs::World& target, Entity parent)
     {
-        resonate::ecs::CommandBuffer commands(world);
-        resonate::hierarchy::setParent(commands, entity, new_parent);
-        world.play(commands);
-    }
-    rebuildSceneList(state, world);
-    selectEntity(state, world, entity);
-    const auto move = [&state, entity](resonate::ecs::World& target, Entity parent)
-    {
-        if (!target.alive(entity) || !parent.valid() || !target.alive(parent))
+        if (!target.alive(entity))
         {
             return;
         }
         resonate::ecs::CommandBuffer commands(target);
-        resonate::hierarchy::setParent(commands, entity, parent);
+        if (parent.valid() && target.alive(parent))
+        {
+            resonate::hierarchy::setParent(commands, entity, parent);
+        }
+        else
+        {
+            resonate::hierarchy::clearParent(commands, entity);
+        }
         target.play(commands);
+        if (resonate::hierarchy::parentOf(target, entity).valid())
+        {
+            removeSceneRoot(state, entity);
+        }
+        else
+        {
+            addSceneRoot(state, entity, root_index);
+        }
         rebuildSceneList(state, target);
         selectEntity(state, target, entity);
     };
+    move(world, new_parent);
     pushUndo(
         state, localized("editor.move") + " " + name,
         [&state, entity, old_parent, move](resonate::ecs::World& target)
@@ -2061,7 +2152,8 @@ bool machineNodeEvent(void* context, resonate::ecs::World& world,
             x = rect->x;
             y = rect->y;
         }
-        state->node_commit_entity = widget;
+        state->node_commit_row = widget;
+        state->node_commit_entity = state->machine_shown_entity;
         state->node_commit_x = x;
         state->node_commit_y = y;
         state->node_commit_pending = true;
@@ -2208,25 +2300,42 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                 if (!before.empty() &&
                     resonate::scene::parseMachineFragment(before, model, parse_error))
                 {
-                    model.entry = entry_text;
-                    const std::string after =
-                        resonate::scene::serializeMachineFragment(model);
-                    if (after != before)
+                    bool entry_ok = entry_text.empty();
+                    for (const resonate::scene::MachineModelState& machine_state : model.states)
                     {
-                        writeMachineFragment(world, entity, after);
-                        rebuildMachineRows(*state, world);
-                        pushUndo(
-                            *state, localized("editor.entry") + " " + entry_text,
-                            [&state, entity, before](resonate::ecs::World& target)
-                            {
-                                writeMachineFragment(target, entity, before);
-                                rebuildMachineRows(*state, target);
-                            },
-                            [&state, entity, after](resonate::ecs::World& target)
-                            {
-                                writeMachineFragment(target, entity, after);
-                                rebuildMachineRows(*state, target);
-                            });
+                        entry_ok = entry_ok || machine_state.name == entry_text;
+                    }
+                    if (!entry_ok)
+                    {
+                        /* A partial name would make the whole fragment
+                           unloadable; the field keeps the text and the console
+                           says why nothing was written. */
+                        world.report(resonate::ecs::World::Report::Error,
+                                     "editor: the entry '%s' names no state",
+                                     entry_text.c_str());
+                    }
+                    else
+                    {
+                        model.entry = entry_text;
+                        const std::string after =
+                            resonate::scene::serializeMachineFragment(model);
+                        if (after != before)
+                        {
+                            writeMachineFragment(world, entity, after);
+                            rebuildMachineRows(*state, world);
+                            pushUndo(
+                                *state, localized("editor.entry") + " " + entry_text,
+                                [state, entity, before](resonate::ecs::World& target)
+                                {
+                                    writeMachineFragment(target, entity, before);
+                                    rebuildMachineRows(*state, target);
+                                },
+                                [state, entity, after](resonate::ecs::World& target)
+                                {
+                                    writeMachineFragment(target, entity, after);
+                                    rebuildMachineRows(*state, target);
+                                });
+                        }
                     }
                 }
             }
@@ -2270,12 +2379,12 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                         rebuildMachineRows(*state, world);
                         pushUndo(
                             *state, localized("editor.parameters") + " " + params_text,
-                            [&state, entity, before](resonate::ecs::World& target)
+                            [state, entity, before](resonate::ecs::World& target)
                             {
                                 writeMachineFragment(target, entity, before);
                                 rebuildMachineRows(*state, target);
                             },
-                            [&state, entity, after](resonate::ecs::World& target)
+                            [state, entity, after](resonate::ecs::World& target)
                             {
                                 writeMachineFragment(target, entity, after);
                                 rebuildMachineRows(*state, target);
@@ -2353,12 +2462,12 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
             rebuildMachineRows(*state, world);
             pushUndo(
                 *state, localized("editor.condition") + " " + text,
-                [&state, entity, before](resonate::ecs::World& target)
+                [state, entity, before](resonate::ecs::World& target)
                 {
                     writeMachineFragment(target, entity, before);
                     rebuildMachineRows(*state, target);
                 },
-                [&state, entity, after](resonate::ecs::World& target)
+                [state, entity, after](resonate::ecs::World& target)
                 {
                     writeMachineFragment(target, entity, after);
                     rebuildMachineRows(*state, target);
@@ -2426,12 +2535,12 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                     rebuildMachineRows(*state, world);
                     pushUndo(
                         *state, entry_name,
-                        [&state, entity, before](resonate::ecs::World& target)
+                        [state, entity, before](resonate::ecs::World& target)
                         {
                             writeMachineFragment(target, entity, before);
                             rebuildMachineRows(*state, target);
                         },
-                        [&state, entity, after](resonate::ecs::World& target)
+                        [state, entity, after](resonate::ecs::World& target)
                         {
                             writeMachineFragment(target, entity, after);
                             rebuildMachineRows(*state, target);
@@ -2482,12 +2591,12 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                     *state,
                     localized("editor.looping") + " " + machine_state.name + " " +
                         machine_state.looping,
-                    [&state, entity, before](resonate::ecs::World& target)
+                    [state, entity, before](resonate::ecs::World& target)
                     {
                         writeMachineFragment(target, entity, before);
                         rebuildMachineRows(*state, target);
                     },
-                    [&state, entity, after](resonate::ecs::World& target)
+                    [state, entity, after](resonate::ecs::World& target)
                     {
                         writeMachineFragment(target, entity, after);
                         rebuildMachineRows(*state, target);
@@ -2588,12 +2697,12 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                     pushUndo(
                         *state,
                         localized("editor.animation") + " " + model.states[index].name,
-                        [&state, entity, before](resonate::ecs::World& target)
+                        [state, entity, before](resonate::ecs::World& target)
                         {
                             writeMachineFragment(target, entity, before);
                             rebuildMachineRows(*state, target);
                         },
-                        [&state, entity, after](resonate::ecs::World& target)
+                        [state, entity, after](resonate::ecs::World& target)
                         {
                             writeMachineFragment(target, entity, after);
                             rebuildMachineRows(*state, target);
@@ -2605,11 +2714,12 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     if (state->node_commit_pending)
     {
         state->node_commit_pending = false;
-        const Entity node = state->node_commit_entity;
-        if (node.valid() && world.alive(node))
+        const Entity entity = state->node_commit_entity;
+        const Entity row = state->node_commit_row;
+        if (entity.valid() && world.alive(entity) && row.valid() && world.alive(row))
         {
             const auto node_at = std::find(state->machine_state_rows.begin(),
-                                           state->machine_state_rows.end(), node);
+                                           state->machine_state_rows.end(), row);
             if (node_at != state->machine_state_rows.end())
             {
                 resonate::scene::MachineModel model;
@@ -2628,19 +2738,19 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                             resonate::scene::serializeMachineFragment(model);
                         if (after != state->node_drag_before)
                         {
-                            writeMachineFragment(world, node, after);
+                            writeMachineFragment(world, entity, after);
                             pushUndo(
                                 *state,
                                 localized("editor.move") + " " + model.states[index].name,
-                                [state, node, before = state->node_drag_before](
+                                [state, entity, before = state->node_drag_before](
                                     resonate::ecs::World& target)
                                 {
-                                    writeMachineFragment(target, node, before);
+                                    writeMachineFragment(target, entity, before);
                                     rebuildMachineRows(*state, target);
                                 },
-                                [state, node, after](resonate::ecs::World& target)
+                                [state, entity, after](resonate::ecs::World& target)
                                 {
-                                    writeMachineFragment(target, node, after);
+                                    writeMachineFragment(target, entity, after);
                                     rebuildMachineRows(*state, target);
                                 });
                         }
@@ -2734,8 +2844,24 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                                                       transition.to == name;
                                            }),
                             model.transitions.end());
-                        entry_name =
-                            localized("editor.delete_selected") + " " + name;
+                        if (model.states.empty())
+                        {
+                            /* The grammar has no machine without a state. */
+                            world.report(resonate::ecs::World::Report::Error,
+                                         "editor: a machine keeps at least one state");
+                            entry_name.clear();
+                        }
+                        else
+                        {
+                            if (model.entry == name)
+                            {
+                                /* The explicit entry died with the state; the
+                                   first remaining state takes over. */
+                                model.entry.clear();
+                            }
+                            entry_name =
+                                localized("editor.delete_selected") + " " + name;
+                        }
                     }
                     else if (transition_at != state->machine_transition_rows.end())
                     {
@@ -2756,12 +2882,12 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                     rebuildMachineRows(*state, world);
                     pushUndo(
                         *state, entry_name,
-                        [&state, entity, before](resonate::ecs::World& target)
+                        [state, entity, before](resonate::ecs::World& target)
                         {
                             writeMachineFragment(target, entity, before);
                             rebuildMachineRows(*state, target);
                         },
-                        [&state, entity, after](resonate::ecs::World& target)
+                        [state, entity, after](resonate::ecs::World& target)
                         {
                             writeMachineFragment(target, entity, after);
                             rebuildMachineRows(*state, target);
