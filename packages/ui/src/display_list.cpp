@@ -520,6 +520,29 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
             return false;
         }
     }
+    /* Decal quads ride the subtree's clip: a node graph's edges are computed
+       by their owner and painted over the canvas that holds the nodes. */
+    if (const QuadDecals* decals = world.get<QuadDecals>(entity);
+        decals != nullptr && world.alive(decals->quads))
+    {
+        const auto* bytes = static_cast<const std::byte*>(world.blobData(decals->quads));
+        const std::size_t size = world.blobSize(decals->quads);
+        if (bytes != nullptr && size >= sizeof(Quad))
+        {
+            const auto decal_clip = clip_of(clip);
+            const auto* decal_quads = reinterpret_cast<const Quad*>(bytes);
+            const std::size_t count = size / sizeof(Quad);
+            for (std::size_t index = 0U; index < count; ++index)
+            {
+                Quad decal = decal_quads[index];
+                if (decal.clip.width <= 0.0F)
+                {
+                    decal.clip = decal_clip;
+                }
+                push(decal);
+            }
+        }
+    }
     return true;
 }
 

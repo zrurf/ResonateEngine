@@ -5,6 +5,9 @@
 #include <vector>
 
 #include <resonate/core/allocator.h>
+#include <resonate/dom/document.h>
+#include <resonate/ui/document.h>
+#include <resonate/ui/document_schema.h>
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/hierarchy/tree.h>
 #include <resonate/ui/display_list.h>
@@ -325,4 +328,72 @@ TEST_CASE("display list: pushEdge routes an orthogonal edge", "[ui][display]")
                       color);
     CHECK(straight.quads().size() == 1U);
     CHECK(straight.quads()[0].height == 80.0F);
+}
+
+TEST_CASE("display list: decal quads paint over their subtree", "[ui][display]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Panel key="canvas" x="0" y="0" width="200" height="200" color="0.1 0.1 0.1 1">
+      <Label key="mark" x="10" y="10" width="40" height="20" text="x" font_size="12"
+             color="1 1 1 1"/>
+    </Panel>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 400.0F, 400.0F));
+
+    const Entity canvas = resonate::ui::findByKey(world, root, "canvas");
+    REQUIRE(canvas.valid());
+    resonate::ui::DisplayList plain;
+    REQUIRE(resonate::ui::buildDisplayList(world, root, plain));
+    const std::size_t without = plain.size();
+
+    /* Two decal quads over the canvas: one covering it, one clipped away. The
+       bytes are the raw Quad array the display list replays. */
+    resonate::ui::Quad decals[2];
+    decals[0].x = 0.0F;
+    decals[0].y = 0.0F;
+    decals[0].width = 200.0F;
+    decals[0].height = 200.0F;
+    decals[0].color = resonate::Vec4{0.0F, 1.0F, 0.0F, 1.0F};
+    decals[1].x = 300.0F;
+    decals[1].y = 300.0F;
+    decals[1].width = 50.0F;
+    decals[1].height = 50.0F;
+    decals[1].color = resonate::Vec4{0.0F, 0.0F, 1.0F, 1.0F};
+    const resonate::ecs::BlobHandle blob = world.createBlob(
+        canvas, sizeof(decals), decals);
+    REQUIRE(blob.valid());
+    REQUIRE(world.add(canvas, resonate::ui::QuadDecals{blob}) != nullptr);
+
+    resonate::ui::DisplayList decorated;
+    REQUIRE(resonate::ui::buildDisplayList(world, root, decorated));
+    CHECK(decorated.size() == without + 2U);
+    /* Both decals replayed; the out-of-bounds one carries a clip that keeps it
+       inside the canvas. */
+    std::size_t green = 0U;
+    std::size_t blue = 0U;
+    for (const auto& quad : decorated.quads())
+    {
+        if (quad.color.y == 1.0F && quad.color.z == 0.0F && quad.width == 200.0F)
+        {
+            ++green;
+        }
+        if (quad.color.z == 1.0F && quad.color.y == 0.0F)
+        {
+            ++blue;
+            CHECK(quad.clip.width <= 200.0F);
+        }
+    }
+    CHECK(green == 1U);
+    CHECK(blue == 1U);
 }

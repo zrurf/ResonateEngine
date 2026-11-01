@@ -307,6 +307,16 @@
       ]
     },
     {
+      "name": "QuadDecals",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component QuadDecals version 1",
+        "  size 8 align 4",
+        "  field quads blob @0 size 8"
+      ]
+    },
+    {
       "name": "RectTransform",
       "kind": "component",
       "version": 1,

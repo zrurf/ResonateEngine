@@ -602,6 +602,7 @@ bool registerComponents(ecs::World& world)
            world.registerComponent<Transition>() != ecs::kInvalidComponent &&
            world.registerComponent<ColorTween>() != ecs::kInvalidComponent &&
            world.registerComponent<TextAtlasPage>() != ecs::kInvalidComponent &&
+           world.registerComponent<QuadDecals>() != ecs::kInvalidComponent &&
            world.registerComponent<DataContext>() != ecs::kInvalidComponent &&
            world.registerComponent<Bindings>() != ecs::kInvalidComponent &&
            world.registerComponent<ScrollView>() != ecs::kInvalidComponent &&

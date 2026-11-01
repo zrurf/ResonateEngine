@@ -364,6 +364,14 @@
     <field name="shown" type="bool" default="true"/>
   </component>
 
+  <!-- Extra quads painted over a subtree after its children: the raw bytes
+       are an array of Quad, appended with the subtree's clip. A node graph's
+       edges are decals over the canvas that holds the node boxes. Runtime
+       data; the blob's owner computes them. -->
+  <component name="QuadDecals" version="1" derived="true">
+    <field name="quads" type="blob"/>
+  </component>
+
   <!-- A list row that highlights while selected: a click selects it and clears
        its siblings, so a list behaves like one choice. -->
   <component name="Selectable" version="1">
