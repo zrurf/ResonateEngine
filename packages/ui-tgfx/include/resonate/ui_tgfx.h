@@ -100,11 +100,27 @@ int32_t resonate_tgfx_ui_create(void* instance, void* physical_device, void* dev
                                 std::uint32_t queue_family, const char* const* font_paths,
                                 std::uint32_t font_count, ResonateTgfxUi* out_ui);
 
+/* One draw in the producer's paint order: `kind` is 0 for rects, 1 for texts
+   and 2 for images, `index` names the entry in that array. */
+typedef struct ResonateTgfxDrawRef
+{
+    std::uint32_t kind;
+    std::uint32_t index;
+} ResonateTgfxDrawRef;
+
 /* Draws one UI layer into the wrapper's surface. Answers 0 on success. */
 int32_t resonate_tgfx_ui_draw(ResonateTgfxUi ui, std::uint32_t width, std::uint32_t height,
                               const ResonateTgfxRect* rects, std::uint32_t rect_count,
                               const ResonateTgfxText* texts, std::uint32_t text_count,
                               const ResonateTgfxImageDraw* images, std::uint32_t image_count);
+
+/* The same draw in the producer's paint order. Falls back to the batched order
+   when `order` is empty. */
+int32_t resonate_tgfx_ui_draw_ordered(ResonateTgfxUi ui, std::uint32_t width, std::uint32_t height,
+                                      const ResonateTgfxRect* rects, std::uint32_t rect_count,
+                                      const ResonateTgfxText* texts, std::uint32_t text_count,
+                                      const ResonateTgfxImageDraw* images, std::uint32_t image_count,
+                                      const ResonateTgfxDrawRef* order, std::uint32_t order_count);
 
 /* Registers the image file under `id` for draw calls (PNG through tgfx's
    codecs); re-registering replaces. Must not run concurrently with draw.

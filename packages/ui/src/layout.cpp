@@ -80,17 +80,18 @@ bool writeRect(ecs::World& world, ecs::Entity entity, const Box& box, float scal
     return true;
 }
 
-/* A zero authored dimension takes the widget's measured text extent. */
+/* A zero authored dimension takes the widget's measured text extent; a negative
+   one is the stretch inset and is left to the anchor span. */
 Vec2 effectiveSize(ecs::World& world, ecs::Entity entity, const RectTransform& rect)
 {
     Vec2 size{rect.width, rect.height};
     if (const TextMetrics* metrics = world.get<TextMetrics>(entity))
     {
-        if (size.x <= 0.0F)
+        if (size.x == 0.0F)
         {
             size.x = metrics->width;
         }
-        if (size.y <= 0.0F)
+        if (size.y == 0.0F)
         {
             size.y = metrics->height;
         }

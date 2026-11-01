@@ -1,5 +1,6 @@
 #include <resonate/ui/text_runtime.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -16,6 +17,17 @@ namespace resonate::ui
 {
 namespace
 {
+
+/* A page's revision is the renderer's cache key, and a renderer outlives the
+   runtime that made the page: the counter is process-wide so two documents'
+   pages never share one. */
+std::atomic<std::uint32_t> g_next_revision{1U};
+
+std::uint32_t nextRevision()
+{
+    const std::uint32_t value = g_next_revision.fetch_add(1U, std::memory_order_relaxed);
+    return value != 0U ? value : g_next_revision.fetch_add(1U, std::memory_order_relaxed);
+}
 
 float authoredWidth(const RectTransform* rect)
 {
@@ -229,7 +241,7 @@ detail::TextAtlasBuilder* TextRuntimeAccess::atlas(TextRuntime& runtime)
 void TextRuntimeAccess::attach(TextRuntime& runtime, ecs::Entity canvas)
 {
     runtime.impl_->canvas = canvas;
-    runtime.impl_->revision = 1U;
+    runtime.impl_->revision = nextRevision();
     runtime.impl_->query_ready = false;
     runtime.impl_->bound_world = nullptr;
     runtime.impl_->composition_entity = ecs::Entity{};
@@ -490,11 +502,7 @@ bool TextRuntime::setText(ecs::World& world, ecs::Entity canvas, ecs::Entity ent
         &refresh);
 
     TextAtlasPage* page = world.get<TextAtlasPage>(canvas);
-    ++impl_->revision;
-    if (impl_->revision == 0U)
-    {
-        ++impl_->revision;
-    }
+    impl_->revision = nextRevision();
     const std::uint32_t revision = impl_->revision;
     if (page == nullptr)
     {
@@ -554,15 +562,16 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
     {
         return true;
     }
-    if (!isTextField(world, pointer->focused))
+    const ecs::Entity focused = pointer->focused;
+    if (!isTextField(world, focused))
     {
         return true;
     }
-    std::string content = readContent(world, pointer->focused);
-    std::size_t caret = caretOffset(world, pointer->focused, content.size());
+    std::string content = readContent(world, focused);
+    std::size_t caret = caretOffset(world, focused, content.size());
     std::size_t select_begin = 0U;
     std::size_t select_end = 0U;
-    selectionRangeOf(world, pointer->focused, content.size(), select_begin, select_end);
+    selectionRangeOf(world, focused, content.size(), select_begin, select_end);
     /* A selection is the edit: either key deletes it whole, and typed text
        replaces it. An empty range is no edit, but its anchor still dies: left
        behind, the next edit past it would read as a selection. */
@@ -573,7 +582,7 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
         backspace = false;
         delete_forward = false;
     }
-    clearSelection(world, pointer->focused);
+    clearSelection(world, focused);
     if (backspace && caret > 0U)
     {
         const std::size_t start = previousCodepoint(content, caret);
@@ -602,12 +611,12 @@ bool updateTextInput(ecs::World& world, ecs::Entity canvas, TextRuntime& runtime
         content.insert(caret, typed);
         caret += typed.size();
     }
-    if (!setCaret(world, pointer->focused, caret))
+    if (!setCaret(world, focused, caret))
     {
         error = "the caret could not be attached";
         return false;
     }
-    return runtime.setText(world, canvas, pointer->focused, content, error);
+    return runtime.setText(world, canvas, focused, content, error);
 }
 
 namespace

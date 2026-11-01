@@ -51,13 +51,16 @@ struct NodeTypeDesc
 };
 
 /* One field of a storage component: enough for a generic authoring binder to
-   parse the text and place the bytes. */
+   parse the text and place the bytes. An enum-typed field carries its values'
+   names in declaration order, so `flags="Invulnerable"` maps to its ordinal. */
 struct ComponentFieldDesc
 {
     const char* name = nullptr;
     const char* type = nullptr;
     std::uint32_t offset = 0;
     std::uint32_t size = 0;
+    const char* const* enum_values = nullptr;
+    std::uint32_t enum_value_count = 0;
 };
 
 struct ComponentDesc

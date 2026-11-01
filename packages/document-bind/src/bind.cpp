@@ -69,6 +69,19 @@ bool parseI32(std::string_view text, std::int32_t& out)
 
 bool parseU32(std::string_view text, std::uint32_t& out)
 {
+    /* strtoul accepts a sign and skips leading space; a field value is exactly
+       the digits, or it is not a number. */
+    if (text.empty())
+    {
+        return false;
+    }
+    for (const char character : text)
+    {
+        if (character < '0' || character > '9')
+        {
+            return false;
+        }
+    }
     const std::string copy(text);
     char* end = nullptr;
     errno = 0;
@@ -78,6 +91,49 @@ bool parseU32(std::string_view text, std::uint32_t& out)
         return false;
     }
     out = static_cast<std::uint32_t>(value);
+    return true;
+}
+
+bool parseI64(std::string_view text, std::int64_t& out)
+{
+    if (text.empty())
+    {
+        return false;
+    }
+    const std::string copy(text);
+    char* end = nullptr;
+    errno = 0;
+    const long long value = std::strtoll(copy.c_str(), &end, 10);
+    if (end == copy.c_str() || *end != '\0' || errno == ERANGE)
+    {
+        return false;
+    }
+    out = static_cast<std::int64_t>(value);
+    return true;
+}
+
+bool parseU64(std::string_view text, std::uint64_t& out)
+{
+    if (text.empty())
+    {
+        return false;
+    }
+    for (const char character : text)
+    {
+        if (character < '0' || character > '9')
+        {
+            return false;
+        }
+    }
+    const std::string copy(text);
+    char* end = nullptr;
+    errno = 0;
+    const unsigned long long value = std::strtoull(copy.c_str(), &end, 10);
+    if (end == copy.c_str() || *end != '\0' || errno == ERANGE)
+    {
+        return false;
+    }
+    out = static_cast<std::uint64_t>(value);
     return true;
 }
 
@@ -107,6 +163,51 @@ bool parseField(const dom::ComponentFieldDesc& field, std::string_view text, voi
 {
     const std::size_t offset = field.offset;
     const std::string_view type = field.type != nullptr ? field.type : "";
+    /* A named enum accepts one of its value names; the ordinal is what the
+       component holds. */
+    if (field.enum_values != nullptr && field.enum_value_count != 0U)
+    {
+        for (std::uint32_t index = 0; index < field.enum_value_count; ++index)
+        {
+            if (text != field.enum_values[index])
+            {
+                continue;
+            }
+            switch (field.size)
+            {
+            case 1U:
+            {
+                const auto value = static_cast<std::uint8_t>(index);
+                std::memcpy(static_cast<std::byte*>(data) + offset, &value, sizeof(value));
+                return true;
+            }
+            case 2U:
+            {
+                const auto value = static_cast<std::uint16_t>(index);
+                std::memcpy(static_cast<std::byte*>(data) + offset, &value, sizeof(value));
+                return true;
+            }
+            case 4U:
+            {
+                const auto value = static_cast<std::uint32_t>(index);
+                std::memcpy(static_cast<std::byte*>(data) + offset, &value, sizeof(value));
+                return true;
+            }
+            case 8U:
+            {
+                const auto value = static_cast<std::uint64_t>(index);
+                std::memcpy(static_cast<std::byte*>(data) + offset, &value, sizeof(value));
+                return true;
+            }
+            default:
+                break;
+            }
+            error = "an enum field has an unsupported width";
+            return false;
+        }
+        error = "not one of the enum's values";
+        return false;
+    }
     if (type == "f32" && field.size == sizeof(float))
     {
         float value = 0.0F;
@@ -139,6 +240,65 @@ bool parseField(const dom::ComponentFieldDesc& field, std::string_view text, voi
         }
         std::memcpy(static_cast<std::byte*>(data) + offset, &value, sizeof(value));
         return true;
+    }
+    if (type == "i8" || type == "i16" || type == "i64")
+    {
+        std::int64_t value = 0;
+        if (!parseI64(text, value) ||
+            (type == "i8" && (value < INT8_MIN || value > INT8_MAX)) ||
+            (type == "i16" && (value < INT16_MIN || value > INT16_MAX)))
+        {
+            error = "not an " + std::string(type);
+            return false;
+        }
+        if (type == "i8" && field.size == 1U)
+        {
+            const auto narrowed = static_cast<std::int8_t>(value);
+            std::memcpy(static_cast<std::byte*>(data) + offset, &narrowed, sizeof(narrowed));
+            return true;
+        }
+        if (type == "i16" && field.size == 2U)
+        {
+            const auto narrowed = static_cast<std::int16_t>(value);
+            std::memcpy(static_cast<std::byte*>(data) + offset, &narrowed, sizeof(narrowed));
+            return true;
+        }
+        if (type == "i64" && field.size == 8U)
+        {
+            std::memcpy(static_cast<std::byte*>(data) + offset, &value, sizeof(value));
+            return true;
+        }
+        error = "the field's width does not match its type";
+        return false;
+    }
+    if (type == "u8" || type == "u16" || type == "u64")
+    {
+        std::uint64_t value = 0;
+        if (!parseU64(text, value) || (type == "u8" && value > UINT8_MAX) ||
+            (type == "u16" && value > UINT16_MAX))
+        {
+            error = "not a " + std::string(type);
+            return false;
+        }
+        if (type == "u8" && field.size == 1U)
+        {
+            const auto narrowed = static_cast<std::uint8_t>(value);
+            std::memcpy(static_cast<std::byte*>(data) + offset, &narrowed, sizeof(narrowed));
+            return true;
+        }
+        if (type == "u16" && field.size == 2U)
+        {
+            const auto narrowed = static_cast<std::uint16_t>(value);
+            std::memcpy(static_cast<std::byte*>(data) + offset, &narrowed, sizeof(narrowed));
+            return true;
+        }
+        if (type == "u64" && field.size == 8U)
+        {
+            std::memcpy(static_cast<std::byte*>(data) + offset, &value, sizeof(value));
+            return true;
+        }
+        error = "the field's width does not match its type";
+        return false;
     }
     if (type == "bool" && field.size == 1U)
     {

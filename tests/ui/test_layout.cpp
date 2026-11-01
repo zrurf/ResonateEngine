@@ -544,3 +544,24 @@ TEST_CASE("ui layout: an item that does not shrink keeps the line overflowing", 
        did, which is what a flow column under a Scroll relies on. */
     fixture.requireRect(rigid, 0.0F, 0.0F, 200.0F, 20.0F);
 }
+
+TEST_CASE("ui layout: text metrics fill a zero size but not a negative inset", "[ui][layout]")
+{
+    Fixture fixture;
+    const Entity auto_sized = fixture.add(fixture.canvas, sized(0.0F, 0.0F, 0.0F, 0.0F));
+    resonate::ui::TextMetrics metrics;
+    metrics.width = 40.0F;
+    metrics.height = 12.0F;
+    REQUIRE(fixture.world.add(auto_sized, metrics) != nullptr);
+
+    /* Negative width/height are the stretch inset, so the text metrics must not
+       replace them. */
+    const Entity stretched = fixture.add(
+        fixture.canvas, anchored(sized(10.0F, 5.0F, -20.0F, -10.0F), 0.0F, 0.0F, 1.0F, 1.0F));
+    REQUIRE(fixture.world.add(stretched, metrics) != nullptr);
+
+    fixture.finish();
+    REQUIRE(resonate::ui::layout(fixture.world, fixture.canvas, 200.0F, 100.0F));
+    fixture.requireRect(auto_sized, 0.0F, 0.0F, 40.0F, 12.0F);
+    fixture.requireRect(stretched, 10.0F, 5.0F, 180.0F, 90.0F);
+}

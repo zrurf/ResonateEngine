@@ -28,6 +28,7 @@ internal static class NodeEmitter
 
         List<TypeDecl> nodes = [];
         List<TypeDecl> components = [];
+        Dictionary<string, TypeDecl> enums = new(StringComparer.Ordinal);
         foreach (TypeDecl type in module.Types)
         {
             if (type.Kind == TypeKind.Node)
@@ -37,6 +38,10 @@ internal static class NodeEmitter
             else if (type.Kind == TypeKind.Component)
             {
                 components.Add(type);
+            }
+            else if (type.Kind == TypeKind.Enum)
+            {
+                enums[type.Name] = type;
             }
         }
 
@@ -155,13 +160,40 @@ internal static class NodeEmitter
             {
                 continue;
             }
+            /* An enum-typed field carries its value names, so a document can
+               author the identifier instead of a bare number. */
+            foreach (FieldDecl field in component.Fields)
+            {
+                if (!enums.TryGetValue(field.TypeName, out TypeDecl? enumType))
+                {
+                    continue;
+                }
+                text.Append("\ninline constexpr const char* const k").Append(component.Name)
+                    .Append('_').Append(field.Name).Append("Enum[] = {\n");
+                foreach (EnumValueDecl value in enumType.Values)
+                {
+                    text.Append("    \"").Append(value.Name).Append("\",\n");
+                }
+                text.Append("};\n");
+            }
             text.Append("\ninline constexpr dom::ComponentFieldDesc k").Append(component.Name)
                 .Append("Fields[] = {\n");
             foreach (FieldDecl field in component.Fields)
             {
                 text.Append("    {\"").Append(field.Name).Append("\", \"")
                     .Append(field.TypeName).Append("\", ").Append(field.Offset)
-                    .Append("U, ").Append(field.Size).Append("U},\n");
+                    .Append("U, ").Append(field.Size).Append("U, ");
+                if (enums.TryGetValue(field.TypeName, out TypeDecl? enumType))
+                {
+                    text.Append('k').Append(component.Name).Append('_').Append(field.Name)
+                        .Append("Enum, static_cast<std::uint32_t>(std::size(k")
+                        .Append(component.Name).Append('_').Append(field.Name).Append("Enum))");
+                }
+                else
+                {
+                    text.Append("nullptr, 0U");
+                }
+                text.Append("},\n");
             }
             text.Append("};\n");
         }

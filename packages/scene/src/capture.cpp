@@ -58,6 +58,10 @@ std::string formatFloat(float value)
 enum class FieldKind
 {
     Float,
+    Int8,
+    Uint8,
+    Int16,
+    Uint16,
     Int32,
     Uint32,
     Uint64,
@@ -66,12 +70,25 @@ enum class FieldKind
     Vec3,
     Vec4,
     Quat,
+    Enum,
     Unsupported,
 };
+
+/* The ordinal an enum-typed field holds, widened for comparison. */
+std::uint64_t enumOrdinal(const dom::ComponentFieldDesc& field, const std::byte* value)
+{
+    std::uint64_t ordinal = 0U;
+    std::memcpy(&ordinal, value, field.size);
+    return ordinal;
+}
 
 FieldKind kindOf(const dom::ComponentFieldDesc& field)
 {
     const std::string_view type = field.type;
+    if (field.enum_values != nullptr && field.enum_value_count != 0U)
+    {
+        return FieldKind::Enum;
+    }
     if (type == "f32" && field.size == sizeof(float))
     {
         return FieldKind::Float;
@@ -79,6 +96,22 @@ FieldKind kindOf(const dom::ComponentFieldDesc& field)
     if (type == "i32" && field.size == sizeof(std::int32_t))
     {
         return FieldKind::Int32;
+    }
+    if (type == "i8" && field.size == 1U)
+    {
+        return FieldKind::Int8;
+    }
+    if (type == "u8" && field.size == 1U)
+    {
+        return FieldKind::Uint8;
+    }
+    if (type == "i16" && field.size == 2U)
+    {
+        return FieldKind::Int16;
+    }
+    if (type == "u16" && field.size == 2U)
+    {
+        return FieldKind::Uint16;
     }
     if (type == "u32" && field.size == sizeof(std::uint32_t))
     {
@@ -134,6 +167,47 @@ bool formatField(std::string& out, const dom::ComponentFieldDesc& field,
         float scalar = 0.0F;
         std::memcpy(&scalar, value, sizeof(scalar));
         out += formatFloat(scalar);
+        return true;
+    }
+    case FieldKind::Int8:
+    {
+        std::int8_t scalar = 0;
+        std::memcpy(&scalar, value, sizeof(scalar));
+        out += std::to_string(static_cast<int>(scalar));
+        return true;
+    }
+    case FieldKind::Uint8:
+    {
+        std::uint8_t scalar = 0U;
+        std::memcpy(&scalar, value, sizeof(scalar));
+        out += std::to_string(static_cast<unsigned>(scalar));
+        return true;
+    }
+    case FieldKind::Int16:
+    {
+        std::int16_t scalar = 0;
+        std::memcpy(&scalar, value, sizeof(scalar));
+        out += std::to_string(static_cast<int>(scalar));
+        return true;
+    }
+    case FieldKind::Uint16:
+    {
+        std::uint16_t scalar = 0U;
+        std::memcpy(&scalar, value, sizeof(scalar));
+        out += std::to_string(static_cast<unsigned>(scalar));
+        return true;
+    }
+    case FieldKind::Enum:
+    {
+        const std::uint64_t ordinal = enumOrdinal(field, value);
+        if (ordinal < field.enum_value_count)
+        {
+            out += field.enum_values[ordinal];
+        }
+        else
+        {
+            out += std::to_string(ordinal);
+        }
         return true;
     }
     case FieldKind::Int32:

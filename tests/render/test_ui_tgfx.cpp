@@ -27,6 +27,8 @@ const char* const kUiDocument = R"xml(<document version="1" schemas="resonate.ui
   <Screen key="hud">
     <Label key="title" text="动作演示" font_size="32" width="300" height="60"
            color="0.05 0.06 0.09 1" text_color="1 1 1 1"/>
+    <Panel key="cover" x="100" y="0" width="100" height="60"
+           color="0.05 0.06 0.09 1"/>
   </Screen>
 </document>)xml";
 
@@ -99,22 +101,32 @@ TEST_CASE("offscreen: the renderer draws the UI through tgfx", "[render][tgfx]")
     REQUIRE(width == 320U);
     REQUIRE(height == 240U);
 
+    /* The panel paints after the label, so it hides the part of the title
+       underneath it; a batched draw would paint every text over every rect. */
     std::uint32_t white = 0;
+    std::uint32_t covered_white = 0;
     for (std::uint32_t y = 0; y < 60U; ++y)
     {
         for (std::uint32_t x = 0; x < 300U; ++x)
         {
             const std::size_t index = (static_cast<std::size_t>(y) * width + x) * 4U;
-            white += pixels[index] > 200U && pixels[index + 1U] > 200U &&
-                             pixels[index + 2U] > 200U
-                         ? 1U
-                         : 0U;
+            const bool lit = pixels[index] > 200U && pixels[index + 1U] > 200U &&
+                             pixels[index + 2U] > 200U;
+            if (x < 90U && lit)
+            {
+                ++white;
+            }
+            else if (x >= 110U && x < 190U && lit)
+            {
+                ++covered_white;
+            }
         }
     }
-    INFO("white text pixels=" << white);
+    INFO("white text pixels=" << white << " covered=" << covered_white);
     /* The blend pass composites the UI after FXAA, so the bold sample keeps
        its full stroke coverage. */
-    CHECK(white > 300U);
+    CHECK(white > 100U);
+    CHECK(covered_white == 0U);
 
     render_system.release();
     host->detachAll();

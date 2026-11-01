@@ -487,3 +487,17 @@ TEST_CASE("ui document: the canvas indexes its authoring keys", "[ui][document]"
     fixture.world.destroy(right);
     CHECK_FALSE(resonate::ui::findByKey(fixture.world, root, "right").valid());
 }
+
+TEST_CASE("ui document: a negative texture id is refused", "[ui][document]")
+{
+    const char* const text = R"xml(<document version="1">
+  <Screen key="hud"><Picture key="bad" texture="-1" x="0" y="0" width="8" height="8"/></Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+
+    Fixture fixture;
+    CHECK_FALSE(resonate::ui::instantiate(fixture.world, *document).valid());
+}

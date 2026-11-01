@@ -14,6 +14,7 @@
 #include "state_style_internal.h"
 #include "widget_shown.h"
 
+#include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <cstring>
@@ -37,6 +38,16 @@ namespace
 using resonate::ecs::CommandBuffer;
 using resonate::ecs::Entity;
 using resonate::ecs::World;
+
+/* The atlas page's revision is the renderer's upload key; a document without a
+   text runtime still makes a page, and it needs a value no other page shares. */
+std::atomic<std::uint32_t> g_next_page_revision{1U};
+
+std::uint32_t nextPageRevision()
+{
+    const std::uint32_t value = g_next_page_revision.fetch_add(1U, std::memory_order_relaxed);
+    return value != 0U ? value : g_next_page_revision.fetch_add(1U, std::memory_order_relaxed);
+}
 
 std::string_view baseName(std::string_view name)
 {
@@ -98,6 +109,19 @@ bool parseI32(std::string_view text, std::int32_t& out)
 
 bool parseU32(std::string_view text, std::uint32_t& out)
 {
+    /* strtoul accepts a sign and skips leading space; a field value is exactly
+       the digits, or it is not a number. */
+    if (text.empty())
+    {
+        return false;
+    }
+    for (const char character : text)
+    {
+        if (character < '0' || character > '9')
+        {
+            return false;
+        }
+    }
     const std::string copy(text);
     char* end = nullptr;
     errno = 0;
@@ -924,7 +948,7 @@ struct BindingContext
     const StringTable* strings = nullptr;
     const ImageRegistry* images = nullptr;
     const IconRegistry* icons = nullptr;
-    std::uint32_t page_revision = 1U;
+    std::uint32_t page_revision = nextPageRevision();
     std::vector<PendingRun> runs;
 };
 

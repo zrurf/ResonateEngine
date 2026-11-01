@@ -427,9 +427,17 @@ bool TextAtlasBuilder::buildRun(std::string_view utf8, float size, float weight,
         {
             return;
         }
-        const float offset = width > 0.0F && align != 0U
-                                 ? (align == 1U ? (width - line_width) * 0.5F : width - line_width)
-                                 : 0.0F;
+        /* The segment's own width, not the line's: a wrap flushes a prefix
+           while the tail still sits in `line`. */
+        float segment_width = 0.0F;
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            segment_width += line[index].glyph.x_advance;
+        }
+        const float offset =
+            width > 0.0F && align != 0U
+                ? (align == 1U ? (width - segment_width) * 0.5F : width - segment_width)
+                : 0.0F;
         for (std::size_t index = 0; index < count; ++index)
         {
             const LineGlyph& entry = line[index];

@@ -323,6 +323,15 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                      canvas.generation);
         return false;
     }
+    /* Dispatch and the style/selection helpers may add components to any
+       widget, the canvas included; a cached pointer would then address the row
+       it used to be in. */
+    const auto refresh = [&]() -> bool
+    {
+        drag = world.get<DragState>(canvas);
+        pointer = world.get<PointerState>(canvas);
+        return drag != nullptr && pointer != nullptr;
+    };
     const float last_x = drag->x;
     const float last_y = drag->y;
     drag->x = x;
@@ -360,6 +369,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         {
             setState(world, previous, previous == pointer->focused ? WidgetState::Focused
                                                                    : WidgetState::Normal);
+            if (!refresh())
+            {
+                return false;
+            }
         }
     }
 
@@ -372,6 +385,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
     move.x = x;
     move.y = y;
     (void)dispatchEvent(world, canvas, move, routing);
+    if (!refresh())
+    {
+        return false;
+    }
 
     bool pressed_this_sample = false;
     if (down && !pointer->down)
@@ -380,10 +397,18 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         Event pressed = move;
         pressed.kind = EventKind::PointerDown;
         (void)dispatchEvent(world, canvas, pressed);
+        if (!refresh())
+        {
+            return false;
+        }
         if (pointer->focused != hover && pointer->focused.valid() &&
             world.alive(pointer->focused))
         {
             setState(world, pointer->focused, WidgetState::Normal);
+            if (!refresh())
+            {
+                return false;
+            }
         }
         pointer->focused = hover;
         pointer->down = true;
@@ -407,6 +432,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                 if (double_click)
                 {
                     (void)selectWordAt(world, hover, x - rect->x);
+                    if (!refresh())
+                    {
+                        return false;
+                    }
                     /* No triple-click chaining: the next press starts fresh. */
                     drag->last_click_time = -1.0;
                     drag->last_click_field = ecs::Entity{};
@@ -414,6 +443,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                 else
                 {
                     (void)beginTextSelect(world, hover, x - rect->x);
+                    if (!refresh())
+                    {
+                        return false;
+                    }
                     drag->last_click_time = seconds;
                     drag->last_click_field = hover;
                 }
@@ -468,6 +501,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         if (hover.valid())
         {
             setState(world, hover, WidgetState::Pressed);
+            if (!refresh())
+            {
+                return false;
+            }
         }
     }
     else if (!down && pointer->down)
@@ -485,6 +522,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         Event released = move;
         released.kind = EventKind::PointerUp;
         (void)dispatchEvent(world, canvas, released, routing);
+        if (!refresh())
+        {
+            return false;
+        }
         if (pointer->capture.valid())
         {
             pointer->capture = ecs::Entity{};
@@ -505,11 +546,19 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                 Event clicked = move;
                 clicked.kind = EventKind::Click;
                 (void)dispatchEvent(world, canvas, clicked, routing);
+                if (!refresh())
+                {
+                    return false;
+                }
             }
             setState(world, press, press == hover
                                       ? WidgetState::Hovered
                                       : (press == pointer->focused ? WidgetState::Focused
                                                                    : WidgetState::Normal));
+            if (!refresh())
+            {
+                return false;
+            }
         }
         pointer->press = ecs::Entity{};
         world.markChanged<PointerState>(canvas);
@@ -522,6 +571,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                      ? WidgetState::Pressed
                      : (pointer->press == pointer->focused ? WidgetState::Focused
                                                            : WidgetState::Normal));
+        if (!refresh())
+        {
+            return false;
+        }
     }
 
     /* Once the finger travels past the slop the press becomes a drag: drop the
@@ -537,6 +590,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         if (!pressed_this_sample)
         {
             applySlider(world, drag->slider, x);
+            if (!refresh())
+            {
+                return false;
+            }
         }
     }
     else if (drag->pressed && pointer->down && drag->splitter.valid())
@@ -544,6 +601,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         if (!pressed_this_sample)
         {
             applySplitter(world, drag->splitter, x - last_x, y - last_y);
+            if (!refresh())
+            {
+                return false;
+            }
         }
     }
     else if (drag->pressed && pointer->down && drag->scrubber.valid())
@@ -556,10 +617,18 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         {
             drag->scrub_dead = true;
             applyScrubber(world, drag->scrubber, x - drag->press_x);
+            if (!refresh())
+            {
+                return false;
+            }
         }
         else if (!pressed_this_sample && drag->scrub_dead)
         {
             applyScrubber(world, drag->scrubber, x - last_x);
+            if (!refresh())
+            {
+                return false;
+            }
         }
     }
     else if (drag->pressed && pointer->down && drag->scroll_thumb.valid())
@@ -589,6 +658,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         if (rect != nullptr && !pressed_this_sample)
         {
             (void)extendCaretTo(world, drag->text_field, x - rect->x);
+            if (!refresh())
+            {
+                return false;
+            }
         }
     }
     else if (drag->pressed && pointer->down)
@@ -690,11 +763,19 @@ bool focusNext(ecs::World& world, ecs::Entity canvas, bool backwards)
     const ecs::Entity target = focusable[next];
     if (pointer->focused != target)
     {
-        if (pointer->focused.valid() && world.alive(pointer->focused))
+        const ecs::Entity focused = pointer->focused;
+        const ecs::Entity hovered = pointer->hover;
+        if (focused.valid() && world.alive(focused))
         {
-            setState(world, pointer->focused, pointer->hover == pointer->focused
-                                                  ? WidgetState::Hovered
-                                                  : WidgetState::Normal);
+            setState(world, focused, hovered == focused ? WidgetState::Hovered
+                                                        : WidgetState::Normal);
+            /* Styling may have moved the canvas row; this pointer is borrowed
+               from it. */
+            pointer = world.get<PointerState>(canvas);
+            if (pointer == nullptr)
+            {
+                return false;
+            }
         }
         pointer->focused = target;
         world.markChanged<PointerState>(canvas);

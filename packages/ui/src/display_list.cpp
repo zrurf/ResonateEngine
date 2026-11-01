@@ -37,6 +37,7 @@ DisplayList::Clip DisplayList::intersect(const Clip& outer, float x, float y, fl
     clip.top = outer.active ? std::max(outer.top, y) : y;
     clip.right = outer.active ? std::min(outer.right, x + width) : x + width;
     clip.bottom = outer.active ? std::min(outer.bottom, y + height) : y + height;
+    clip.empty = outer.empty || clip.right <= clip.left || clip.bottom <= clip.top;
     return clip;
 }
 
@@ -45,6 +46,10 @@ bool DisplayList::visible(const Clip& clip, float x, float y, float width, float
     if (!clip.active)
     {
         return true;
+    }
+    if (clip.empty)
+    {
+        return false;
     }
     return x < clip.right && x + width > clip.left && y < clip.bottom && y + height > clip.top;
 }
@@ -406,6 +411,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
                 run.font_size = text->font_size;
                 run.color = has_content ? text->text_color : text->placeholder_color;
                 run.clip = text_clip_rect;
+                run.paint_index = static_cast<std::uint32_t>(quads_.size());
                 run.glyphs.reserve(count);
                 for (std::size_t index = 0; index < count; ++index)
                 {

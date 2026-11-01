@@ -93,6 +93,108 @@ void drawText(tgfx::Canvas* canvas, const ResonateTgfxText& run,
     }
 }
 
+/* Copy in the clip only when it is a real rectangle; a non-positive clip width
+   means the whole surface. */
+bool clipAround(tgfx::Canvas* canvas, float x, float y, float width, float height)
+{
+    if (width > 0.0F && height > 0.0F)
+    {
+        canvas->save();
+        canvas->clipRect(tgfx::Rect::MakeXYWH(x, y, width, height));
+        return true;
+    }
+    return false;
+}
+
+void drawRectItem(tgfx::Canvas* canvas, const ResonateTgfxRect& rect)
+{
+    if (rect.width <= 0.0F || rect.height <= 0.0F)
+    {
+        return;
+    }
+    const bool clipped = clipAround(canvas, rect.clip_x, rect.clip_y, rect.clip_width,
+                                    rect.clip_height);
+    tgfx::Paint paint;
+    paint.setColor(tgfx::Color{rect.r, rect.g, rect.b, rect.a});
+    /* A border is a stroke on the rect inset by half its width: the ring spans
+       the widget's edge without spilling outside it, and the corner radius
+       shrinks with the inset so the arcs stay concentric. The fill's radius is
+       bounded by half the shorter side, matching the display list's clamp. */
+    const float half_side = std::fmin(rect.width, rect.height) * 0.5F;
+    float inset = 0.0F;
+    if (rect.border > 0.0F)
+    {
+        const float width = std::fmin(rect.border, half_side);
+        inset = width * 0.5F;
+        paint.setStyle(tgfx::PaintStyle::Stroke);
+        paint.setStrokeWidth(width);
+    }
+    const tgfx::Rect box = tgfx::Rect::MakeXYWH(rect.x + inset, rect.y + inset,
+                                               rect.width - 2.0F * inset,
+                                               rect.height - 2.0F * inset);
+    const float radius = std::fmax(std::fmin(rect.radius, half_side) - inset, 0.0F);
+    if (radius > 0.0F)
+    {
+        canvas->drawRRect(tgfx::RRect::MakeRectXY(box, radius, radius), paint);
+    }
+    else
+    {
+        canvas->drawRect(box, paint);
+    }
+    if (clipped)
+    {
+        canvas->restore();
+    }
+}
+
+void drawTextItem(tgfx::Canvas* canvas, const ResonateTgfxText& text, const Ui& ui)
+{
+    const bool clipped = clipAround(canvas, text.clip_x, text.clip_y, text.clip_width,
+                                    text.clip_height);
+    drawText(canvas, text, ui.typefaces);
+    if (clipped)
+    {
+        canvas->restore();
+    }
+}
+
+void drawImageItem(const Ui& ui, tgfx::Canvas* canvas, const ResonateTgfxImageDraw& draw)
+{
+    const auto found = ui.images.find(draw.id);
+    if (found == ui.images.end() || found->second == nullptr || draw.width <= 0.0F ||
+        draw.height <= 0.0F)
+    {
+        return;
+    }
+    const std::shared_ptr<tgfx::Image>& image = found->second;
+    const bool clipped = clipAround(canvas, draw.clip_x, draw.clip_y, draw.clip_width,
+                                    draw.clip_height);
+    const tgfx::Rect source = tgfx::Rect::MakeXYWH(
+        draw.u0 * static_cast<float>(image->width()), draw.v0 * static_cast<float>(image->height()),
+        (draw.u1 - draw.u0) * static_cast<float>(image->width()),
+        (draw.v1 - draw.v0) * static_cast<float>(image->height()));
+    const tgfx::Rect destination = tgfx::Rect::MakeXYWH(draw.x, draw.y, draw.width, draw.height);
+    /* The registered file has no mip chain; the default MipmapMode::Linear
+       would sample nothing. */
+    const tgfx::SamplingOptions sampling(tgfx::FilterMode::Linear, tgfx::MipmapMode::None);
+    tgfx::Paint paint;
+    if (draw.r != 1.0F || draw.g != 1.0F || draw.b != 1.0F || draw.a != 1.0F)
+    {
+        /* A scale matrix tints the unpremultiplied sample: the icon atlas is
+           white, so multiplying its channels is exactly the ink color. */
+        const std::array<float, 20> tint{draw.r, 0.0F, 0.0F, 0.0F, 0.0F,
+                                         0.0F, draw.g, 0.0F, 0.0F, 0.0F,
+                                         0.0F, 0.0F, draw.b, 0.0F, 0.0F,
+                                         0.0F, 0.0F, 0.0F, draw.a, 0.0F};
+        paint.setColorFilter(tgfx::ColorFilter::Matrix(tint));
+    }
+    canvas->drawImageRect(image, source, destination, sampling, &paint);
+    if (clipped)
+    {
+        canvas->restore();
+    }
+}
+
 } // namespace
 
 extern "C"
@@ -131,14 +233,11 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_create(void* instance, void* physical
     return 0;
 }
 
-RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint32_t width,
-                                                std::uint32_t height,
-                                                const ResonateTgfxRect* rects,
-                                                std::uint32_t rect_count,
-                                                const ResonateTgfxText* texts,
-                                                std::uint32_t text_count,
-                                                const ResonateTgfxImageDraw* images,
-                                                std::uint32_t image_count)
+static int32_t drawLayer(ResonateTgfxUi handle, std::uint32_t width, std::uint32_t height,
+                         const ResonateTgfxRect* rects, std::uint32_t rect_count,
+                         const ResonateTgfxText* texts, std::uint32_t text_count,
+                         const ResonateTgfxImageDraw* images, std::uint32_t image_count,
+                         const ResonateTgfxDrawRef* order, std::uint32_t order_count)
 {
     auto* ui = static_cast<Ui*>(handle);
     if (ui == nullptr || width == 0U || height == 0U)
@@ -165,100 +264,52 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
     }
     auto* canvas = ui->surface->getCanvas();
     canvas->clear(tgfx::Color::Transparent());
-    /* Each entry draws inside the rectangle it was clipped to; a non-positive
-       clip width means the whole surface. */
-    const auto beginClip = [canvas](float x, float y, float width, float height)
+    /* A producer that names the paint order gets it; the kinds are otherwise
+       drawn in batches, which is only correct when nothing overlaps. */
+    if (order != nullptr && order_count != 0U)
     {
-        if (width > 0.0F && height > 0.0F)
+        for (std::uint32_t index = 0; index < order_count; ++index)
         {
-            canvas->save();
-            canvas->clipRect(tgfx::Rect::MakeXYWH(x, y, width, height));
+            const ResonateTgfxDrawRef& item = order[index];
+            switch (item.kind)
+            {
+            case 0U:
+                if (item.index < rect_count)
+                {
+                    drawRectItem(canvas, rects[item.index]);
+                }
+                break;
+            case 1U:
+                if (item.index < text_count)
+                {
+                    drawTextItem(canvas, texts[item.index], *ui);
+                }
+                break;
+            case 2U:
+                if (item.index < image_count)
+                {
+                    drawImageItem(*ui, canvas, images[item.index]);
+                }
+                break;
+            default:
+                break;
+            }
         }
-    };
-    const auto endClip = [canvas](float width, float height)
-    {
-        if (width > 0.0F && height > 0.0F)
-        {
-            canvas->restore();
-        }
-    };
-    for (std::uint32_t index = 0; index < rect_count; ++index)
-    {
-        const ResonateTgfxRect& rect = rects[index];
-        if (rect.width <= 0.0F || rect.height <= 0.0F)
-        {
-            continue;
-        }
-        beginClip(rect.clip_x, rect.clip_y, rect.clip_width, rect.clip_height);
-        tgfx::Paint paint;
-        paint.setColor(tgfx::Color{rect.r, rect.g, rect.b, rect.a});
-        /* A border is a stroke on the rect inset by half its width: the ring
-           spans the widget's edge without spilling outside it, and the corner
-           radius shrinks with the inset so the arcs stay concentric. The fill's
-           radius is bounded by half the shorter side, matching the display
-           list's clamp. */
-        const float half_side = std::fmin(rect.width, rect.height) * 0.5F;
-        float inset = 0.0F;
-        if (rect.border > 0.0F)
-        {
-            const float width = std::fmin(rect.border, half_side);
-            inset = width * 0.5F;
-            paint.setStyle(tgfx::PaintStyle::Stroke);
-            paint.setStrokeWidth(width);
-        }
-        const tgfx::Rect box = tgfx::Rect::MakeXYWH(rect.x + inset, rect.y + inset,
-                                                   rect.width - 2.0F * inset,
-                                                   rect.height - 2.0F * inset);
-        const float radius = std::fmax(std::fmin(rect.radius, half_side) - inset, 0.0F);
-        if (radius > 0.0F)
-        {
-            canvas->drawRRect(tgfx::RRect::MakeRectXY(box, radius, radius), paint);
-        }
-        else
-        {
-            canvas->drawRect(box, paint);
-        }
-        endClip(rect.clip_width, rect.clip_height);
     }
-    for (std::uint32_t index = 0; index < text_count; ++index)
+    else
     {
-        const ResonateTgfxText& text = texts[index];
-        beginClip(text.clip_x, text.clip_y, text.clip_width, text.clip_height);
-        drawText(canvas, text, ui->typefaces);
-        endClip(text.clip_width, text.clip_height);
-    }
-    for (std::uint32_t index = 0; index < image_count; ++index)
-    {
-        const ResonateTgfxImageDraw& draw = images[index];
-        const auto found = ui->images.find(draw.id);
-        if (found == ui->images.end() || found->second == nullptr || draw.width <= 0.0F ||
-            draw.height <= 0.0F)
+        for (std::uint32_t index = 0; index < rect_count; ++index)
         {
-            continue;
+            drawRectItem(canvas, rects[index]);
         }
-        const std::shared_ptr<tgfx::Image>& image = found->second;
-        beginClip(draw.clip_x, draw.clip_y, draw.clip_width, draw.clip_height);
-        const tgfx::Rect source = tgfx::Rect::MakeXYWH(
-            draw.u0 * static_cast<float>(image->width()), draw.v0 * static_cast<float>(image->height()),
-            (draw.u1 - draw.u0) * static_cast<float>(image->width()),
-            (draw.v1 - draw.v0) * static_cast<float>(image->height()));
-        const tgfx::Rect destination = tgfx::Rect::MakeXYWH(draw.x, draw.y, draw.width, draw.height);
-        /* The registered file has no mip chain; the default MipmapMode::Linear
-           would sample nothing. */
-        const tgfx::SamplingOptions sampling(tgfx::FilterMode::Linear, tgfx::MipmapMode::None);
-        tgfx::Paint paint;
-        if (draw.r != 1.0F || draw.g != 1.0F || draw.b != 1.0F || draw.a != 1.0F)
+        for (std::uint32_t index = 0; index < text_count; ++index)
         {
-            /* A scale matrix tints the unpremultiplied sample: the icon atlas is
-               white, so multiplying its channels is exactly the ink color. */
-            const std::array<float, 20> tint{draw.r, 0.0F, 0.0F, 0.0F, 0.0F,
-                                             0.0F, draw.g, 0.0F, 0.0F, 0.0F,
-                                             0.0F, 0.0F, draw.b, 0.0F, 0.0F,
-                                             0.0F, 0.0F, 0.0F, draw.a, 0.0F};
-            paint.setColorFilter(tgfx::ColorFilter::Matrix(tint));
+            drawTextItem(canvas, texts[index], *ui);
         }
-        canvas->drawImageRect(image, source, destination, sampling, &paint);
-        endClip(draw.clip_width, draw.clip_height);
+        for (std::uint32_t index = 0; index < image_count; ++index)
+        {
+            drawImageItem(*ui, canvas, images[index]);
+        }
     }
     /* RESONATE_TGFX_SYNC waits for the layer's own GPU work before returning; a
        device bisect uses it to tell an ordering race from a state problem. */
@@ -276,6 +327,29 @@ RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint
     }
     ui->device->unlock();
     return 0;
+}
+
+RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw(ResonateTgfxUi handle, std::uint32_t width,
+                                                std::uint32_t height,
+                                                const ResonateTgfxRect* rects,
+                                                std::uint32_t rect_count,
+                                                const ResonateTgfxText* texts,
+                                                std::uint32_t text_count,
+                                                const ResonateTgfxImageDraw* images,
+                                                std::uint32_t image_count)
+{
+    return drawLayer(handle, width, height, rects, rect_count, texts, text_count, images,
+                     image_count, nullptr, 0U);
+}
+
+RESONATE_TGFX_API int32_t resonate_tgfx_ui_draw_ordered(
+    ResonateTgfxUi handle, std::uint32_t width, std::uint32_t height, const ResonateTgfxRect* rects,
+    std::uint32_t rect_count, const ResonateTgfxText* texts, std::uint32_t text_count,
+    const ResonateTgfxImageDraw* images, std::uint32_t image_count,
+    const ResonateTgfxDrawRef* order, std::uint32_t order_count)
+{
+    return drawLayer(handle, width, height, rects, rect_count, texts, text_count, images,
+                     image_count, order, order_count);
 }
 
 RESONATE_TGFX_API int32_t resonate_tgfx_image_register(ResonateTgfxUi handle, std::uint32_t id,

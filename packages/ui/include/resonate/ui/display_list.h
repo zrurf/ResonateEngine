@@ -74,6 +74,10 @@ struct TextRun
     Vec4 color{1.0F, 1.0F, 1.0F, 1.0F};
     std::vector<TextGlyph> glyphs;
     ClipRect clip{};
+    /* The quad index the run was emitted before. The quads carry the same text
+       as glyph quads for the SDF path; a rasterizer that draws runs itself uses
+       this to merge them back into the quad stream's paint order. */
+    std::uint32_t paint_index = 0U;
 };
 
 class DisplayList
@@ -118,6 +122,8 @@ class DisplayList
         float right = 0.0F;
         float bottom = 0.0F;
         bool active = false;
+        /* The intersection came out inverted: nothing under it is visible. */
+        bool empty = false;
     };
 
     static Clip intersect(const Clip& outer, float x, float y, float width, float height);

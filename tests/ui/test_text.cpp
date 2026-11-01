@@ -88,7 +88,7 @@ TEST_CASE("ui text: a Label shapes into glyph quads and one canvas atlas", "[ui]
     REQUIRE(page != nullptr);
     CHECK(page->width == 512U);
     CHECK(page->height == 512U);
-    CHECK(page->revision == 1U);
+    CHECK(page->revision != 0U);
     REQUIRE(fixture.world.alive(page->pixels));
     CHECK(fixture.world.blobSize(page->pixels) ==
           static_cast<std::size_t>(page->width) * page->height * 4U);
@@ -1075,4 +1075,58 @@ TEST_CASE("ui text: a non-wrapping run ends in an ellipsis when it overflows", "
     const TextMetrics* metrics = fixture.world.get<TextMetrics>(cut);
     REQUIRE(metrics != nullptr);
     CHECK(metrics->advance <= 90.0F);
+}
+
+TEST_CASE("ui text: two documents' atlas pages carry distinct revisions", "[ui][text]")
+{
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kLabel, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    const auto font = loadFont();
+
+    Fixture first;
+    Fixture second;
+    const Entity first_root = resonate::ui::instantiate(first.world, *document, nullptr, {font});
+    const Entity second_root = resonate::ui::instantiate(second.world, *document, nullptr, {font});
+    REQUIRE(first_root.valid());
+    REQUIRE(second_root.valid());
+    const TextAtlasPage* first_page = first.world.get<TextAtlasPage>(first_root);
+    const TextAtlasPage* second_page = second.world.get<TextAtlasPage>(second_root);
+    REQUIRE(first_page != nullptr);
+    REQUIRE(second_page != nullptr);
+    /* The renderer uploads on a revision change; two pages that share one would
+       leave the second document sampling the first atlas. */
+    CHECK(first_page->revision != second_page->revision);
+}
+
+TEST_CASE("ui text: a wrapped centered line aligns on its own width", "[ui][text]")
+{
+    const char* const wrap_center = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Label key="lines" text="W W W" font_size="20" width="50" height="120"
+           align="Center" wrap="true"/>
+  </Screen>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(wrap_center, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    Fixture fixture;
+    const Entity root = resonate::ui::instantiate(fixture.world, *document, nullptr, {loadFont()});
+    REQUIRE(root.valid());
+    const Entity label = resonate::ui::findByKey(fixture.world, root, "lines");
+    REQUIRE(label.valid());
+    const Glyphs* glyphs = fixture.world.get<Glyphs>(label);
+    REQUIRE(glyphs != nullptr);
+    REQUIRE(fixture.world.alive(glyphs->records));
+    const auto* records =
+        static_cast<const resonate::ui::detail::GlyphQuad*>(fixture.world.blobData(glyphs->records));
+    const std::size_t count =
+        fixture.world.blobSize(glyphs->records) / sizeof(resonate::ui::detail::GlyphQuad);
+    REQUIRE(count > 0U);
+    /* The first flushed segment is "W W"; centering it in a 50px box leaves a
+       positive margin. Aligning against the whole line would start it left of
+       the box. */
+    CHECK(records[0].pen_x >= 0.0F);
 }

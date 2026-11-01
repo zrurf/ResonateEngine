@@ -579,6 +579,10 @@ struct RenderSystem::Impl
     std::vector<ResonateTgfxGlyph> ui_draw_glyphs;
     std::vector<ResonateTgfxText> ui_draw_texts;
     std::vector<ResonateTgfxImageDraw> ui_draw_images;
+    std::vector<ResonateTgfxDrawRef> ui_draw_order;
+    /* The quad index each text run was emitted before: its place in the merged
+       paint order. */
+    std::vector<std::uint32_t> ui_text_paint;
     /* True when the tgfx layer draws into the renderer's own image (zero
        copy); false falls back to the wrapper surface plus a readback. */
     bool ui_target_attached = false;
@@ -1270,51 +1274,8 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
        first, and the contains-check makes an empty queue cheap. */
     processUiImages();
 
-    ui_draw_rects.clear();
-    ui_draw_images.clear();
-    for (const ui::Quad& quad : snapshot.ui.quads())
-    {
-        if (quad.width <= 0.0F || quad.height <= 0.0F || quad.texture == ui::kTextureFont)
-        {
-            continue;
-        }
-        if (quad.texture == ui::kTextureChecker)
-        {
-            const float half_width = quad.width * 0.5F;
-            const float half_height = quad.height * 0.5F;
-            for (int row = 0; row < 2; ++row)
-            {
-                for (int column = 0; column < 2; ++column)
-                {
-                    const float shade = (row + column) % 2 == 0 ? 0.82F : 0.45F;
-                    ui_draw_rects.push_back(ResonateTgfxRect{
-                        quad.x + static_cast<float>(column) * half_width,
-                        quad.y + static_cast<float>(row) * half_height, half_width, half_height,
-                        0.0F, 0.0F, quad.color.x * shade, quad.color.y * shade,
-                        quad.color.z * shade, quad.color.w, quad.clip.x, quad.clip.y,
-                        quad.clip.width, quad.clip.height});
-                }
-            }
-            continue;
-        }
-        if (ui_images.contains(quad.texture))
-        {
-            ui_draw_images.push_back(ResonateTgfxImageDraw{
-                quad.texture, quad.x, quad.y, quad.width, quad.height, quad.uv_min.x,
-                quad.uv_min.y, quad.uv_max.x, quad.uv_max.y, quad.color.x, quad.color.y,
-                quad.color.z, quad.color.w, quad.clip.x, quad.clip.y, quad.clip.width,
-                quad.clip.height});
-            continue;
-        }
-        ui_draw_rects.push_back(ResonateTgfxRect{quad.x, quad.y, quad.width, quad.height,
-                                                 quad.radius, quad.border, quad.color.x,
-                                                 quad.color.y, quad.color.z, quad.color.w,
-                                                 quad.clip.x, quad.clip.y, quad.clip.width,
-                                                 quad.clip.height});
-    }
-
-    /* Each text run holds a pointer into this vector, so its capacity has to
-       cover the whole frame before the first pointer is taken. */
+    /* Texts first: their indices are what the order merge names, and every
+       glyph is reserved before a run takes a pointer into the vector. */
     std::size_t glyph_total = 0U;
     for (const ui::TextRun& run : snapshot.ui.texts())
     {
@@ -1323,6 +1284,7 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
     ui_draw_glyphs.clear();
     ui_draw_glyphs.reserve(glyph_total);
     ui_draw_texts.clear();
+    ui_text_paint.clear();
     for (const ui::TextRun& run : snapshot.ui.texts())
     {
         if (run.glyphs.empty())
@@ -1348,7 +1310,73 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
         text.clip_width = run.clip.width;
         text.clip_height = run.clip.height;
         ui_draw_texts.push_back(text);
+        ui_text_paint.push_back(run.paint_index);
     }
+
+    ui_draw_rects.clear();
+    ui_draw_images.clear();
+    ui_draw_order.clear();
+    std::size_t next_text = 0U;
+    /* A run belongs before the quad at its paint index. */
+    const auto flush_texts = [&](std::size_t quad_index)
+    {
+        while (next_text < ui_text_paint.size() && ui_text_paint[next_text] <= quad_index)
+        {
+            ui_draw_order.push_back(
+                ResonateTgfxDrawRef{1U, static_cast<std::uint32_t>(next_text)});
+            ++next_text;
+        }
+    };
+    std::size_t quad_index = 0U;
+    for (const ui::Quad& quad : snapshot.ui.quads())
+    {
+        flush_texts(quad_index);
+        ++quad_index;
+        if (quad.width <= 0.0F || quad.height <= 0.0F || quad.texture == ui::kTextureFont)
+        {
+            continue;
+        }
+        if (quad.texture == ui::kTextureChecker)
+        {
+            const float half_width = quad.width * 0.5F;
+            const float half_height = quad.height * 0.5F;
+            for (int row = 0; row < 2; ++row)
+            {
+                for (int column = 0; column < 2; ++column)
+                {
+                    const float shade = (row + column) % 2 == 0 ? 0.82F : 0.45F;
+                    ui_draw_order.push_back(ResonateTgfxDrawRef{
+                        0U, static_cast<std::uint32_t>(ui_draw_rects.size())});
+                    ui_draw_rects.push_back(ResonateTgfxRect{
+                        quad.x + static_cast<float>(column) * half_width,
+                        quad.y + static_cast<float>(row) * half_height, half_width, half_height,
+                        0.0F, 0.0F, quad.color.x * shade, quad.color.y * shade,
+                        quad.color.z * shade, quad.color.w, quad.clip.x, quad.clip.y,
+                        quad.clip.width, quad.clip.height});
+                }
+            }
+            continue;
+        }
+        if (ui_images.contains(quad.texture))
+        {
+            ui_draw_order.push_back(
+                ResonateTgfxDrawRef{2U, static_cast<std::uint32_t>(ui_draw_images.size())});
+            ui_draw_images.push_back(ResonateTgfxImageDraw{
+                quad.texture, quad.x, quad.y, quad.width, quad.height, quad.uv_min.x,
+                quad.uv_min.y, quad.uv_max.x, quad.uv_max.y, quad.color.x, quad.color.y,
+                quad.color.z, quad.color.w, quad.clip.x, quad.clip.y, quad.clip.width,
+                quad.clip.height});
+            continue;
+        }
+        ui_draw_order.push_back(
+            ResonateTgfxDrawRef{0U, static_cast<std::uint32_t>(ui_draw_rects.size())});
+        ui_draw_rects.push_back(ResonateTgfxRect{quad.x, quad.y, quad.width, quad.height,
+                                                 quad.radius, quad.border, quad.color.x,
+                                                 quad.color.y, quad.color.z, quad.color.w,
+                                                 quad.clip.x, quad.clip.y, quad.clip.width,
+                                                 quad.clip.height});
+    }
+    flush_texts(static_cast<std::size_t>(-1));
 
     /* The UI target the layer draws into: the renderer's own color-attachment
        image, so the blend pass samples it without a readback. A failed attach
@@ -1444,12 +1472,14 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
 
     /* The draw always runs: it clears the target even on an empty layer, so
        the blend pass never resamples stale content. */
-    if (resonate_tgfx_ui_draw(tgfx_ui, width, height, ui_draw_rects.data(),
-                              static_cast<std::uint32_t>(ui_draw_rects.size()),
-                              ui_draw_texts.data(),
-                              static_cast<std::uint32_t>(ui_draw_texts.size()),
-                              ui_draw_images.data(),
-                              static_cast<std::uint32_t>(ui_draw_images.size())) != 0)
+    if (resonate_tgfx_ui_draw_ordered(tgfx_ui, width, height, ui_draw_rects.data(),
+                                      static_cast<std::uint32_t>(ui_draw_rects.size()),
+                                      ui_draw_texts.data(),
+                                      static_cast<std::uint32_t>(ui_draw_texts.size()),
+                                      ui_draw_images.data(),
+                                      static_cast<std::uint32_t>(ui_draw_images.size()),
+                                      ui_draw_order.data(),
+                                      static_cast<std::uint32_t>(ui_draw_order.size())) != 0)
     {
         complain("tgfx: the UI draw failed");
         return false;
