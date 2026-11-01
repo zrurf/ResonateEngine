@@ -9,6 +9,8 @@
  */
 
 #include <cstddef>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include <resonate/core/math.h>
@@ -63,6 +65,18 @@ struct Clip
        drives keeps what it had. */
     static void blend(const Clip& from, const Clip& to, float weight, float time,
                       bool looping, hierarchy::LocalTransform& transform);
+
+    /* Parses the .rclip XML subset: a <clip duration=".."> root whose children
+       are <track field="position|rotation|scale"> elements holding <key
+       t=".." value=".."/> keys. A value is three floats for the vec3 fields
+       and four for rotation, in member order. Keys must be present and
+       strictly ascend, a field carries one track at most, and anything the
+       grammar does not name is an error with a line number. */
+    static bool parse(std::string_view xml, Clip& out, std::string& error);
+
+    /* Reads the file at `path` and parses it; errors carry the path. */
+    [[nodiscard]] static bool loadFile(const std::string& path, Clip& out,
+                                       std::string& error);
 
     /* The same blend with each clip sampled at its own time, which is what a
        cross-fade between two states of a machine needs: the outgoing clip is

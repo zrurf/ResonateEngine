@@ -1,6 +1,7 @@
 #include <catch2/catch_all.hpp>
 
 #include <cmath>
+#include <string>
 
 #include <resonate/animation/player.h>
 #include <resonate/core/allocator.h>
@@ -224,4 +225,73 @@ TEST_CASE("animation: a machine-driven entity cross-fades its two clips", "[anim
     player.invoke(world, 1.0F);
     CHECK(near(playback->time, held));
     CHECK(near(height(), kept));
+}
+
+TEST_CASE("a clip parses from the .rclip XML subset", "[animation]")
+{
+    constexpr const char* kText = R"xml(<?xml version="1.0" encoding="utf-8"?>
+<clip duration="1.5">
+  <track field="position">
+    <key t="0" value="0 0.5 0"/>
+    <key t="0.75" value="0 1.1 0"/>
+    <key t="1.5" value="0 0.5 0"/>
+  </track>
+  <track field="rotation">
+    <key t="0" value="0 0 0 1"/>
+  </track>
+</clip>)xml";
+    Clip clip;
+    std::string error;
+    REQUIRE(Clip::parse(kText, clip, error));
+    CHECK(error.empty());
+    CHECK(near(clip.duration, 1.5F));
+    REQUIRE(clip.position.keys.size() == 3U);
+    CHECK(near(clip.position.keys[1].value.y, 1.1F));
+    REQUIRE(clip.rotation.keys.size() == 1U);
+
+    /* The reader must not transpose a quat: the binder and the writer both use
+       member order, and the scene writer's old w-first bug is the precedent. */
+    resonate::hierarchy::LocalTransform transform;
+    clip.sample(0.375F, true, transform);
+    CHECK(near(transform.position.y, 0.8F));
+    CHECK(near(transform.rotation.w, 1.0F));
+    CHECK(near(transform.rotation.x, 0.0F));
+}
+
+TEST_CASE("a clip refuses what the grammar does not name", "[animation]")
+{
+    Clip clip;
+    std::string error;
+    CHECK_FALSE(Clip::parse("<clip/>", clip, error));
+    CHECK(error.find("duration") != std::string::npos);
+
+    CHECK_FALSE(Clip::parse(R"xml(<clip duration="1">
+  <track field="yaw"><key t="0" value="0 0 0"/></track>
+</clip>)xml", clip, error));
+    CHECK(error.find("unknown field") != std::string::npos);
+
+    CHECK_FALSE(Clip::parse(R"xml(<clip duration="1">
+  <track field="position">
+    <key t="0.5" value="0 0 0"/>
+    <key t="0.25" value="0 0 0"/>
+  </track>
+</clip>)xml", clip, error));
+    CHECK(error.find("ascend") != std::string::npos);
+
+    CHECK_FALSE(Clip::parse(R"xml(<clip duration="1">
+  <track field="position"><key t="0" value="0 0"/></track>
+</clip>)xml", clip, error));
+    CHECK(error.find("numbers") != std::string::npos);
+
+    CHECK_FALSE(Clip::parse(R"xml(<clip duration="1"><beat/></clip>)xml", clip, error));
+    CHECK(error.find("unknown element") != std::string::npos);
+
+    CHECK_FALSE(Clip::parse(R"xml(<clip duration="1">
+  <track field="position"><key t="2" value="0 0 0"/></track>
+</clip>)xml", clip, error));
+    CHECK(error.find("outside the clip") != std::string::npos);
+
+    /* Errors carry the line the offender sits on. */
+    CHECK_FALSE(Clip::parse("<clip duration=\"1\">\n  <beat/>\n</clip>", clip, error));
+    CHECK(error.find(":2:") != std::string::npos);
 }

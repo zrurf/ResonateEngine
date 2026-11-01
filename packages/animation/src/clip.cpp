@@ -2,6 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <iterator>
 
 namespace resonate::animation
 {
@@ -155,6 +160,549 @@ void Clip::blend(const Clip& from, const Clip& to, float weight, float from_time
     {
         transform.scale = to_sample.scale;
     }
+}
+
+namespace
+{
+
+/* The .rclip reader: the same restricted XML family the string table uses --
+   elements with attributes, comments and processing instructions skipped,
+   everything else an error with a line number. Values are numeric text, so
+   entities are not decoded. */
+struct ClipAttribute
+{
+    std::string name;
+    std::string value;
+};
+
+struct ClipTag
+{
+    std::string name;
+    std::vector<ClipAttribute> attributes;
+    bool closing = false;
+    bool self_closing = false;
+};
+
+class ClipReader
+{
+  public:
+    explicit ClipReader(std::string_view text) : text_(text)
+    {
+        if (text_.substr(0U, 3U) == "\xEF\xBB\xBF")
+        {
+            pos_ = 3U;
+        }
+    }
+
+    [[nodiscard]] bool atEnd() const { return pos_ >= text_.size(); }
+    [[nodiscard]] int line() const { return line_; }
+
+    bool skipMisc(std::string& error)
+    {
+        for (;;)
+        {
+            while (!atEnd() && isSpace(text_[pos_]))
+            {
+                advance();
+            }
+            if (startsWith("<!--"))
+            {
+                advance(4U);
+                while (!startsWith("-->"))
+                {
+                    if (atEnd())
+                    {
+                        return fail("an unterminated comment", error);
+                    }
+                    advance();
+                }
+                advance(3U);
+                continue;
+            }
+            if (startsWith("<?"))
+            {
+                advance(2U);
+                while (!startsWith("?>"))
+                {
+                    if (atEnd())
+                    {
+                        return fail("an unterminated processing instruction", error);
+                    }
+                    advance();
+                }
+                advance(2U);
+                continue;
+            }
+            return true;
+        }
+    }
+
+    bool readTag(ClipTag& out, std::string& error)
+    {
+        if (!startsWith("<"))
+        {
+            return fail("expected '<'", error);
+        }
+        advance();
+        if (startsWith("/"))
+        {
+            out.closing = true;
+            advance();
+        }
+        if (!readName(out.name, error))
+        {
+            return false;
+        }
+        if (out.closing)
+        {
+            while (!atEnd() && isSpace(peek()))
+            {
+                advance();
+            }
+            if (!startsWith(">"))
+            {
+                return fail("a closing tag takes no attributes", error);
+            }
+            advance();
+            return true;
+        }
+        for (;;)
+        {
+            while (!atEnd() && isSpace(peek()))
+            {
+                advance();
+            }
+            if (startsWith("/>"))
+            {
+                out.self_closing = true;
+                advance(2U);
+                return true;
+            }
+            if (startsWith(">"))
+            {
+                advance();
+                return true;
+            }
+            if (atEnd() || !isNameChar(peek()))
+            {
+                return fail("expected an attribute", error);
+            }
+            ClipAttribute attribute;
+            if (!readName(attribute.name, error))
+            {
+                return false;
+            }
+            while (!atEnd() && isSpace(peek()))
+            {
+                advance();
+            }
+            if (!startsWith("="))
+            {
+                return fail("expected '=' after '" + attribute.name + "'", error);
+            }
+            advance();
+            while (!atEnd() && isSpace(peek()))
+            {
+                advance();
+            }
+            if (atEnd() || (peek() != '"' && peek() != '\''))
+            {
+                return fail("the value of '" + attribute.name + "' needs quotes", error);
+            }
+            const char quote = peek();
+            advance();
+            const std::size_t begin = pos_;
+            while (!atEnd() && peek() != quote)
+            {
+                advance();
+            }
+            if (atEnd())
+            {
+                return fail("an unterminated value", error);
+            }
+            attribute.value.assign(text_.substr(begin, pos_ - begin));
+            advance();
+            for (const ClipAttribute& existing : out.attributes)
+            {
+                if (existing.name == attribute.name)
+                {
+                    return fail("duplicate attribute '" + attribute.name + "'", error);
+                }
+            }
+            out.attributes.push_back(std::move(attribute));
+        }
+    }
+
+    [[nodiscard]] const ClipAttribute* find(const ClipTag& tag, const char* name) const
+    {
+        for (const ClipAttribute& attribute : tag.attributes)
+        {
+            if (attribute.name == name)
+            {
+                return &attribute;
+            }
+        }
+        return nullptr;
+    }
+
+  private:
+    [[nodiscard]] bool startsWith(std::string_view prefix) const
+    {
+        return text_.substr(pos_, prefix.size()) == prefix;
+    }
+
+    [[nodiscard]] char peek() const { return text_[pos_]; }
+
+    static bool isSpace(char character)
+    {
+        return character == ' ' || character == '\t' || character == '\r' ||
+               character == '\n';
+    }
+
+    static bool isNameStart(char character)
+    {
+        const auto value = static_cast<unsigned char>(character);
+        return character == '_' || (value >= 'a' && value <= 'z') ||
+               (value >= 'A' && value <= 'Z');
+    }
+
+    static bool isNameChar(char character)
+    {
+        return isNameStart(character) || character == '-' ||
+               (character >= '0' && character <= '9');
+    }
+
+    void advance(std::size_t count = 1U)
+    {
+        for (std::size_t index = 0U; index < count && pos_ < text_.size(); ++index)
+        {
+            if (text_[pos_] == '\n')
+            {
+                ++line_;
+            }
+            ++pos_;
+        }
+    }
+
+    bool readName(std::string& out, std::string& error)
+    {
+        if (atEnd() || !isNameStart(peek()))
+        {
+            return fail("expected a name", error);
+        }
+        const std::size_t begin = pos_;
+        while (!atEnd() && isNameChar(peek()))
+        {
+            advance();
+        }
+        out.assign(text_.substr(begin, pos_ - begin));
+        return true;
+    }
+
+    bool fail(const std::string& message, std::string& error)
+    {
+        error = "clip:" + std::to_string(line_) + ": " + message;
+        return false;
+    }
+
+    std::string_view text_;
+    std::size_t pos_ = 0U;
+    int line_ = 1;
+};
+
+/* One number out of whitespace-separated text. strtod would read past a
+   string_view's end, so the token lands in a bounded buffer first. */
+bool parseNumber(std::string_view text, std::size_t& at, float& out)
+{
+    while (at < text.size() && (text[at] == ' ' || text[at] == '\t'))
+    {
+        ++at;
+    }
+    const std::size_t begin = at;
+    while (at < text.size())
+    {
+        const char character = text[at];
+        const bool numeric = (character >= '0' && character <= '9') || character == '+' ||
+                             character == '-' || character == '.' || character == 'e' ||
+                             character == 'E';
+        if (!numeric)
+        {
+            break;
+        }
+        ++at;
+    }
+    if (at == begin || at - begin >= 64U)
+    {
+        return false;
+    }
+    char buffer[64] = {};
+    std::memcpy(buffer, text.data() + begin, at - begin);
+    char* stop = nullptr;
+    const float value = std::strtof(buffer, &stop);
+    if (stop != buffer + (at - begin))
+    {
+        return false;
+    }
+    out = value;
+    return true;
+}
+
+bool parseNumbers(std::string_view text, float* out, std::size_t count, std::string& error)
+{
+    std::size_t at = 0U;
+    for (std::size_t index = 0U; index < count; ++index)
+    {
+        if (!parseNumber(text, at, out[index]))
+        {
+            error = "expected " + std::to_string(count) + " numbers";
+            return false;
+        }
+    }
+    while (at < text.size())
+    {
+        if (text[at] != ' ' && text[at] != '\t')
+        {
+            error = "a value carries text past its numbers";
+            return false;
+        }
+        ++at;
+    }
+    return true;
+}
+
+} // namespace
+
+bool Clip::parse(std::string_view xml, Clip& out, std::string& error)
+{
+    out = Clip{};
+    ClipReader reader(xml);
+    if (!reader.skipMisc(error))
+    {
+        return false;
+    }
+    ClipTag root;
+    if (!reader.readTag(root, error))
+    {
+        return false;
+    }
+    if (root.closing || root.name != "clip")
+    {
+        error = "clip:" + std::to_string(reader.line()) + ": expected <clip>";
+        return false;
+    }
+    for (const ClipAttribute& attribute : root.attributes)
+    {
+        if (attribute.name != "duration")
+        {
+            error = "clip:" + std::to_string(reader.line()) + ": unknown attribute '" +
+                    attribute.name + "' (playback flags belong to the Animation component)";
+            return false;
+        }
+    }
+    const ClipAttribute* duration = reader.find(root, "duration");
+    float parsed_duration = 0.0F;
+    std::size_t at = 0U;
+    if (duration == nullptr || !parseNumber(duration->value, at, parsed_duration) ||
+        at != duration->value.size())
+    {
+        error = "clip:" + std::to_string(reader.line()) + ": duration must be one number";
+        return false;
+    }
+    if (!(parsed_duration > 0.0F))
+    {
+        error = "clip:" + std::to_string(reader.line()) + ": duration must be positive";
+        return false;
+    }
+    out.duration = parsed_duration;
+
+    if (root.self_closing)
+    {
+        return true;
+    }
+    for (;;)
+    {
+        if (!reader.skipMisc(error))
+        {
+            return false;
+        }
+        if (reader.atEnd())
+        {
+            error = "clip:" + std::to_string(reader.line()) + ": missing </clip>";
+            return false;
+        }
+        ClipTag tag;
+        if (!reader.readTag(tag, error))
+        {
+            return false;
+        }
+        if (tag.closing)
+        {
+            if (tag.name != "clip")
+            {
+                error = "clip:" + std::to_string(reader.line()) + ": expected </clip>";
+                return false;
+            }
+            break;
+        }
+        if (tag.name != "track")
+        {
+            error = "clip:" + std::to_string(reader.line()) + ": unknown element '<" +
+                    tag.name + ">'";
+            return false;
+        }
+        const ClipAttribute* field = reader.find(tag, "field");
+        if (field == nullptr)
+        {
+            error = "clip:" + std::to_string(reader.line()) + ": a track needs a field";
+            return false;
+        }
+        for (const ClipAttribute& attribute : tag.attributes)
+        {
+            if (attribute.name != "field")
+            {
+                error = "clip:" + std::to_string(reader.line()) + ": unknown attribute '" +
+                        attribute.name + "' on track";
+                return false;
+            }
+        }
+        Vec3Track* vec_track = nullptr;
+        QuatTrack* quat_track = nullptr;
+        if (field->value == "position")
+        {
+            vec_track = &out.position;
+        }
+        else if (field->value == "scale")
+        {
+            vec_track = &out.scale;
+        }
+        else if (field->value == "rotation")
+        {
+            quat_track = &out.rotation;
+        }
+        else
+        {
+            error = "clip:" + std::to_string(reader.line()) + ": unknown field '" +
+                    field->value + "'";
+            return false;
+        }
+        if ((vec_track != nullptr && !vec_track->keys.empty()) ||
+            (quat_track != nullptr && !quat_track->keys.empty()))
+        {
+            error = "clip:" + std::to_string(reader.line()) + ": field '" + field->value +
+                    "' carries two tracks";
+            return false;
+        }
+        if (tag.self_closing)
+        {
+            continue;
+        }
+        for (;;)
+        {
+            if (!reader.skipMisc(error))
+            {
+                return false;
+            }
+            if (reader.atEnd())
+            {
+                error = "clip:" + std::to_string(reader.line()) + ": missing </track>";
+                return false;
+            }
+            ClipTag key_tag;
+            if (!reader.readTag(key_tag, error))
+            {
+                return false;
+            }
+            if (key_tag.closing)
+            {
+                if (key_tag.name != "track")
+                {
+                    error = "clip:" + std::to_string(reader.line()) + ": expected </track>";
+                    return false;
+                }
+                break;
+            }
+            if (key_tag.name != "key")
+            {
+                error = "clip:" + std::to_string(reader.line()) + ": unknown element '<" +
+                        key_tag.name + ">'";
+                return false;
+            }
+            const ClipAttribute* t = reader.find(key_tag, "t");
+            const ClipAttribute* value = reader.find(key_tag, "value");
+            if (t == nullptr || value == nullptr)
+            {
+                error = "clip:" + std::to_string(reader.line()) + ": a key needs t and value";
+                return false;
+            }
+            for (const ClipAttribute& attribute : key_tag.attributes)
+            {
+                if (attribute.name != "t" && attribute.name != "value")
+                {
+                    error = "clip:" + std::to_string(reader.line()) + ": unknown attribute '" +
+                            attribute.name + "' on key";
+                    return false;
+                }
+            }
+            float time = 0.0F;
+            std::size_t time_at = 0U;
+            if (!parseNumber(t->value, time_at, time) || time_at != t->value.size())
+            {
+                error = "clip:" + std::to_string(reader.line()) + ": t must be one number";
+                return false;
+            }
+            if (time < 0.0F || time > out.duration)
+            {
+                error = "clip:" + std::to_string(reader.line()) + ": t " + t->value +
+                        " sits outside the clip";
+                return false;
+            }
+            const float last = vec_track != nullptr && !vec_track->keys.empty()
+                                   ? vec_track->keys.back().time
+                                   : (quat_track != nullptr && !quat_track->keys.empty()
+                                          ? quat_track->keys.back().time
+                                          : -1.0F);
+            if (time <= last)
+            {
+                error = "clip:" + std::to_string(reader.line()) + ": keys must ascend";
+                return false;
+            }
+            float numbers[4] = {};
+            const std::size_t count = quat_track != nullptr ? 4U : 3U;
+            if (!parseNumbers(value->value, numbers, count, error))
+            {
+                error = "clip:" + std::to_string(reader.line()) + ": " + error;
+                return false;
+            }
+            if (quat_track != nullptr)
+            {
+                quat_track->keys.push_back(
+                    {time, Quat{numbers[0], numbers[1], numbers[2], numbers[3]}});
+            }
+            else
+            {
+                vec_track->keys.push_back({time, Vec3{numbers[0], numbers[1], numbers[2]}});
+            }
+        }
+    }
+    return true;
+}
+
+bool Clip::loadFile(const std::string& path, Clip& out, std::string& error)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open())
+    {
+        error = path + ": cannot open the clip";
+        return false;
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    if (!parse(text, out, error))
+    {
+        error = path + ": " + error;
+        return false;
+    }
+    return true;
 }
 
 } // namespace resonate::animation
