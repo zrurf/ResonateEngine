@@ -601,14 +601,14 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
     }
 }
 
-/* Writes the edited model back into the object's MachineSource: the old
-   fragment blob dies with the new one taking its place. */
-void storeMachineModel(resonate::ecs::World& world, Entity entity,
-                       const resonate::scene::MachineModel& model)
+/* Writes a machine fragment into the object's MachineSource: the old blob
+   dies with the new one taking its place. Both sides of a machine undo entry
+   come through here. */
+void writeMachineFragment(resonate::ecs::World& world, Entity entity,
+                          std::string_view fragment)
 {
-    const std::string fragment = resonate::scene::serializeMachineFragment(model);
     auto* source = world.get<resonate::scene::MachineSource>(entity);
-    if (source == nullptr)
+    if (source == nullptr || !world.alive(entity))
     {
         return;
     }
@@ -1797,8 +1797,10 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
         const Entity entity = state->machine_shown_entity;
         if (entity.valid() && world.alive(entity))
         {
-            resonate::scene::MachineModel model;
-            bool has_machine = false;
+            /* The edit runs on the model parsed from the fragment the object
+               carries; both sides of the undo entry are the fragments before
+               and after. */
+            std::string before;
             if (const auto* source = world.get<resonate::scene::MachineSource>(entity);
                 source != nullptr && world.alive(source->text))
             {
@@ -1806,17 +1808,17 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                 const std::size_t size = world.blobSize(source->text);
                 if (bytes != nullptr && size != 0U)
                 {
-                    std::string parse_error;
-                    has_machine = resonate::scene::parseMachineFragment(
-                        std::string_view(bytes, size), model, parse_error);
+                    before.assign(bytes, size);
                 }
             }
-            if (has_machine)
+            resonate::scene::MachineModel model;
+            std::string parse_error;
+            if (!before.empty() &&
+                resonate::scene::parseMachineFragment(before, model, parse_error))
             {
+                std::string entry_name;
                 if (add_state)
                 {
-                    /* The name is the first free stateN; the clip copies the
-                       first state's, so the new state is runnable at once. */
                     std::string name;
                     for (std::uint32_t attempt = 0U;; ++attempt)
                     {
@@ -1831,13 +1833,15 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                         }
                     }
                     model.states.push_back({name, model.states.front().clip, {}});
+                    entry_name = localized("editor.add_state") + " " + name;
                 }
-                if (add_transition && model.states.size() >= 1U)
+                if (add_transition && !model.states.empty())
                 {
                     const std::string& from = model.states.front().name;
                     const std::string& to =
                         model.states.size() > 1U ? model.states[1U].name : from;
                     model.transitions.push_back({from, to, {}, {}, {}, {}});
+                    entry_name = localized("editor.add_transition") + " " + from + "->" + to;
                 }
                 if (remove_selected)
                 {
@@ -1850,8 +1854,8 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                                   state->machine_transition_rows.end(), selected);
                     if (state_at != state->machine_state_rows.end())
                     {
-                        const std::size_t index =
-                            static_cast<std::size_t>(state_at - state->machine_state_rows.begin());
+                        const std::size_t index = static_cast<std::size_t>(
+                            state_at - state->machine_state_rows.begin());
                         const std::string name = model.states[index].name;
                         model.states.erase(model.states.begin() +
                                            static_cast<std::ptrdiff_t>(index));
@@ -1865,16 +1869,39 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                                                       transition.to == name;
                                            }),
                             model.transitions.end());
+                        entry_name =
+                            localized("editor.delete_selected") + " " + name;
                     }
                     else if (transition_at != state->machine_transition_rows.end())
                     {
                         const std::size_t index = static_cast<std::size_t>(
                             transition_at - state->machine_transition_rows.begin());
+                        entry_name = localized("editor.delete_selected") + " " +
+                                     model.transitions[index].from + "->" +
+                                     model.transitions[index].to;
                         model.transitions.erase(
                             model.transitions.begin() + static_cast<std::ptrdiff_t>(index));
                     }
                 }
-                storeMachineModel(world, entity, model);
+                if (!entry_name.empty())
+                {
+                    const std::string after =
+                        resonate::scene::serializeMachineFragment(model);
+                    writeMachineFragment(world, entity, after);
+                    rebuildMachineRows(*state, world);
+                    pushUndo(
+                        *state, entry_name,
+                        [&state, entity, before](resonate::ecs::World& target)
+                        {
+                            writeMachineFragment(target, entity, before);
+                            rebuildMachineRows(*state, target);
+                        },
+                        [&state, entity, after](resonate::ecs::World& target)
+                        {
+                            writeMachineFragment(target, entity, after);
+                            rebuildMachineRows(*state, target);
+                        });
+                }
             }
         }
         rebuildMachineRows(*state, world);
