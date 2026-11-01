@@ -800,6 +800,14 @@ void ModuleHost::Impl::syncPoint()
     if (intents != nullptr)
     {
         intents->adjudicate(jobsOf(scheduler));
+        /* A handler records its structural effects into the bus's buffer. There
+           is no later sync point for the last adjudication of the step, so they
+           play here, before the stage that follows. */
+        if (world != nullptr &&
+            !intents->commands().empty(ecs::CommandBuffer::Channel::SyncPoint))
+        {
+            world->play(intents->commands());
+        }
     }
 }
 

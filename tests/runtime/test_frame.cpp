@@ -10,6 +10,7 @@
 #include <resonate/csharp/managed_systems.hpp>
 #include <resonate/ecs/command_buffer.h>
 #include <resonate/ecs/world.h>
+#include <resonate/gameplay/intent.h>
 #include <resonate/hierarchy/system.h>
 #include <resonate/hierarchy/tree.h>
 #include <resonate/module/host.hpp>
@@ -190,6 +191,71 @@ TEST_CASE("playback is refused while parallel execution is in flight", "[runtime
     host->playRecordedCommands();
     REQUIRE(world.alive(spawner.spawned));
     REQUIRE(world.entityCount() == 1U);
+}
+
+TEST_CASE("a handler's structural command plays at the sync point that ran it",
+          "[runtime][frame]")
+{
+    World world(resonate::systemAllocator());
+    REQUIRE(world.registerComponent<Marker>() != resonate::ecs::kInvalidComponent);
+    const Entity target = world.create();
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    host->setWorld(&world);
+    REQUIRE(host->intents() != nullptr);
+
+    struct SpawnOnIntent
+    {
+        Entity spawned{};
+
+        static void run(void* user, World&, CommandBuffer::Section& commands,
+                        const resonate::gameplay::Intent&)
+        {
+            auto* self = static_cast<SpawnOnIntent*>(user);
+            self->spawned = commands.spawn(Marker{9U});
+        }
+    };
+
+    auto* bus = host->intents();
+    const resonate::gameplay::IntentTypeId type = bus->registerType("test.spawn", 0);
+    REQUIRE(type != resonate::gameplay::kInvalidIntent);
+
+    SpawnOnIntent handler;
+    resonate::gameplay::IntentBus::HandlerDesc handler_desc;
+    handler_desc.type = type;
+    handler_desc.name = "test.spawn.handler";
+    handler_desc.run = &SpawnOnIntent::run;
+    handler_desc.user = &handler;
+    REQUIRE(bus->addHandler(handler_desc));
+
+    struct Submitter
+    {
+        resonate::gameplay::IntentBus* bus = nullptr;
+        resonate::gameplay::IntentTypeId type = resonate::gameplay::kInvalidIntent;
+        Entity target{};
+        bool submitted = false;
+
+        static void run(void* context, World&, CommandBuffer&, float)
+        {
+            auto* self = static_cast<Submitter*>(context);
+            self->submitted = self->bus->submit(self->type, Entity{}, self->target, nullptr);
+        }
+    };
+
+    Submitter submitter{bus, type, target};
+    const resonate::EngineSystemDesc submit_desc{"test.intent_submit", RESONATE_STAGE_PHYSICS,
+                                                 &Submitter::run, &submitter};
+    REQUIRE(resonate::addEngineSystem(*host, submit_desc) == RESONATE_OK);
+
+    host->runSimulationStep(1.0F / 60.0F);
+
+    /* The PHYSICS submission was adjudicated at the step's last sync point; the
+       handler's spawn reached the world instead of being swept as unplayed. */
+    REQUIRE(submitter.submitted);
+    REQUIRE(handler.spawned.valid());
+    REQUIRE(world.alive(handler.spawned));
+    REQUIRE(bus->commands().empty(CommandBuffer::Channel::SyncPoint));
 }
 
 TEST_CASE("a world-aware system is refused when the run has no world", "[runtime][frame]")

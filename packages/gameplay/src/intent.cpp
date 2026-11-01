@@ -224,11 +224,27 @@ struct IntentBus::Impl
             if (wave >= depth_cap)
             {
                 std::lock_guard<std::mutex> lock(queue_mutex);
+                std::uint32_t lost = 0;
                 for (Entry* entry : batch)
                 {
-                    aftermath.push_back(toHeap(entry));
+                    if (Entry* copy = toHeap(entry); copy != nullptr)
+                    {
+                        aftermath.push_back(copy);
+                    }
+                    else
+                    {
+                        ++lost;
+                    }
                 }
-                stats.spilled += static_cast<std::uint32_t>(batch.size());
+                if (lost != 0U)
+                {
+                    stats.dropped += lost;
+                    world.report(ecs::World::Report::Error,
+                                 "intents: the aftermath copy could not be allocated; %u "
+                                 "intent(s) dropped",
+                                 static_cast<unsigned>(lost));
+                }
+                stats.spilled += static_cast<std::uint32_t>(batch.size()) - lost;
                 break;
             }
             ++stats.waves;
