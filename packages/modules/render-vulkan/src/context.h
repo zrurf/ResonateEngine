@@ -510,6 +510,9 @@ class Context
     bool surface_failed_ = false;
     bool device_failed_ = false;
     bool platform_unsupported_ = false;
+    /* A fence that timed out leaves work in flight; every later frame is
+       refused rather than rewriting the command buffer under it. */
+    bool device_lost_ = false;
 };
 
 /* Defined in context.cpp: the shared 1x-fallback sample-count mapper, used by

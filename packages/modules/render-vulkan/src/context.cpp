@@ -509,6 +509,9 @@ void Context::tracePreviousTexel()
     {
         return;
     }
+    /* The GPU wrote the trace buffer; host memory is not necessarily
+       coherent. */
+    (void)vmaInvalidateAllocation(allocator_, trace_allocation_, 0, VK_WHOLE_SIZE);
     const std::size_t slot = frame_ % kFramesInFlight;
     const auto* texel = static_cast<const std::uint8_t*>(mapped) + slot * 16U;
     std::fprintf(stderr, "render-vulkan: frame %u texel %u,%u,%u\n", trace_frames_[slot],
@@ -2291,6 +2294,10 @@ ResonateStatus Context::setPresentMode(uint32_t mode)
 
 ResonateStatus Context::beginFrame()
 {
+    if (device_lost_)
+    {
+        return RESONATE_E_STATE;
+    }
     if ((swapchain_ == VK_NULL_HANDLE && !offscreen_) || frame_open_)
     {
         return RESONATE_E_STATE;
@@ -2331,7 +2338,9 @@ ResonateStatus Context::beginFrame()
                                                 5ULL * 1000ULL * 1000ULL * 1000ULL);
         if (waited == VK_TIMEOUT)
         {
-            frame.fence_pending = false;
+            /* The command buffer may still be executing; the device is written
+               off so no later frame rewrites it under the GPU. */
+            device_lost_ = true;
             note(device_failed_, "the GPU did not finish the previous frame within five seconds");
             return RESONATE_E_STATE;
         }
@@ -3088,6 +3097,7 @@ ResonateStatus Context::present()
         void* mapped = nullptr;
         if (vmaMapMemory(allocator_, debug_canvas_allocation_, &mapped) == VK_SUCCESS)
         {
+            (void)vmaInvalidateAllocation(allocator_, debug_canvas_allocation_, 0, VK_WHOLE_SIZE);
             const auto* pixel = static_cast<const std::uint8_t*>(mapped);
             std::fprintf(stderr, "render-vulkan: canvas centre %u,%u,%u,%u\n", pixel[0],
                          pixel[1], pixel[2], pixel[3]);
@@ -3193,12 +3203,21 @@ ResonateStatus Context::readbackCanvas(void* data, uint64_t size_bytes, uint32_t
                          1, &to_color);
 
     vkEndCommandBuffer(aux_command_);
-    const ResonateStatus status = submitAndRun(aux_command_);
+    ResonateStatus status = submitAndRun(aux_command_);
     if (status == RESONATE_OK)
     {
-        std::memcpy(data, allocation_info.pMappedData, static_cast<std::size_t>(tight));
-        *out_width = extent_.width;
-        *out_height = extent_.height;
+        /* The staging allocation is host-visible, not necessarily coherent; the
+           copy's writes become visible to the CPU only through an invalidate. */
+        if (vmaInvalidateAllocation(allocator_, allocation, 0, tight) != VK_SUCCESS)
+        {
+            status = RESONATE_E_INTERNAL;
+        }
+        else
+        {
+            std::memcpy(data, allocation_info.pMappedData, static_cast<std::size_t>(tight));
+            *out_width = extent_.width;
+            *out_height = extent_.height;
+        }
     }
     vmaDestroyBuffer(allocator_, staging, allocation);
     return status;
