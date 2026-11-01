@@ -217,6 +217,19 @@ struct EditorState
     std::string machine_entry_mirror{};
     Entity machine_loop_button{};
     Entity machine_clip_button{};
+    /* A node drag: pressed on a box, the handler captures the pointer and
+       moves the box live; the release latches the commit for the tick. */
+    bool node_dragging = false;
+    Entity node_drag_entity{};
+    float node_press_x = 0.0F;
+    float node_press_y = 0.0F;
+    float node_rect_x = 0.0F;
+    float node_rect_y = 0.0F;
+    std::string node_drag_before{};
+    Entity node_commit_entity{};
+    float node_commit_x = 0.0F;
+    float node_commit_y = 0.0F;
+    bool node_commit_pending = false;
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -568,6 +581,10 @@ void selectRow(resonate::ecs::World& world, Entity container, Entity row)
     }
 }
 
+bool machineNodeEvent(void* context, resonate::ecs::World& world,
+                      resonate::ecs::Entity widget, resonate::ui::EventPhase phase,
+                      resonate::ui::Event& event);
+
 /* Rebuilds the machine pane's rows from the selected object's stored
    fragment: one row per state and one per transition, captions carrying the
    authoring. Rows are derived state, so the pane rebuilds whole. */
@@ -651,6 +668,15 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
             rect->y = y;
             (void)world.markChanged<resonate::ui::RectTransform>(node);
         }
+        (void)world.add(node,
+                        resonate::ui::Listener{&machineNodeEvent, &state,
+                                               static_cast<std::uint16_t>(
+                                                   resonate::ui::eventBit(
+                                                       resonate::ui::EventKind::PointerDown) |
+                                                   resonate::ui::eventBit(
+                                                       resonate::ui::EventKind::PointerMove) |
+                                                   resonate::ui::eventBit(
+                                                       resonate::ui::EventKind::PointerUp))});
         state.machine_state_rows.push_back(node);
         ++state_index;
     }
@@ -1889,6 +1915,76 @@ bool machineCycleClip(void* context, resonate::ecs::World&, resonate::ecs::Entit
     return true;
 }
 
+/* A node box's pointer life: press captures the pointer and snapshots the
+   fragment, moves drag the box live, the release latches the commit (the tick
+   writes the position into the model and pushes the undo entry). */
+bool machineNodeEvent(void* context, resonate::ecs::World& world,
+                      resonate::ecs::Entity widget, resonate::ui::EventPhase phase,
+                      resonate::ui::Event& event)
+{
+    auto* state = static_cast<EditorState*>(context);
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    if (event.kind == resonate::ui::EventKind::PointerDown)
+    {
+        state->node_dragging = true;
+        state->node_drag_entity = widget;
+        state->node_press_x = event.x;
+        state->node_press_y = event.y;
+        if (const auto* rect = world.get<resonate::ui::RectTransform>(widget))
+        {
+            state->node_rect_x = rect->x;
+            state->node_rect_y = rect->y;
+        }
+        state->node_drag_before.clear();
+        if (const auto* source =
+                world.get<resonate::scene::MachineSource>(state->machine_shown_entity);
+            source != nullptr && world.alive(source->text) &&
+            world.alive(state->machine_shown_entity))
+        {
+            const auto* bytes = static_cast<const char*>(world.blobData(source->text));
+            const std::size_t size = world.blobSize(source->text);
+            if (bytes != nullptr && size != 0U)
+            {
+                state->node_drag_before.assign(bytes, size);
+            }
+        }
+        (void)resonate::ui::capturePointer(world, state->canvas, widget);
+        return true;
+    }
+    if (state->node_dragging && state->node_drag_entity == widget &&
+        event.kind == resonate::ui::EventKind::PointerMove)
+    {
+        if (auto* rect = world.get<resonate::ui::RectTransform>(widget))
+        {
+            rect->x = state->node_rect_x + (event.x - state->node_press_x);
+            rect->y = state->node_rect_y + (event.y - state->node_press_y);
+            (void)world.markChanged<resonate::ui::RectTransform>(widget);
+        }
+        return true;
+    }
+    if (state->node_dragging && state->node_drag_entity == widget &&
+        event.kind == resonate::ui::EventKind::PointerUp)
+    {
+        float x = state->node_rect_x;
+        float y = state->node_rect_y;
+        if (const auto* rect = world.get<resonate::ui::RectTransform>(widget))
+        {
+            x = rect->x;
+            y = rect->y;
+        }
+        state->node_commit_entity = widget;
+        state->node_commit_x = x;
+        state->node_commit_y = y;
+        state->node_commit_pending = true;
+        state->node_dragging = false;
+        return true;
+    }
+    return false;
+}
+
 /* One axis of the position: the field shows it, a typed number writes it.
    A field that does not parse keeps its text and is not retried until the
    next edit. Each accepted write pushes one undo entry whose closures also
@@ -2208,6 +2304,53 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
                             writeMachineFragment(target, entity, after);
                             rebuildMachineRows(*state, target);
                         });
+                }
+            }
+        }
+    }
+    if (state->node_commit_pending)
+    {
+        state->node_commit_pending = false;
+        const Entity node = state->node_commit_entity;
+        if (node.valid() && world.alive(node))
+        {
+            const auto node_at = std::find(state->machine_state_rows.begin(),
+                                           state->machine_state_rows.end(), node);
+            if (node_at != state->machine_state_rows.end())
+            {
+                resonate::scene::MachineModel model;
+                std::string parse_error;
+                if (!state->node_drag_before.empty() &&
+                    resonate::scene::parseMachineFragment(state->node_drag_before, model,
+                                                          parse_error))
+                {
+                    const std::size_t index = static_cast<std::size_t>(
+                        node_at - state->machine_state_rows.begin());
+                    if (index < model.states.size())
+                    {
+                        model.states[index].x = std::to_string(state->node_commit_x);
+                        model.states[index].y = std::to_string(state->node_commit_y);
+                        const std::string after =
+                            resonate::scene::serializeMachineFragment(model);
+                        if (after != state->node_drag_before)
+                        {
+                            writeMachineFragment(world, node, after);
+                            pushUndo(
+                                *state,
+                                localized("editor.move") + " " + model.states[index].name,
+                                [state, node, before = state->node_drag_before](
+                                    resonate::ecs::World& target)
+                                {
+                                    writeMachineFragment(target, node, before);
+                                    rebuildMachineRows(*state, target);
+                                },
+                                [state, node, after](resonate::ecs::World& target)
+                                {
+                                    writeMachineFragment(target, node, after);
+                                    rebuildMachineRows(*state, target);
+                                });
+                        }
+                    }
                 }
             }
         }
