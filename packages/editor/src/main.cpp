@@ -161,6 +161,11 @@ struct EditorState
     bool machine_add_state_pending = false;
     bool machine_add_transition_pending = false;
     bool machine_delete_pending = false;
+    bool machine_loop_pending = false;
+    /* The entry field mirrors the machine's entry; a diff commits an edit. */
+    Entity machine_entry_field{};
+    std::string machine_entry_mirror{};
+    Entity machine_loop_button{};
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -559,6 +564,10 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
         }
     }
     (void)resonate::ui::setShown(world, state.machine_empty, !has_machine);
+    std::string entry_error;
+    (void)resonate::ui::setText(world, state.canvas, state.machine_entry_field, model.entry,
+                                entry_error);
+    state.machine_entry_mirror = model.entry;
     if (!has_machine)
     {
         return;
@@ -1677,6 +1686,17 @@ bool machineDelete(void* context, resonate::ecs::World&, resonate::ecs::Entity,
     return true;
 }
 
+bool machineCycleLoop(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+                      resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->machine_loop_pending = true;
+    return true;
+}
+
 /* One axis of the position: the field shows it, a typed number writes it.
    A field that does not parse keeps its text and is not retried until the
    next edit. Each accepted write pushes one undo entry whose closures also
@@ -1783,6 +1803,114 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         state->duplicate_pending = false;
         duplicateSelected(*state, world);
+    }
+    /* The entry field commits like the inspector's mirrors: a text that
+       differs from the mirror is one edit, applied to the selected machine's
+       model and pushed as an undo entry. */
+    if (state->machine_entry_field.valid())
+    {
+        const std::string entry_text =
+            resonate::ui::widgetText(world, state->machine_entry_field);
+        if (entry_text != state->machine_entry_mirror)
+        {
+            state->machine_entry_mirror = entry_text;
+            const Entity entity = state->machine_shown_entity;
+            if (entity.valid() && world.alive(entity))
+            {
+                std::string before;
+                if (const auto* source = world.get<resonate::scene::MachineSource>(entity);
+                    source != nullptr && world.alive(source->text))
+                {
+                    const auto* bytes =
+                        static_cast<const char*>(world.blobData(source->text));
+                    const std::size_t size = world.blobSize(source->text);
+                    if (bytes != nullptr && size != 0U)
+                    {
+                        before.assign(bytes, size);
+                    }
+                }
+                resonate::scene::MachineModel model;
+                std::string parse_error;
+                if (!before.empty() &&
+                    resonate::scene::parseMachineFragment(before, model, parse_error))
+                {
+                    model.entry = entry_text;
+                    const std::string after =
+                        resonate::scene::serializeMachineFragment(model);
+                    if (after != before)
+                    {
+                        writeMachineFragment(world, entity, after);
+                        rebuildMachineRows(*state, world);
+                        pushUndo(
+                            *state, localized("editor.entry") + " " + entry_text,
+                            [&state, entity, before](resonate::ecs::World& target)
+                            {
+                                writeMachineFragment(target, entity, before);
+                                rebuildMachineRows(*state, target);
+                            },
+                            [&state, entity, after](resonate::ecs::World& target)
+                            {
+                                writeMachineFragment(target, entity, after);
+                                rebuildMachineRows(*state, target);
+                            });
+                    }
+                }
+            }
+        }
+    }
+    if (state->machine_loop_pending)
+    {
+        state->machine_loop_pending = false;
+        const Entity entity = state->machine_shown_entity;
+        const Entity selected = resonate::ui::selectedChild(world, state->machine_list);
+        const auto state_at =
+            std::find(state->machine_state_rows.begin(), state->machine_state_rows.end(),
+                      selected);
+        if (entity.valid() && world.alive(entity) &&
+            state_at != state->machine_state_rows.end())
+        {
+            const std::size_t index =
+                static_cast<std::size_t>(state_at - state->machine_state_rows.begin());
+            std::string before;
+            if (const auto* source = world.get<resonate::scene::MachineSource>(entity);
+                source != nullptr && world.alive(source->text))
+            {
+                const auto* bytes = static_cast<const char*>(world.blobData(source->text));
+                const std::size_t size = world.blobSize(source->text);
+                if (bytes != nullptr && size != 0U)
+                {
+                    before.assign(bytes, size);
+                }
+            }
+            resonate::scene::MachineModel model;
+            std::string parse_error;
+            if (!before.empty() &&
+                resonate::scene::parseMachineFragment(before, model, parse_error) &&
+                index < model.states.size())
+            {
+                resonate::scene::MachineModelState& machine_state = model.states[index];
+                machine_state.looping =
+                    machine_state.looping == "false" ? "true" : "false";
+                const std::string after =
+                    resonate::scene::serializeMachineFragment(model);
+                writeMachineFragment(world, entity, after);
+                rebuildMachineRows(*state, world);
+                pushUndo(
+                    *state,
+                    localized("editor.looping") + " " + machine_state.name + " " +
+                        machine_state.looping,
+                    [&state, entity, before](resonate::ecs::World& target)
+                    {
+                        writeMachineFragment(target, entity, before);
+                        rebuildMachineRows(*state, target);
+                    },
+                    [&state, entity, after](resonate::ecs::World& target)
+                    {
+                        writeMachineFragment(target, entity, after);
+                        rebuildMachineRows(*state, target);
+                    });
+            }
+        }
     }
     if (state->machine_add_state_pending || state->machine_add_transition_pending ||
         state->machine_delete_pending)
@@ -2328,6 +2456,9 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->machine_add_transition =
         resonate::ui::findByKey(world, canvas, "machine-add-transition");
     state->machine_delete = resonate::ui::findByKey(world, canvas, "machine-delete");
+    state->machine_entry_field =
+        resonate::ui::findByKey(world, canvas, "machine-entry-field");
+    state->machine_loop_button = resonate::ui::findByKey(world, canvas, "machine-loop");
     state->splitter_console = resonate::ui::findByKey(world, canvas, "splitter-console");
     state->inspector = resonate::ui::findByKey(world, canvas, "inspector");
     state->console_pane = resonate::ui::findByKey(world, canvas, "console");
@@ -2377,6 +2508,7 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     attachClick("machine-add-state", &machineAddState);
     attachClick("machine-add-transition", &machineAddTransition);
     attachClick("machine-delete", &machineDelete);
+    attachClick("machine-loop", &machineCycleLoop);
     state->status_fps = resonate::ui::findByKey(world, canvas, "status-fps");
     state->animation_value = resonate::ui::findByKey(world, canvas, "animation-value");
     if (const std::string products = productsPath(); !products.empty())

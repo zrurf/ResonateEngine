@@ -162,6 +162,16 @@
       <Label key="machine-header" class="pane-title" height="28" text="状态机"
              font_size="12" font_weight="600" v_align="Middle" padding_left="12"/>
       <Box key="machine-header-line" class="separator" height="1"/>
+      <Panel key="machine-entry-row" height="24" direction="Row" align="Center" gap="8"
+             padding_left="12" padding_right="12">
+        <Label key="machine-entry-title" class="prop-label" width="76" height="24" text="入口"
+               font_size="12" v_align="Middle"/>
+        <Label key="machine-entry-field" class="field label" text="" font_size="12" height="24"
+               v_align="Middle" padding_left="6">
+          <Input/>
+          <LayoutItem grow="1"/>
+        </Label>
+      </Panel>
       <Label key="machine-empty" class="label-dim" height="22" text="选中带状态机的对象"
              font_size="12" v_align="Middle" padding_left="12"/>
       <Panel key="machine-buttons" position="Absolute" x="0" y="-32" width="0" height="30"
@@ -177,6 +187,10 @@
         </Button>
         <Button key="machine-delete" class="button" width="76" height="24">
           <Label key="machine-delete-label" class="label" width="76" height="24" text="删除所选"
+                 font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
+        </Button>
+        <Button key="machine-loop" class="button" width="56" height="24">
+          <Label key="machine-loop-label" class="label" width="56" height="24" text="循环"
                  font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
         </Button>
       </Panel>
