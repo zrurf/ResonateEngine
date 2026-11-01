@@ -736,14 +736,9 @@ void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player,
 
     ecs::Entity root{};
     std::string error;
-    if (!scene::instantiate(world, *document, &contentComponents(), root, error, &out_roots))
-    {
-        std::fprintf(stderr, "resonate: scene: %s: %s\n", path.c_str(), error.c_str());
-        return;
-    }
 
-    /* The authored clips resolve through the products manifest the asset
-       indexer wrote; a scene without animation needs none. */
+    /* The manifest loads before the scene: the adapter resolves machine clips
+       through it while instantiating. */
     if (player != nullptr)
     {
         const char* const staged_products = std::getenv("RESONATE_PRODUCTS");
@@ -759,6 +754,13 @@ void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player,
                 std::fprintf(stderr, "resonate: animation: %s\n", products_error.c_str());
             }
         }
+    }
+
+    if (!scene::instantiate(world, *document, &contentComponents(), root, error, &out_roots,
+                            player))
+    {
+        std::fprintf(stderr, "resonate: scene: %s: %s\n", path.c_str(), error.c_str());
+        return;
     }
 
     /* The cluster acceptance wants a hundred lights and change: a ceiling grid

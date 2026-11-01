@@ -8,7 +8,7 @@ target("Resonate.Scene")
     add_includedirs("include", {public = true})
     add_files("src/**.cpp")
 
-    add_deps("Resonate.Document", "Resonate.Document.Bind", "Resonate.ECS",
+    add_deps("Resonate.Animation", "Resonate.Document", "Resonate.Document.Bind", "Resonate.ECS",
              "Resonate.Hierarchy", "Resonate.Render", "Resonate.Runtime",
              "Resonate.Core.Math")
 

@@ -50,10 +50,11 @@ bool attachKey(ecs::World& world, ecs::Entity entity, std::uint64_t hash, std::s
     return true;
 }
 
-ecs::Entity instantiateObject(ecs::World& world, const dom::Document& document,
+ecs::Entity instantiateObject(ecs::World& world, dom::Document& document,
                               dom::NodeHandle node, const dom::ComponentRegistry* components,
                               const ResourceAliases* aliases, ecs::CommandBuffer& commands,
-                              const ecs::Entity parent, std::string& error)
+                              const ecs::Entity parent, animation::AnimationPlayer* player,
+                              std::string& error)
 {
     const ecs::Entity entity = world.create();
     if (!entity.valid())
@@ -105,8 +106,7 @@ ecs::Entity instantiateObject(ecs::World& world, const dom::Document& document,
         }
         if (component_name == "Animation")
         {
-            if (!applyAnimation(world, document, component, *descriptor, aliases, entity,
-                                error))
+            if (!applyAnimation(world, document, component, *descriptor, aliases, entity, error))
             {
                 error = "node '" + std::string(nodeLabel(document, node)) + "': " + error;
                 return ecs::Entity{};
@@ -147,6 +147,15 @@ ecs::Entity instantiateObject(ecs::World& world, const dom::Document& document,
     for (dom::NodeHandle child = document.firstChild(node); child.valid();
          child = document.nextSibling(child))
     {
+        if (document.text(document.type(child)) == "Machine")
+        {
+            if (!applyMachine(world, document, child, aliases, entity, player, error))
+            {
+                error = "node '" + std::string(nodeLabel(document, node)) + "': " + error;
+                return ecs::Entity{};
+            }
+            continue;
+        }
         if (document.text(document.type(child)) != "Object")
         {
             error = "node '" + std::string(nodeLabel(document, node)) + "': a scene's children "
@@ -154,7 +163,7 @@ ecs::Entity instantiateObject(ecs::World& world, const dom::Document& document,
             return ecs::Entity{};
         }
         if (!instantiateObject(world, document, child, components, aliases, commands, entity,
-                               error)
+                               player, error)
                  .valid())
         {
             return ecs::Entity{};
@@ -244,7 +253,8 @@ ecs::Entity findByKey(ecs::World& world, ecs::Entity root, std::string_view key)
 bool instantiateUnder(ecs::World& world, dom::Document& document,
                       const dom::ComponentRegistry* components, ecs::Entity parent,
                       ecs::Entity& out_root, std::string& error,
-                      std::vector<ecs::Entity>* out_roots)
+                      std::vector<ecs::Entity>* out_roots,
+                      animation::AnimationPlayer* player)
 {
     out_root = ecs::Entity{};
     /* The adapter's own components ride on keyed objects and aliased materials;
@@ -291,7 +301,7 @@ bool instantiateUnder(ecs::World& world, dom::Document& document,
         }
         const ecs::Entity entity =
             instantiateObject(world, document, child, components, &aliases, commands, parent,
-                              error);
+                              player, error);
         if (!entity.valid())
         {
             return false;
@@ -312,10 +322,11 @@ bool instantiateUnder(ecs::World& world, dom::Document& document,
 
 bool instantiate(ecs::World& world, dom::Document& document,
                  const dom::ComponentRegistry* components, ecs::Entity& out_root,
-                 std::string& error, std::vector<ecs::Entity>* out_roots)
+                 std::string& error, std::vector<ecs::Entity>* out_roots,
+                 animation::AnimationPlayer* player)
 {
     return instantiateUnder(world, document, components, ecs::Entity{}, out_root, error,
-                            out_roots);
+                            out_roots, player);
 }
 
 } // namespace resonate::scene

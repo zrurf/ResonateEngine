@@ -15,6 +15,38 @@
         "  field looping bool @16 size 1 default=true",
         "  field speed f32 @20 size 4 default=1"
       ]
+    },
+    {
+      "name": "Machine",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Machine version 1",
+        "  field entry string"
+      ]
+    },
+    {
+      "name": "State",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node State version 1",
+        "  field clip string",
+        "  field looping string"
+      ]
+    },
+    {
+      "name": "Transition",
+      "kind": "node",
+      "version": 1,
+      "shape": [
+        "node Transition version 1",
+        "  field from string",
+        "  field to string",
+        "  field at_end string",
+        "  field fade string",
+        "  field sync string"
+      ]
     }
   ]
 }

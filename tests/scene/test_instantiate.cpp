@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -705,6 +706,102 @@ TEST_CASE("scene: an Animation component round trips as an asset id", "[scene]")
     CHECK(again->clip_low == authored->clip_low);
     CHECK(again->clip_high == authored->clip_high);
     CHECK(again->speed == 2.0F);
+}
+
+TEST_CASE("scene: an authored Machine builds a running state machine", "[scene][animation]")
+{
+    /* Two clips in a throwaway content root; the manifest names both. */
+    const std::filesystem::path staged = std::filesystem::temp_directory_path() /
+                                         "resonate_machine_test";
+    std::filesystem::create_directories(staged);
+    {
+        std::ofstream out(staged / "bob.rclip", std::ios::binary);
+        out << "<clip duration=\"2\">\n  <track field=\"position\">\n"
+               "    <key t=\"0\" value=\"0 0.5 2.5\"/>\n"
+               "    <key t=\"2\" value=\"0 0.5 2.5\"/>\n  </track>\n</clip>\n";
+    }
+    {
+        std::ofstream out(staged / "spin.rclip", std::ios::binary);
+        out << "<clip duration=\"3\">\n  <track field=\"rotation\">\n"
+               "    <key t=\"0\" value=\"0 0 0 1\"/>\n"
+               "    <key t=\"3\" value=\"0 0 0 1\"/>\n  </track>\n</clip>\n";
+    }
+    {
+        std::ofstream out(staged / "products.toml", std::ios::binary);
+        out << "[[product]]\nguid = \"0704c7df-7013-4c31-818d-b515207bb7df\"\n"
+               "sub_id = 1\npath = \"bob.rclip\"\n"
+               "[[product]]\nguid = \"123e4567-e89b-42d3-a456-426614174000\"\n"
+               "sub_id = 1\npath = \"spin.rclip\"\n";
+    }
+
+    constexpr const char* kMachine = R"xml(<document version="1" schemas="resonate.scene">
+  <Scene key="yard">
+    <Object key="crate">
+      <Machine entry="spin">
+        <State name="bob" clip="@0704c7df-7013-4c31-818d-b515207bb7df"/>
+        <State name="spin" clip="@123e4567-e89b-42d3-a456-426614174000"/>
+        <Transition from="bob" to="spin" at_end="true" fade="0.4"/>
+      </Machine>
+    </Object>
+  </Scene>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kMachine, &sceneSchemas(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    Fixture fixture;
+    REQUIRE(resonate::ui::registerComponents(fixture.world));
+    resonate::animation::AnimationPlayer player;
+    std::string manifest_error;
+    REQUIRE(player.loadManifest((staged / "products.toml").string(), manifest_error));
+
+    Entity root{};
+    std::string error;
+    const bool ok = resonate::scene::instantiate(fixture.world, *document, &sceneComponents(),
+                                                 root, error, nullptr, &player);
+    INFO("instantiate error: " << error);
+    REQUIRE(ok);
+    const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
+    REQUIRE(crate.valid());
+
+    /* The machine is the player's, the state is driven, and the entry is the
+       state `entry` named. */
+    const auto* machine_state = fixture.world.get<resonate::animation::MachineState>(crate);
+    REQUIRE(machine_state != nullptr);
+    const resonate::animation::StateMachine* definition =
+        player.machine(machine_state->machine);
+    REQUIRE(definition != nullptr);
+    REQUIRE(definition->states.size() == 2U);
+    CHECK(definition->initial == 1U);
+    CHECK(definition->states[0].duration == 2.0F);
+    CHECK(definition->states[1].duration == 3.0F);
+    REQUIRE(definition->transitions.size() == 1U);
+    CHECK(definition->transitions[0].from == 0U);
+    CHECK(definition->transitions[0].to == 1U);
+    CHECK(definition->transitions[0].at_end_only);
+
+    const auto* state = fixture.world.get<resonate::animation::AnimationState>(crate);
+    REQUIRE(state != nullptr);
+    CHECK(state->driven);
+    CHECK(state->clip == definition->states[definition->initial].clip);
+
+    /* An unknown entry or state reference is refused with the name. */
+    constexpr const char* kBroken = R"xml(<document version="1" schemas="resonate.scene">
+  <Scene key="yard">
+    <Object key="crate">
+      <Machine entry="nope">
+        <State name="bob" clip="@0704c7df-7013-4c31-818d-b515207bb7df"/>
+      </Machine>
+    </Object>
+  </Scene>
+</document>)xml";
+    auto broken = resonate::dom::Document::parse(kBroken, &sceneSchemas(), diagnostics);
+    REQUIRE(broken != nullptr);
+    Entity broken_root{};
+    CHECK_FALSE(resonate::scene::instantiate(fixture.world, *broken, &sceneComponents(),
+                                             broken_root, error, nullptr, &player));
+    CHECK(error.find("nope") != std::string::npos);
 }
 
 TEST_CASE("scene: a malformed document is refused with a reason", "[scene]")

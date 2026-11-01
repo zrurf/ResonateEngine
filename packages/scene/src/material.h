@@ -5,6 +5,7 @@
 #include <string_view>
 #include <unordered_map>
 
+#include <resonate/animation/player.h>
 #include <resonate/asset/identity.h>
 #include <resonate/dom/document.h>
 #include <resonate/dom/schema.h>
@@ -38,6 +39,14 @@ bool applyMaterial(ecs::World& world, const dom::Document& document,
 bool applyAnimation(ecs::World& world, const dom::Document& document,
                     const dom::Component& component, const dom::ComponentDesc& descriptor,
                     const ResourceAliases* aliases, ecs::Entity entity, std::string& error);
+
+/* A <Machine> child of an Object: states name clips by asset reference, edges
+   cross-fade, and `entry` names the starting state (the first state without
+   it). The player owns the built definition and resolves the clip ids; the
+   object's AnimationState becomes driven. */
+bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle node,
+                  const ResourceAliases* aliases, ecs::Entity entity,
+                  animation::AnimationPlayer* player, std::string& error);
 
 } // namespace resonate::scene
 

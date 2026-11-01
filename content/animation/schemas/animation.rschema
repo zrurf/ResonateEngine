@@ -13,4 +13,26 @@
     <field name="speed" type="f32" default="1"/>
   </component>
 
+  <!-- An authored state machine: a Machine element inside an Object, whose
+       states name clips by asset reference and whose edges cross-fade. The
+       numbers and flags author as strings and the scene adapter parses them;
+       node authoring fields are text only. -->
+  <node name="Machine" version="1">
+    <field name="entry" type="string"/>
+  </node>
+
+  <!-- The state's name is the core `name` attribute, like an Object's. -->
+  <node name="State" version="1">
+    <field name="clip" type="string"/>
+    <field name="looping" type="string"/>
+  </node>
+
+  <node name="Transition" version="1">
+    <field name="from" type="string"/>
+    <field name="to" type="string"/>
+    <field name="at_end" type="string"/>
+    <field name="fade" type="string"/>
+    <field name="sync" type="string"/>
+  </node>
+
 </schema>
