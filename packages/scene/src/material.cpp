@@ -235,6 +235,33 @@ bool applyAnimation(ecs::World& world, const dom::Document& document,
     return true;
 }
 
+/* Escapes one attribute value for the stored fragment. */
+std::string escapeAttribute(std::string_view text)
+{
+    std::string out;
+    for (const char character : text)
+    {
+        switch (character)
+        {
+        case '&':
+            out += "&amp;";
+            break;
+        case '<':
+            out += "&lt;";
+            break;
+        case '>':
+            out += "&gt;";
+            break;
+        case '"':
+            out += "&quot;";
+            break;
+        default:
+            out.push_back(character);
+        }
+    }
+    return out;
+}
+
 bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle node,
                   const ResourceAliases* aliases, ecs::Entity entity,
                   animation::AnimationPlayer* player, std::string& error)
@@ -247,7 +274,17 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
     animation::StateMachine machine;
     std::map<std::string, std::uint16_t> names;
     std::string entry_name;
-    /* States first: edges resolve against the table they build. */
+    /* The authored element, rebuilt from what the document actually said: the
+       built definition lives in the player, so this text is what a capture
+       writes back. */
+    std::string fragment = "<Machine";
+    if (const dom::Field* entry = document.property(node, document.intern("entry"));
+        entry != nullptr && !entry->value.empty())
+    {
+        entry_name.assign(entry->value);
+        fragment += " entry=\"" + escapeAttribute(entry->value) + "\"";
+    }
+    fragment += ">\n";
     for (dom::NodeHandle child = document.firstChild(node); child.valid();
          child = document.nextSibling(child))
     {
@@ -269,20 +306,17 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
             error = "the Machine names state '" + name + "' twice";
             return false;
         }
-        bool looping = true;
+        std::string looping_text;
         if (const dom::Field* authored = document.property(child, document.intern("looping"));
             authored != nullptr)
         {
-            if (authored->value == "false")
-            {
-                looping = false;
-            }
-            else if (authored->value != "true")
+            if (authored->value != "true" && authored->value != "false")
             {
                 error = "the state '" + name + "' has looping='" + std::string(authored->value) +
                         "'; it is true or false";
                 return false;
             }
+            looping_text.assign(authored->value);
         }
         asset::AssetId id{};
         const std::string_view reference = clip->value;
@@ -315,19 +349,23 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
         }
         const animation::Clip* played = player->clip(clip_index);
         machine.states.push_back(
-            animation::State{clip_index, played != nullptr ? played->duration : 0.0F, looping});
+            animation::State{clip_index, played != nullptr ? played->duration : 0.0F,
+                             looping_text.empty() || looping_text == "true"});
         names.emplace(name, static_cast<std::uint16_t>(machine.states.size() - 1U));
+        fragment += "  <State name=\"" + escapeAttribute(name) + "\" clip=\"" +
+                    escapeAttribute(clip->value) + "\"";
+        if (!looping_text.empty())
+        {
+            fragment += " looping=\"" + looping_text + "\"";
+        }
+        fragment += "/>\n";
     }
     if (machine.states.empty())
     {
         error = "the Machine has no states";
         return false;
     }
-    if (const dom::Field* entry = document.property(node, document.intern("entry"));
-        entry != nullptr && !entry->value.empty())
-    {
-        entry_name.assign(entry->value);
-    }
+    std::fprintf(stderr, "DBG machine states=%zu\n", machine.states.size());
     const auto entry_found = names.find(entry_name);
     if (!entry_name.empty() && entry_found == names.end())
     {
@@ -359,15 +397,24 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
             continue;
         }
         animation::Transition edge;
+        std::string from_text;
+        std::string to_text;
         const dom::Field* from = document.property(child, document.intern("from"));
         const dom::Field* to = document.property(child, document.intern("to"));
-        if (from == nullptr || to == nullptr ||
-            !stateIndex(std::string(from->value), edge.from) ||
-            !stateIndex(std::string(to->value), edge.to))
+        if (from == nullptr || to == nullptr)
+        {
+            error = "a Machine transition needs from and to";
+            return false;
+        }
+        from_text.assign(from->value);
+        to_text.assign(to->value);
+        if (!stateIndex(from_text, edge.from) || !stateIndex(to_text, edge.to))
         {
             error = "a Machine transition names an unknown state";
             return false;
         }
+        fragment += "  <Transition from=\"" + escapeAttribute(from_text) + "\" to=\"" +
+                    escapeAttribute(to_text) + "\"";
         if (const dom::Field* authored = document.property(child, document.intern("at_end"));
             authored != nullptr)
         {
@@ -377,12 +424,13 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
                 return false;
             }
             edge.at_end_only = authored->value == "true";
+            fragment += " at_end=\"" + authored->value + "\"";
         }
         if (const dom::Field* authored = document.property(child, document.intern("fade"));
             authored != nullptr)
         {
-            edge.fade_seconds =
-                std::strtof(std::string(authored->value).c_str(), nullptr);
+            edge.fade_seconds = std::strtof(std::string(authored->value).c_str(), nullptr);
+            fragment += " fade=\"" + escapeAttribute(authored->value) + "\"";
         }
         if (const dom::Field* authored = document.property(child, document.intern("sync"));
             authored != nullptr)
@@ -393,13 +441,17 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
                 return false;
             }
             edge.sync = authored->value == "true";
+            fragment += " sync=\"" + authored->value + "\"";
         }
+        fragment += "/>\n";
         machine.transitions.push_back(edge);
     }
     if (!machine.validate(error))
     {
         return false;
     }
+    fragment += "</Machine>";
+
     const std::uint16_t initial = machine.initial;
     const animation::State& entry_state = machine.states[initial];
     const std::uint32_t machine_index = player->addMachine(std::move(machine));
@@ -407,7 +459,10 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
     state.clip = entry_state.clip;
     state.looping = entry_state.looping;
     state.driven = true;
+    const ecs::BlobHandle text = world.createBlob(entity, fragment.size(), fragment.data());
     if (world.add(entity, state) == nullptr ||
+        text == ecs::BlobHandle{} ||
+        world.add(entity, scene::MachineSource{text}) == nullptr ||
         world.add(entity, animation::MachineState{machine_index, animation::MachineRuntime{}}) ==
             nullptr)
     {
@@ -416,4 +471,5 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
     }
     return true;
 }
+
 } // namespace resonate::scene

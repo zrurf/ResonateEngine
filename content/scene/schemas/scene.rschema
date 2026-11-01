@@ -36,6 +36,13 @@
     <field name="text" type="blob"/>
   </component>
 
+  <!-- The authored <Machine> element an object carries, kept as text so a
+       capture writes the machine back (the built definition lives in the
+       player, not on the entity). Runtime data the adapter attaches. -->
+  <component name="MachineSource" version="1" derived="true">
+    <field name="text" type="blob"/>
+  </component>
+
   <!-- One entity. Nesting is parenting: an Object inside an Object is its
        child. `key` is the stable id applications resolve, `name` the display
        name. -->

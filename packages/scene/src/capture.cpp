@@ -277,10 +277,6 @@ void appendComponents(std::string& out, ecs::World& world, ecs::Entity entity)
         for (std::size_t index = 0U; index < table.count; ++index)
         {
             const dom::ComponentDesc& descriptor = table.descs[index];
-            if (!capturable(descriptor))
-            {
-                continue;
-            }
             const ecs::ComponentIndex component =
                 world.findComponent(descriptor.qualified_name);
             if (component == ecs::kInvalidComponent)
@@ -292,8 +288,28 @@ void appendComponents(std::string& out, ecs::World& world, ecs::Entity entity)
             {
                 continue;
             }
-            const auto* base = static_cast<const std::byte*>(bytes);
-            const auto* defaults = static_cast<const std::byte*>(descriptor.defaults);
+            /* The authored Machine element travels beside the runtime state:
+               the built definition lives in the player, so the capture writes
+               the stored fragment instead of inventing one. Derived, so it
+               sits ahead of the capturable filter. */
+            if (std::string_view(descriptor.qualified_name) == "resonate.scene.MachineSource")
+            {
+                const auto* source = static_cast<const scene::MachineSource*>(bytes);
+                const std::string_view text = blobText(world, source->text);
+                for (std::size_t at = 0U; at < text.size();)
+                {
+                    const std::size_t line_end = text.find('\n', at);
+                    const std::size_t stop =
+                        line_end == std::string_view::npos ? text.size() : line_end;
+                    out += "      " + std::string(text.substr(at, stop - at)) + "\n";
+                    at = stop + 1U;
+                }
+                continue;
+            }
+            if (!capturable(descriptor))
+            {
+                continue;
+            }
             const bool material = std::string_view(descriptor.name) == "Material";
             const bool animation = std::string_view(descriptor.qualified_name) ==
                                    "resonate.animation.Animation";
@@ -317,6 +333,8 @@ void appendComponents(std::string& out, ecs::World& world, ecs::Entity entity)
                     appendAttribute(attributes, "clip", "@" + asset::formatGuid(id));
                 }
             }
+            const auto* base = static_cast<const std::byte*>(bytes);
+            const auto* defaults = static_cast<const std::byte*>(descriptor.defaults);
             if (material)
             {
                 /* A resolved reference is written back as the authoring form,

@@ -606,7 +606,8 @@ TEST_CASE("scene: every scene component is capturable or deliberately not", "[sc
     expect(resonate::Span<const resonate::dom::ComponentDesc>(
                resonate::scene::generated::kComponentDescs,
                resonate::scene::generated::kComponentDescCount),
-           {"resonate.scene.SourceKey", "resonate.scene.TextureAlias"});
+           {"resonate.scene.SourceKey", "resonate.scene.TextureAlias",
+            "resonate.scene.MachineSource"});
 }
 
 TEST_CASE("scene: several roots write back as one document", "[scene]")
@@ -785,6 +786,36 @@ TEST_CASE("scene: an authored Machine builds a running state machine", "[scene][
     REQUIRE(state != nullptr);
     CHECK(state->driven);
     CHECK(state->clip == definition->states[definition->initial].clip);
+
+    /* The capture writes the authored Machine element back, so a save keeps
+       the animation; the rebuilt document runs the same machine. */
+    std::string xml;
+    REQUIRE(resonate::scene::capture(fixture.world, crate, xml, error));
+    INFO("capture: " << xml);
+    CHECK(xml.find("<Machine entry=\"spin\">") != std::string::npos);
+    CHECK(xml.find("<State name=\"bob\" clip=\"@0704c7df-7013-4c31-818d-b515207bb7df\"/>") !=
+          std::string::npos);
+    CHECK(xml.find("<Transition from=\"bob\" to=\"spin\" at_end=\"true\" fade=\"0.4\"/>") !=
+          std::string::npos);
+
+    auto captured = resonate::dom::Document::parse(xml, &sceneSchemas(), diagnostics);
+    REQUIRE(captured != nullptr);
+    World second{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(second));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(second));
+    REQUIRE(resonate::ui::registerComponents(second));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(second));
+    Entity second_root{};
+    REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
+                                         error, nullptr, &player));
+    const Entity restored = resonate::scene::findByKey(second, second_root, "crate");
+    REQUIRE(restored.valid());
+    const auto* rebuilt = second.get<resonate::animation::MachineState>(restored);
+    REQUIRE(rebuilt != nullptr);
+    const resonate::animation::StateMachine* rebuilt_machine = player.machine(rebuilt->machine);
+    REQUIRE(rebuilt_machine != nullptr);
+    CHECK(rebuilt_machine->states.size() == 2U);
+    CHECK(rebuilt_machine->initial == 1U);
 
     /* An unknown entry or state reference is refused with the name. */
     constexpr const char* kBroken = R"xml(<document version="1" schemas="resonate.scene">

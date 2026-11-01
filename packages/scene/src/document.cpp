@@ -261,7 +261,8 @@ bool instantiateUnder(ecs::World& world, dom::Document& document,
        registration is idempotent, and a world that already registered them (a
        second scene, a reload) reuses them. */
     if (world.registerComponent<SourceKey>() == ecs::kInvalidComponent ||
-        world.registerComponent<TextureAlias>() == ecs::kInvalidComponent)
+        world.registerComponent<TextureAlias>() == ecs::kInvalidComponent ||
+        world.registerComponent<MachineSource>() == ecs::kInvalidComponent)
     {
         error = "the scene components could not be registered";
         return false;
