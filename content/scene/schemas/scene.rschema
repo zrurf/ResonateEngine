@@ -2,6 +2,7 @@
 <schema module="resonate.scene">
   <import module="resonate.hierarchy"/>
   <import module="resonate.render"/>
+  <import module="resonate.animation"/>
 
   <!-- The scene document's node types: what a .rscene file may contain. The
        components an object carries come from the owning modules' schemas
@@ -45,6 +46,7 @@
     <uses component="LocalTransform" expose="position rotation scale"/>
     <uses component="Material" expose="tint roughness metallic"/>
     <uses component="Camera" expose="fov_y_degrees near_z far_z"/>
+    <uses component="Animation" expose="looping speed"/>
   </node>
 
 </schema>

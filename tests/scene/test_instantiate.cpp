@@ -158,8 +158,10 @@ TEST_CASE("scene: a document instantiates into a parented entity tree", "[scene]
 
     Entity root{};
     std::string error;
-    REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
-                                         error));
+    const bool ok = resonate::scene::instantiate(fixture.world, *document, &sceneComponents(),
+                                                 root, error);
+    INFO("instantiate error: " << error);
+    REQUIRE(ok);
     CHECK(error.empty());
     REQUIRE(root.valid());
     CHECK(root == resonate::scene::findByKey(fixture.world, root, "yard-root"));
@@ -210,9 +212,9 @@ TEST_CASE("scene: a capture round trips through a second instantiate", "[scene]"
     REQUIRE(resonate::ui::registerComponents(fixture.world));
     Entity root{};
     std::string error;
-    INFO("instantiate: " << error);
     REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
                                          error));
+    INFO("instantiate: " << error);
 
     /* Move the box and re-temper its material: the capture must carry both. */
     const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
@@ -284,6 +286,7 @@ TEST_CASE("scene: a captured rotation reads back as the same rotation", "[scene]
     std::string error;
     REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
                                          error));
+    INFO("instantiate: " << error);
     const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
     REQUIRE(crate.valid());
 
@@ -340,6 +343,7 @@ TEST_CASE("scene: a capture keeps a texture reference as an asset id", "[scene]"
     std::string error;
     REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
                                          error));
+    INFO("instantiate: " << error);
     const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
     REQUIRE(crate.valid());
     const auto* reference = fixture.world.get<resonate::render::TextureRef>(crate);
@@ -389,6 +393,7 @@ TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[sce
     std::string error;
     REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
                                          error));
+    INFO("instantiate: " << error);
 
     /* The editor's save writes this capture back over the authored file: every
        material's asset reference must survive it, and an alias stays an alias
@@ -415,7 +420,6 @@ TEST_CASE("scene: the demo document survives a save unchanged in meaning", "[sce
     REQUIRE(resonate::ui::registerComponents(second));
     REQUIRE(resonate::animation::AnimationPlayer::registerComponents(second));
     Entity second_root{};
-    INFO("instantiate: " << error);
     REQUIRE(resonate::scene::instantiate(second, *captured, &sceneComponents(), second_root,
                                          error));
     for (const char* const key : {"box-a1", "box-a2", "box-a3", "box-b1", "box-center",
@@ -473,6 +477,7 @@ TEST_CASE("scene: a captured subtree reinstantiates under its old parent", "[sce
     std::string error;
     REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
                                          error));
+    INFO("instantiate: " << error);
     const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
     REQUIRE(crate.valid());
     const Entity parent = resonate::hierarchy::parentOf(fixture.world, crate);
@@ -529,6 +534,7 @@ TEST_CASE("scene: a Resources alias stands for an asset id", "[scene]")
     std::string error;
     REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
                                          error));
+    INFO("instantiate: " << error);
     const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
     REQUIRE(crate.valid());
     const auto* reference = fixture.world.get<resonate::render::TextureRef>(crate);
@@ -614,6 +620,7 @@ TEST_CASE("scene: several roots write back as one document", "[scene]")
     std::string error;
     REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
                                          error));
+    INFO("instantiate: " << error);
     const Entity ground = resonate::scene::findByKey(fixture.world, root, "ground");
     REQUIRE(ground.valid());
 
@@ -664,6 +671,7 @@ TEST_CASE("scene: an Animation component round trips as an asset id", "[scene]")
     std::string error;
     REQUIRE(resonate::scene::instantiate(fixture.world, *document, &sceneComponents(), root,
                                          error));
+    INFO("instantiate: " << error);
     const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
     REQUIRE(crate.valid());
     const auto* authored = fixture.world.get<resonate::animation::Animation>(crate);

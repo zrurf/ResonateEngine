@@ -180,6 +180,10 @@ void AnimationPlayer::materialize(ecs::World& world)
         {
             continue;
         }
+        if (record.component.clip_low == 0U && record.component.clip_high == 0U)
+        {
+            continue; /* The node composition's default: no reference, no state. */
+        }
         const asset::AssetId id{record.component.clip_low, record.component.clip_high, 1U};
         std::uint32_t index = 0U;
         std::string error;

@@ -219,11 +219,9 @@ bool applyAnimation(ecs::World& world, const dom::Document& document,
             return false;
         }
     }
-    if (!has_clip)
-    {
-        error = "Animation needs a clip";
-        return false;
-    }
+    /* The node composition hangs a fieldless Animation on every object; a
+       missing clip is that default, and the null id means no reference. */
+    (void)has_clip;
     authored.clip_low = clip.guid_low;
     authored.clip_high = clip.guid_high;
     if (world.add(entity, authored) == nullptr)

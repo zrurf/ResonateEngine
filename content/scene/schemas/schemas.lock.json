@@ -11,7 +11,8 @@
         "node Object version 1",
         "  uses LocalTransform expose position rotation scale",
         "  uses Material expose metallic roughness tint",
-        "  uses Camera expose far_z fov_y_degrees near_z"
+        "  uses Camera expose far_z fov_y_degrees near_z",
+        "  uses Animation expose looping speed"
       ]
     },
     {
