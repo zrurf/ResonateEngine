@@ -117,7 +117,9 @@ class CommandBuffer
        thread, and closed by destruction; recording through one has the same
        operations and the same validation as the buffer's own. `order_key`
        orders the merge at playback — a parallel-for passes its slice index, so
-       the playback order follows the work's deterministic structure. */
+       the playback order follows the work's deterministic structure. A section
+       must be destroyed before its channel is played or cleared; both are
+       refused with a report while one is open. */
     class Section
     {
       public:
@@ -161,6 +163,7 @@ class CommandBuffer
 
         CommandBuffer* buffer_ = nullptr;
         Segment* segment_ = nullptr;
+        Channel channel_ = Channel::SyncPoint;
     };
 
     /* Opens a recording section on the current channel. */

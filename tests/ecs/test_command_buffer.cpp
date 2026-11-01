@@ -225,6 +225,68 @@ TEST_CASE("play is refused while parallel execution is in flight", "[ecs][comman
     REQUIRE(world.get<Position>(entity) != nullptr);
 }
 
+TEST_CASE("a section must close before playback or clearing", "[ecs][command]")
+{
+    Reports reports;
+    World world(resonate::systemAllocator());
+    world.setReportSink(&reports, &Reports::sink);
+    REQUIRE(world.registerComponent<Health>() != resonate::ecs::kInvalidComponent);
+
+    CommandBuffer buffer(world);
+    Entity entity{};
+    {
+        CommandBuffer::Section section = buffer.section(0);
+        entity = section.create();
+        REQUIRE(entity.valid());
+
+        world.play(buffer);
+        REQUIRE(reports.contains("section is still open"));
+        REQUIRE_FALSE(world.alive(entity));
+
+        /* The refused play left the section usable. */
+        section.add<Health>(entity, Health{3});
+        REQUIRE(buffer.commandCount() == 2U);
+
+        buffer.clear();
+        REQUIRE(buffer.commandCount() == 2U);
+    }
+
+    world.play(buffer);
+    REQUIRE(world.alive(entity));
+    REQUIRE(world.get<Health>(entity) != nullptr);
+    REQUIRE(world.entityCount() == 1U);
+}
+
+TEST_CASE("a buffer plays only into the world that built it", "[ecs][command]")
+{
+    Reports reports;
+    World first(resonate::systemAllocator());
+    World second(resonate::systemAllocator());
+    REQUIRE(first.registerComponent<Health>() != resonate::ecs::kInvalidComponent);
+    REQUIRE(second.registerComponent<Health>() != resonate::ecs::kInvalidComponent);
+    second.setReportSink(&reports, &Reports::sink);
+
+    CommandBuffer buffer(first);
+    const Entity reserved = buffer.spawn(Health{5});
+    REQUIRE(reserved.valid());
+
+    /* Same index and generation in both worlds: without the ownership check the
+       add would land on this one. */
+    const Entity foreign = second.create();
+    REQUIRE(foreign.index == reserved.index);
+
+    second.play(buffer);
+    REQUIRE(reports.contains("another world"));
+    REQUIRE(second.get<Health>(foreign) == nullptr);
+    REQUIRE(second.entityCount() == 1U);
+    REQUIRE(buffer.commandCount() == 2U);
+
+    first.play(buffer);
+    REQUIRE(first.alive(reserved));
+    REQUIRE(first.get<Health>(reserved) != nullptr);
+    REQUIRE(first.entityCount() == 1U);
+}
+
 TEST_CASE("a chunk view goes stale when structure changes", "[ecs][command]")
 {
     World world(resonate::systemAllocator());

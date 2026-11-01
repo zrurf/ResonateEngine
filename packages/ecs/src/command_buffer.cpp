@@ -60,9 +60,20 @@ struct CommandBuffer::Impl
        when it opens, a fresh inline segment when direct recording follows an
        opened section — so playback keeps the order recording made. */
     std::vector<std::unique_ptr<Segment>> segments;
-    mutable std::mutex segment_mutex; /* the vector's shape and the open-section count */
+    mutable std::mutex segment_mutex; /* the vector's shape and the open-section counts */
     std::uint32_t section_sequence = 0;
-    std::uint32_t open_sections = 0;
+    std::uint32_t open_sections[2] = {0U, 0U};
+
+    static std::size_t channelIndex(Channel channel) noexcept
+    {
+        return static_cast<std::size_t>(channel);
+    }
+
+    [[nodiscard]] bool hasOpenSections(Channel channel) const
+    {
+        std::lock_guard<std::mutex> lock(segment_mutex);
+        return open_sections[channelIndex(channel)] != 0U;
+    }
 
     /* Entities this buffer reserved and has not handed to the world yet, from
        every segment. Recording runs on many threads now, so both the scan and
@@ -300,6 +311,18 @@ struct CommandBuffer::Impl
         }
         holds = std::move(kept_holds);
     }
+
+    /* The destructor's path: whatever is still held goes back, sections open or
+       not, because the buffer will not play again. */
+    void releaseHolds()
+    {
+        std::lock_guard<std::mutex> lock(hold_mutex);
+        for (Hold& hold : holds)
+        {
+            world->releaseEntity(hold.entity);
+        }
+        holds.clear();
+    }
 };
 
 CommandBuffer::CommandBuffer(World& world) : impl_(std::make_unique<Impl>())
@@ -322,7 +345,7 @@ CommandBuffer::~CommandBuffer()
                          "%zu recorded create(s) were never played; their handles are released",
                          unplayed);
     }
-    clear();
+    impl_->releaseHolds();
 }
 
 void CommandBuffer::setChannel(Channel channel) noexcept
@@ -363,7 +386,7 @@ void CommandBuffer::record(PlayFn play, void* context, const void* payload, std:
 /* --- sections --- */
 
 CommandBuffer::Section::Section(CommandBuffer& buffer, std::uint64_t order_key, Channel channel)
-    : buffer_(&buffer)
+    : buffer_(&buffer), channel_(channel)
 {
     Impl& source = *buffer.impl_;
     std::lock_guard<std::mutex> lock(source.segment_mutex);
@@ -374,11 +397,11 @@ CommandBuffer::Section::Section(CommandBuffer& buffer, std::uint64_t order_key, 
     segment->sequence = source.section_sequence++;
     segment_ = segment.get();
     source.segments.push_back(std::move(segment));
-    ++source.open_sections;
+    ++source.open_sections[Impl::channelIndex(channel)];
 }
 
 CommandBuffer::Section::Section(Section&& source) noexcept
-    : buffer_(source.buffer_), segment_(source.segment_)
+    : buffer_(source.buffer_), segment_(source.segment_), channel_(source.channel_)
 {
     source.buffer_ = nullptr;
 }
@@ -391,7 +414,7 @@ CommandBuffer::Section::~Section()
     }
     Impl& source = *buffer_->impl_;
     std::lock_guard<std::mutex> lock(source.segment_mutex);
-    --source.open_sections;
+    --source.open_sections[Impl::channelIndex(channel_)];
 }
 
 CommandBuffer::Section CommandBuffer::section(std::uint64_t order_key)
@@ -469,14 +492,26 @@ bool CommandBuffer::empty(Channel channel) const noexcept
 
 void CommandBuffer::clear()
 {
+    if (impl_->hasOpenSections(Channel::SyncPoint) ||
+        impl_->hasOpenSections(Channel::NextFrame))
+    {
+        impl_->impl->say(World::Report::Error,
+                         "clear: a recording section is still open; destroy it first");
+        return;
+    }
     impl_->releaseChannel(Channel::SyncPoint, false);
     impl_->releaseChannel(Channel::NextFrame, false);
     impl_->section_sequence = 0;
-    impl_->open_sections = 0;
 }
 
 void CommandBuffer::clear(Channel channel)
 {
+    if (impl_->hasOpenSections(channel))
+    {
+        impl_->impl->say(World::Report::Error,
+                         "clear: a recording section is still open; destroy it first");
+        return;
+    }
     impl_->releaseChannel(channel, false);
 }
 
@@ -484,6 +519,18 @@ void CommandBuffer::clear(Channel channel)
 
 void World::playChannel(CommandBuffer& buffer, CommandBuffer::Channel channel)
 {
+    if (&buffer.world() != this)
+    {
+        impl_->say(Report::Error, "play: the command buffer belongs to another world");
+        return;
+    }
+    /* A section points at a segment this play is about to drop; a recorder that
+       has not closed yet would write into freed storage. */
+    if (buffer.impl_->hasOpenSections(channel))
+    {
+        impl_->say(Report::Error, "play: a recording section is still open; destroy it first");
+        return;
+    }
     if (!buffer.impl_->impl->structural())
     {
         return;
