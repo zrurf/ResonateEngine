@@ -231,7 +231,9 @@ bool GraphExecutor::execute(std::string& out_error, PrepareFn prepare, void* pre
     }
     const auto passes_start = std::chrono::steady_clock::now();
 
-    GraphExecuteContext context{&device_, images_.data(), buffers_.data()};
+    GraphExecuteContext context{&device_, images_.data(),      buffers_.data(),
+                                static_cast<std::uint32_t>(images_.size()),
+                                static_cast<std::uint32_t>(buffers_.size())};
     if (prepare != nullptr)
     {
         prepare(prepare_context, context);

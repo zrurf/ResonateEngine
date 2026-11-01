@@ -40,6 +40,8 @@ struct FeatureStack
     [[nodiscard]] bool has(const std::string& name) const;
     [[nodiscard]] bool antialiases() const; /* the AA slot is not "none" */
 
+    friend bool operator==(const FeatureStack&, const FeatureStack&) = default;
+
     static FeatureStack defaults();
 };
 
@@ -64,6 +66,8 @@ class RenderSystem
        host outlives the frame loop. */
     void setRegistry(ResonateCapabilityRegistry* registry);
 
+    /* The live settings below may be changed from any thread while frames run:
+       the render thread applies the request at the top of the next frame. */
     /* The post-chain selection, validated by parseFeatureStack before this
        call; the defaults apply when it is never called. */
     void setFeatures(const FeatureStack& stack);
@@ -110,18 +114,18 @@ class RenderSystem
     [[nodiscard]] float targetFrameMs() const;
     [[nodiscard]] std::uint32_t msaa() const;
     [[nodiscard]] std::uint32_t shadowSize() const;
-    [[nodiscard]] const std::string& hdrFormatName() const;
+    [[nodiscard]] std::string hdrFormatName() const;
     /* The post chain as the settings form it: the comma-separated chain and
        the AA slot; bloom's threshold rides its own setting. */
     [[nodiscard]] std::string featureChain() const;
-    [[nodiscard]] const std::string& antialiasing() const;
+    [[nodiscard]] std::string antialiasing() const;
     [[nodiscard]] float bloomThreshold() const;
 
     /* The presentation mode: "auto" keeps the configuration's vsync bool,
        "fifo", "mailbox" and "immediate" name one. The swapchain rebuilds on
        the next frame; an unknown name is reported and ignored. */
     void setPresentMode(const std::string& name);
-    [[nodiscard]] const std::string& presentModeName() const;
+    [[nodiscard]] std::string presentModeName() const;
 
     /* Registers the render components; idempotent, and a refusal (a name
        collision) answers false. */

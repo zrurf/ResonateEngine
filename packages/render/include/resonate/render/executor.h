@@ -26,24 +26,28 @@ struct GraphExecuteContext
 {
     ResonateRenderDevice* device = nullptr;
 
-    /* Resolved handles, indexed by resource id; the canvas import is {0}. */
+    /* Resolved handles, indexed by resource id; the canvas import is {0}. An id
+       outside the table — an invalid resource a pass named — reads as the null
+       handle rather than walking past the vector. */
     const ResonateRenderImage* images = nullptr;
     const ResonateRenderBuffer* buffers = nullptr;
+    std::uint32_t image_count = 0U;
+    std::uint32_t buffer_count = 0U;
 
     [[nodiscard]] ResonateRenderImage image(ResourceId resource) const
     {
-        return images[resource];
+        return resource < image_count ? images[resource] : ResonateRenderImage{};
     }
     [[nodiscard]] ResonateRenderBuffer buffer(ResourceId resource) const
     {
-        return buffers[resource];
+        return resource < buffer_count ? buffers[resource] : ResonateRenderBuffer{};
     }
     /* The table slot the device assigned to the resource. The handle's low
        half is its pool index — vertex and index buffers have one without a
        table slot — so the device answers when it can. */
     [[nodiscard]] std::uint32_t imageSlot(ResourceId resource) const
     {
-        const ResonateRenderImage handle = images[resource];
+        const ResonateRenderImage handle = image(resource);
         if (handle.value == 0U)
         {
             return 0U;
@@ -59,7 +63,7 @@ struct GraphExecuteContext
     }
     [[nodiscard]] std::uint32_t bufferSlot(ResourceId resource) const
     {
-        const ResonateRenderBuffer handle = buffers[resource];
+        const ResonateRenderBuffer handle = buffer(resource);
         if (handle.value == 0U)
         {
             return 0U;

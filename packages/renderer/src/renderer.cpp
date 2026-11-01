@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <condition_variable>
 #include <cstddef>
@@ -469,18 +470,31 @@ struct RenderSystem::Impl
     std::uint32_t shadow_size = 0U;
     /* The scene pass's sample count; zero renders 1x (no MSAA). */
     std::uint32_t msaa = 0U;
+    /* Settings the console and the editor change while frames run. The caller
+       writes the requested half under `settings_mutex`; the render thread
+       applies it at the top of a frame, where it is the only reader. */
+    std::mutex settings_mutex;
+    FeatureStack requested_features = FeatureStack::defaults();
+    bool features_dirty = false;
+    std::uint32_t requested_msaa = 0U;
+    bool msaa_dirty = false;
+    std::string requested_hdr_format = "auto";
+    bool hdr_dirty = false;
+    std::uint32_t requested_shadow_size = 0U;
+    bool shadow_dirty = false;
+    std::string requested_present_mode = "auto";
+    bool present_dirty = false;
     /* Diagnostic: when positive, force a graph rebuild every Nth frame, which
        retires every graph image and exercises the framebuffer cache. */
     std::uint32_t rebuild_stress = 0U;
     std::uint64_t rendered_frames = 0U;
-    float render_scale = 1.0F;
+    std::atomic<float> render_scale{1.0F};
     std::uint32_t render_width = 0U;
     std::uint32_t render_height = 0U;
     /* Adaptive scaling: the scale moves between these bounds to hold
        target_frame_ms, one step per sample window. */
     static constexpr float kMinRenderScale = 0.35F;
-    float target_frame_ms = 0.0F;
-    bool render_scale_dirty = false;
+    std::atomic<float> target_frame_ms{0.0F};
     /* The first frames carry pipeline warmup and the first present; letting them
        into the average would drive the scale straight to its floor. */
     unsigned warmup_frames = 30U;
@@ -633,6 +647,7 @@ struct RenderSystem::Impl
     bool extract(ecs::World& world);
     void publish();
     void renderLoop();
+    void applySettings();
     bool prepareTargets(uint32_t width, uint32_t height);
     void renderFrame(FrameSnapshot& snapshot);
     void prepareFrame(GraphExecuteContext& commands);
@@ -671,11 +686,13 @@ void RenderSystem::Impl::readRenderScaleOverrides()
     overrides_read = true;
     if (const char* scale = std::getenv("RESONATE_RENDER_SCALE"))
     {
-        render_scale = std::clamp(static_cast<float>(std::atof(scale)), kMinRenderScale, 1.0F);
+        render_scale.store(std::clamp(static_cast<float>(std::atof(scale)), kMinRenderScale, 1.0F),
+                           std::memory_order_relaxed);
     }
     if (const char* budget = std::getenv("RESONATE_TARGET_FRAME_MS"))
     {
-        target_frame_ms = std::fmax(0.0F, static_cast<float>(std::atof(budget)));
+        target_frame_ms.store(std::fmax(0.0F, static_cast<float>(std::atof(budget))),
+                              std::memory_order_relaxed);
     }
     /* Same environment the tests use; Android reaches it through the host's
        property mapping, where no settings file travels with the package. */
@@ -1296,7 +1313,15 @@ bool RenderSystem::Impl::renderTgfxUi(FrameSnapshot& snapshot)
                                                  quad.clip.height});
     }
 
+    /* Each text run holds a pointer into this vector, so its capacity has to
+       cover the whole frame before the first pointer is taken. */
+    std::size_t glyph_total = 0U;
+    for (const ui::TextRun& run : snapshot.ui.texts())
+    {
+        glyph_total += run.glyphs.size();
+    }
     ui_draw_glyphs.clear();
+    ui_draw_glyphs.reserve(glyph_total);
     ui_draw_texts.clear();
     for (const ui::TextRun& run : snapshot.ui.texts())
     {
@@ -1734,10 +1759,12 @@ bool RenderSystem::Impl::ensurePipelines()
         return false;
     }
 
-    /* The tonemap and FXAA passes write LDR targets; only the final blend
-       owns the canvas, so its pipeline names the swapchain format. */
-    const ResonateRenderFormat post_targets[5] = {hdr_format,
-                                                  hdr_format,
+    /* The tonemap and FXAA passes write LDR targets; the bright and blur passes
+       write the bloom chain's own half-float targets, whatever format the scene
+       HDR target uses. Only the final blend owns the canvas, so its pipeline
+       names the swapchain format. */
+    const ResonateRenderFormat post_targets[5] = {RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+                                                  RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
                                                   RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
                                                   RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
                                                   RESONATE_RENDER_FORMAT_UNKNOWN};
@@ -2961,7 +2988,9 @@ void RenderSystem::setRegistry(ResonateCapabilityRegistry* registry)
 
 void RenderSystem::setFeatures(const FeatureStack& stack)
 {
-    impl_->features = stack;
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
+    impl_->requested_features = stack;
+    impl_->features_dirty = true;
 }
 
 void RenderSystem::setUiFontPaths(std::vector<std::string> paths)
@@ -2975,12 +3004,14 @@ void RenderSystem::setUiFontPaths(std::vector<std::string> paths)
 
 void RenderSystem::setRenderScale(float scale)
 {
-    impl_->render_scale = std::clamp(scale, Impl::kMinRenderScale, 1.0F);
+    impl_->render_scale.store(std::clamp(scale, Impl::kMinRenderScale, 1.0F),
+                              std::memory_order_relaxed);
 }
 
 void RenderSystem::setTargetFrameMs(float milliseconds)
 {
-    impl_->target_frame_ms = milliseconds > 0.0F ? milliseconds : 0.0F;
+    impl_->target_frame_ms.store(milliseconds > 0.0F ? milliseconds : 0.0F,
+                                 std::memory_order_relaxed);
 }
 
 bool RenderSystem::setHdrFormat(const std::string& name, std::string& out_error)
@@ -2990,18 +3021,18 @@ bool RenderSystem::setHdrFormat(const std::string& name, std::string& out_error)
         out_error = "unknown hdr format '" + name + "' (auto, rgba16f or b10g11r11)";
         return false;
     }
-    impl_->hdr_format_name = name;
-    /* The graph is built from the format: the next frame recompiles it. */
-    impl_->initialized = false;
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
+    impl_->requested_hdr_format = name;
+    impl_->hdr_dirty = true;
     out_error.clear();
     return true;
 }
 
 void RenderSystem::setShadowSize(std::uint32_t size)
 {
-    impl_->shadow_size = size;
-    /* The shadow maps are graph resources: the next frame recompiles it. */
-    impl_->initialized = false;
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
+    impl_->requested_shadow_size = size;
+    impl_->shadow_dirty = true;
 }
 
 void RenderSystem::setPresentMode(const std::string& name)
@@ -3011,13 +3042,15 @@ void RenderSystem::setPresentMode(const std::string& name)
         impl_->complain(("unknown present mode '" + name + "'").c_str());
         return;
     }
-    impl_->present_mode_name = name;
-    impl_->applyPresentMode();
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
+    impl_->requested_present_mode = name;
+    impl_->present_dirty = true;
 }
 
-const std::string& RenderSystem::presentModeName() const
+std::string RenderSystem::presentModeName() const
 {
-    return impl_->present_mode_name;
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
+    return impl_->requested_present_mode;
 }
 
 void RenderSystem::Impl::applyPresentMode()
@@ -3043,41 +3076,44 @@ void RenderSystem::Impl::applyPresentMode()
 
 void RenderSystem::setMsaa(std::uint32_t samples)
 {
-    impl_->msaa = samples;
-    /* The scene pass and its pipeline carry the sample count: the next frame
-       recompiles both. */
-    impl_->initialized = false;
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
+    impl_->requested_msaa = samples;
+    impl_->msaa_dirty = true;
 }
 
 float RenderSystem::renderScale() const
 {
-    return impl_->render_scale;
+    return impl_->render_scale.load(std::memory_order_relaxed);
 }
 
 float RenderSystem::targetFrameMs() const
 {
-    return impl_->target_frame_ms;
+    return impl_->target_frame_ms.load(std::memory_order_relaxed);
 }
 
 std::uint32_t RenderSystem::msaa() const
 {
-    return impl_->msaa;
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
+    return impl_->requested_msaa;
 }
 
 std::uint32_t RenderSystem::shadowSize() const
 {
-    return impl_->shadow_size;
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
+    return impl_->requested_shadow_size;
 }
 
-const std::string& RenderSystem::hdrFormatName() const
+std::string RenderSystem::hdrFormatName() const
 {
-    return impl_->hdr_format_name;
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
+    return impl_->requested_hdr_format;
 }
 
 std::string RenderSystem::featureChain() const
 {
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
     std::string chain;
-    for (const std::string& entry : impl_->features.chain)
+    for (const std::string& entry : impl_->requested_features.chain)
     {
         if (!chain.empty())
         {
@@ -3101,14 +3137,16 @@ std::uint32_t RenderSystem::assetTextureSlot(std::uint64_t guid_low, std::uint64
     return 0U;
 }
 
-const std::string& RenderSystem::antialiasing() const
+std::string RenderSystem::antialiasing() const
 {
-    return impl_->features.antialiasing;
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
+    return impl_->requested_features.antialiasing;
 }
 
 float RenderSystem::bloomThreshold() const
 {
-    return impl_->features.bloom_threshold;
+    std::lock_guard<std::mutex> lock(impl_->settings_mutex);
+    return impl_->requested_features.bloom_threshold;
 }
 
 void RenderSystem::setUiImageTexture(std::uint32_t id, std::string path)
@@ -3213,8 +3251,84 @@ void RenderSystem::Impl::ensureThread()
     render_thread_started = true;
 }
 
+void RenderSystem::Impl::applySettings()
+{
+    FeatureStack features_request;
+    std::uint32_t msaa_request = 0U;
+    std::uint32_t shadow_request = 0U;
+    std::string hdr_request;
+    std::string present_request;
+    bool features_arrived = false;
+    bool msaa_arrived = false;
+    bool shadow_arrived = false;
+    bool hdr_arrived = false;
+    bool present_arrived = false;
+    {
+        std::lock_guard<std::mutex> lock(settings_mutex);
+        features_arrived = std::exchange(features_dirty, false);
+        if (features_arrived)
+        {
+            features_request = requested_features;
+        }
+        msaa_arrived = std::exchange(msaa_dirty, false);
+        if (msaa_arrived)
+        {
+            msaa_request = requested_msaa;
+        }
+        shadow_arrived = std::exchange(shadow_dirty, false);
+        if (shadow_arrived)
+        {
+            shadow_request = requested_shadow_size;
+        }
+        hdr_arrived = std::exchange(hdr_dirty, false);
+        if (hdr_arrived)
+        {
+            hdr_request = requested_hdr_format;
+        }
+        present_arrived = std::exchange(present_dirty, false);
+        if (present_arrived)
+        {
+            present_request = requested_present_mode;
+        }
+    }
+
+    if (features_arrived && !(features_request == features))
+    {
+        features = std::move(features_request);
+        /* The stack decides which post resources exist. */
+        initialized = false;
+    }
+    if (msaa_arrived && msaa_request != msaa)
+    {
+        msaa = msaa_request;
+        /* The scene pipeline bakes the sample count. */
+        pipelines_ready = false;
+    }
+    if (shadow_arrived && shadow_request != shadow_size)
+    {
+        shadow_size = shadow_request;
+        /* The shadow maps are graph resources. */
+        initialized = false;
+    }
+    if (hdr_arrived && hdr_request != hdr_format_name)
+    {
+        hdr_format_name = std::move(hdr_request);
+        initialized = false;
+        pipelines_ready = false;
+    }
+    if (present_arrived)
+    {
+        present_mode_name = std::move(present_request);
+        applyPresentMode();
+    }
+}
+
 void RenderSystem::Impl::renderLoop()
 {
+    /* The startup settings arrive before the thread starts; applying them here
+       means the warmup builds the graph the run asked for. */
+    applySettings();
+
     /* Warmup: attach, compile the graph and create every pipeline before the
        first snapshot, so the frame loop starts with a drawable frame. */
     if (device != nullptr && canvas != nullptr)
@@ -3250,18 +3364,20 @@ void RenderSystem::Impl::renderLoop()
         }
 
         const auto frame_begin = std::chrono::steady_clock::now();
+        applySettings();
         if (device != nullptr && canvas != nullptr)
         {
             renderFrame(*snapshot);
         }
-        if (target_frame_ms > 0.0F && warmup_frames > 0U)
+        const float frame_budget = target_frame_ms.load(std::memory_order_relaxed);
+        if (frame_budget > 0.0F && warmup_frames > 0U)
         {
             --warmup_frames;
             sample_since = std::chrono::steady_clock::now();
             sample_ms = 0.0;
             sample_frames = 0U;
         }
-        else if (target_frame_ms > 0.0F)
+        else if (frame_budget > 0.0F)
         {
             /* One decision per window: a step every frame would chase noise and
                rebuild the graph constantly. */
@@ -3278,19 +3394,21 @@ void RenderSystem::Impl::renderLoop()
                 /* Frame time is roughly linear in pixels, so the square root of
                    the budget ratio is the scale that would hit the budget; the
                    step is bounded so one noisy window cannot swing resolution. */
-                float wanted = render_scale;
-                if (average > target_frame_ms * 1.15 || average < target_frame_ms * 0.85)
+                const float current_scale = render_scale.load(std::memory_order_relaxed);
+                float wanted = current_scale;
+                if (average > static_cast<double>(frame_budget) * 1.15 ||
+                    average < static_cast<double>(frame_budget) * 0.85)
                 {
-                    const float ratio = static_cast<float>(target_frame_ms / average);
-                    wanted = std::clamp(render_scale * std::sqrt(ratio), render_scale - 0.15F,
-                                        render_scale + 0.1F);
+                    const float ratio = frame_budget / static_cast<float>(average);
+                    wanted = std::clamp(current_scale * std::sqrt(ratio),
+                                        current_scale - 0.15F, current_scale + 0.1F);
                     wanted = std::clamp(wanted, kMinRenderScale, 1.0F);
                 }
-                if (wanted != render_scale)
+                if (wanted != current_scale)
                 {
-                    render_scale = wanted;
+                    render_scale.store(wanted, std::memory_order_relaxed);
                     std::fprintf(stderr, "renderer: render scale %.2f for %.1f ms\n",
-                                 static_cast<double>(render_scale), average);
+                                 static_cast<double>(wanted), average);
                 }
                 sample_ms = 0.0;
                 sample_frames = 0U;
@@ -3317,7 +3435,8 @@ void RenderSystem::Impl::renderLoop()
                              profile.graph_ms.exchange(0.0) * scale,
                              profile.extract_ms.exchange(0.0) * scale,
                              profile.publish_wait_ms.exchange(0.0) * scale,
-                             static_cast<double>(render_scale), render_width, render_height);
+                             static_cast<double>(render_scale.load(std::memory_order_relaxed)),
+                             render_width, render_height);
                 profile_frames = 0;
                 profile_since = std::chrono::steady_clock::now();
             }
@@ -3395,7 +3514,7 @@ bool RenderSystem::Impl::prepareTargets(uint32_t width, uint32_t height)
         if (trace_rebuild)
         {
             std::fprintf(stderr, "renderer: rebuild (scale %.2f) draining\n",
-                         static_cast<double>(render_scale));
+                         static_cast<double>(render_scale.load(std::memory_order_relaxed)));
         }
         const ResonateStatus drained = device->wait_idle(device->self);
         if (trace_rebuild)
@@ -3453,10 +3572,11 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
     }
     /* The scaled extent is state, not graph shape: the passes below render into
        this sub-rectangle of the full-size targets. */
+    const float scale = render_scale.load(std::memory_order_relaxed);
     render_width = std::max(1U, static_cast<std::uint32_t>(
-                                    static_cast<float>(target_width) * render_scale + 0.5F));
+                                    static_cast<float>(target_width) * scale + 0.5F));
     render_height = std::max(1U, static_cast<std::uint32_t>(
-                                     static_cast<float>(target_height) * render_scale + 0.5F));
+                                     static_cast<float>(target_height) * scale + 0.5F));
     /* The cluster tile is a share of the scene's viewport, not of the output:
        the fragment's position spans the scaled sub-rectangle. */
     snapshot.frame_data.light_count_and_pad.y =

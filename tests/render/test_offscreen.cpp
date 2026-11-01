@@ -232,6 +232,86 @@ TEST_CASE("offscreen: the renderer draws into a device target and reads back",
     host->detachAll();
 }
 
+/* Settings arrive from the console thread while the render thread owns the
+   device: each change is applied between frames, and a change that alters the
+   graph retires the old one instead of indexing a resource it never made. */
+TEST_CASE("offscreen: live render settings apply between frames", "[render][offscreen]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    REQUIRE(resonate::render::publishOffscreen(host->capabilities(), 128U, 96U) == RESONATE_OK);
+    REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+    REQUIRE(host->resolve() == RESONATE_OK);
+    REQUIRE(host->attachAll() == RESONATE_OK);
+
+    auto* device = static_cast<ResonateRenderDevice*>(resonate_capability_find(
+        host->capabilities(), resonate::detail::CapabilityTraits<ResonateRenderDevice>::id.value(),
+        1U, nullptr));
+    REQUIRE(device != nullptr);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(world));
+
+    const auto camera = world.create();
+    world.add(camera, resonate::hierarchy::WorldTransform{translation(0.0F, 2.5F, -7.0F)});
+    world.add(camera, resonate::render::Camera{});
+    const auto cube = world.create();
+    world.add(cube, resonate::hierarchy::WorldTransform{translation(0.0F, 2.5F, 0.0F)});
+    world.add(cube, resonate::render::MeshInstance{1U, Vec3{1.0F, 1.0F, 1.0F}});
+    world.add(cube, resonate::render::Material{0U, Vec3{1.0F, 1.0F, 1.0F}});
+    const auto sun = world.create();
+    world.add(sun, resonate::render::DirectionalLight{Vec3{0.0F, 0.0F, 1.0F},
+                                                      Vec3{1.0F, 1.0F, 1.0F}, 2.0F});
+
+    resonate::renderer::RenderSystem render_system;
+    render_system.setRegistry(host->capabilities());
+    std::string error;
+    resonate::renderer::FeatureStack stack;
+    REQUIRE(resonate::renderer::parseFeatureStack("tonemap", "none", stack, error));
+    render_system.setFeatures(stack);
+    render_system.warmup();
+
+    const auto draw = [&](int frames)
+    {
+        for (int frame = 0; frame < frames; ++frame)
+        {
+            render_system.run(world);
+            render_system.waitIdle();
+        }
+    };
+    draw(2);
+
+    /* Enable bloom and FXAA on a graph built without them. */
+    REQUIRE(resonate::renderer::parseFeatureStack("bloom, tonemap", "fxaa", stack, error));
+    render_system.setFeatures(stack);
+    draw(2);
+
+    /* Rebuild the scene targets while frames are in flight. */
+    render_system.setMsaa(4);
+    REQUIRE(render_system.setHdrFormat("rgba16f", error));
+    render_system.setShadowSize(1024);
+    render_system.setPresentMode("fifo");
+    draw(2);
+
+    std::vector<std::uint8_t> pixels(128U * 96U * 4U);
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    const ResonateStatus status = device->readback_canvas(
+        device->self, pixels.data(), static_cast<std::uint64_t>(pixels.size()), &width, &height);
+    render_system.release();
+    host->detachAll();
+    if (status != RESONATE_OK)
+    {
+        SKIP("no Vulkan offscreen device on this machine");
+    }
+    CHECK(width == 128U);
+    CHECK(height == 96U);
+}
+
 /* The pass identity's action half (R5): what an attachment loads and stores is
    the caller's choice per pass, and a pipeline built for the defaults runs in
    every such pass. The readback proves the load really kept the frame the
