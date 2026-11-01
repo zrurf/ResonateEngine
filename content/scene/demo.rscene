@@ -2,7 +2,8 @@
 <document version="1" schemas="resonate.scene">
   <!-- The demo's scene: one root, the camera and sun, the ground plane and the
        nine checker boxes. The middle box cross-fades between the authored bob
-       and spin clips -- animation is content, not start-up code. -->
+       and spin clips, driven by the input_x parameter (hold right to spin) --
+       animation and its logic are content, not start-up code. -->
 
   <Scene key="demo">
     <Resources>
@@ -47,11 +48,15 @@
       <Object key="box-center" name="箱子 B">
         <MeshInstance mesh="1" color="0.4 0.55 0.9"/>
         <Material texture="#checker"/>
-        <Machine entry="bob">
+        <Machine entry="bob" parameters="input_x">
           <State name="bob" clip="#bob"/>
-          <State name="spin" clip="#spin" looping="false"/>
-          <Transition from="bob" to="spin" at_end="true" fade="0.4"/>
-          <Transition from="spin" to="bob" at_end="true" fade="0.4"/>
+          <State name="spin" clip="#spin"/>
+          <Transition from="bob" to="spin" fade="0.4">
+            <Condition parameter="input_x" greater="0.5"/>
+          </Transition>
+          <Transition from="spin" to="bob" fade="0.4">
+            <Condition parameter="input_x" less="0.5"/>
+          </Transition>
         </Machine>
         <LocalTransform position="0 0.5 2.5"/>
       </Object>

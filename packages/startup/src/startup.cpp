@@ -190,6 +190,40 @@ std::string readBloomThreshold(void* context)
 
 /* The input system: one sample per frame, before anything gameplay reads the
    actions. A run without the input capability (headless) releases everything. */
+/* Drives the demo machine's parameters from the keyboard: holding right
+   writes 1 into input_x, left writes -1, nothing writes 0. A machine without
+   that parameter, or a box whose machine was swapped, is left alone. */
+struct MachineDrive
+{
+    ecs::Entity box{};
+    animation::AnimationPlayer* player = nullptr;
+    const ResonateInput* input = nullptr;
+    std::uint32_t machine = 0U;
+    std::uint32_t parameter = animation::kUnknownParameter;
+    bool armed = false;
+
+    static void invoke(void* context, ecs::World& world, ecs::CommandBuffer&, float)
+    {
+        auto* drive = static_cast<MachineDrive*>(context);
+        if (!drive->armed || drive->input == nullptr || !world.alive(drive->box))
+        {
+            return;
+        }
+        const auto* machine_state = world.get<animation::MachineState>(drive->box);
+        if (machine_state == nullptr || machine_state->machine != drive->machine)
+        {
+            return;
+        }
+        const bool left = drive->input->key_down(drive->input->self, RESONATE_KEY_LEFT) != 0 ||
+                          drive->input->key_down(drive->input->self, RESONATE_KEY_A) != 0;
+        const bool right = drive->input->key_down(drive->input->self, RESONATE_KEY_RIGHT) != 0 ||
+                           drive->input->key_down(drive->input->self, RESONATE_KEY_D) != 0;
+        const float value = (right ? 1.0F : 0.0F) - (left ? 1.0F : 0.0F);
+        auto* writable = const_cast<animation::MachineState*>(machine_state);
+        writable->runtime.setValue(drive->parameter, value);
+    }
+};
+
 struct ActionTick
 {
     gameplay::ActionMap* map = nullptr;
@@ -703,7 +737,7 @@ bool readTextFile(const std::string& path, std::string& out)
    adapter. The middle box's state machine and the ceiling light grid stay
    procedural: animation authoring and stress fixtures are not content yet. */
 void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player,
-                      std::vector<ecs::Entity>& out_roots)
+                      std::vector<ecs::Entity>& out_roots, MachineDrive* machine_drive)
 {
     /* A host that stages its assets elsewhere (Android) names the document
        directly; the setting and the content walk cover desktop runs. */
@@ -761,6 +795,27 @@ void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player,
     {
         std::fprintf(stderr, "resonate: scene: %s: %s\n", path.c_str(), error.c_str());
         return;
+    }
+
+    /* The demo machine's input_x parameter follows the keyboard, so the
+       authored conditions actually fire. */
+    if (machine_drive != nullptr)
+    {
+        const ecs::Entity box = scene::findByKey(world, root, "box-center");
+        const auto* machine_state =
+            box.valid() ? world.get<animation::MachineState>(box) : nullptr;
+        if (machine_state != nullptr)
+        {
+            const animation::StateMachine* definition =
+                player != nullptr ? player->machine(machine_state->machine) : nullptr;
+            if (definition != nullptr)
+            {
+                machine_drive->box = box;
+                machine_drive->machine = machine_state->machine;
+                machine_drive->parameter = definition->parameterIndex("input_x");
+                machine_drive->armed = machine_drive->parameter != animation::kUnknownParameter;
+            }
+        }
     }
 
     /* The cluster acceptance wants a hundred lights and change: a ceiling grid
@@ -1495,7 +1550,23 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
         /* The demo scene is what the window shows until scenes load from disk;
            it is plain ECS entities, created before the frame loop starts. */
         std::vector<ecs::Entity> scene_roots;
-        composeDemoScene(world, &animation_player, scene_roots);
+        MachineDrive machine_drive;
+        machine_drive.player = &animation_player;
+        composeDemoScene(world, &animation_player, scene_roots, &machine_drive);
+        if (void* input = resonate_capability_find(
+                host.capabilities(), detail::CapabilityTraits<ResonateInput>::id.value(),
+                detail::CapabilityTraits<ResonateInput>::version, nullptr);
+            input != nullptr)
+        {
+            machine_drive.input = static_cast<const ResonateInput*>(input);
+        }
+        const EngineSystemDesc machine_drive_desc{
+            "demo.machine_drive", RESONATE_STAGE_UPDATE, &MachineDrive::invoke,
+            &machine_drive};
+        if (addEngineSystem(host, machine_drive_desc) != RESONATE_OK)
+        {
+            return RESONATE_E_INVALID;
+        }
         if (extension.scene != nullptr)
         {
             extension.scene(extension.scene_context, world, scene_roots);
