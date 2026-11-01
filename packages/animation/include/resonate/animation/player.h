@@ -9,9 +9,13 @@
  */
 
 #include <cstdint>
+#include <map>
+#include <set>
+#include <string>
 #include <vector>
 
 #include <resonate/animation/clip.h>
+#include <resonate/asset/identity.h>
 #include <resonate/animation/state_machine.h>
 #include <resonate/ecs/component.h>
 #include <resonate/ecs/world.h>
@@ -68,6 +72,16 @@ class AnimationPlayer
     /* Adds a machine and answers the index MachineState names. */
     std::uint32_t addMachine(StateMachine machine);
 
+    /* Loads the products manifest authored clip ids resolve through: an
+       Animation component names an asset id, and this is what turns it into
+       bytes. */
+    bool loadManifest(const std::string& path, std::string& error);
+
+    /* The index of the authored clip's sample data, loading and caching the
+       clip on first use. False when the manifest does not know the id or the
+       document does not parse; the player reports a repeated failure once. */
+    bool clipFor(const asset::AssetId& id, std::uint32_t& out_index, std::string& error);
+
     [[nodiscard]] const StateMachine* machine(std::uint32_t index) const;
 
     /* The engine-system entry (UPDATE stage). */
@@ -77,8 +91,17 @@ class AnimationPlayer
     /* Advances every MachineState and writes its AnimationState. */
     void advanceMachines(ecs::World& world, float delta_seconds);
 
+    /* Creates an AnimationState for every authored Animation component that
+       lacks one; an id that fails to resolve is reported once and the entity
+       stays without a state. */
+    void materialize(ecs::World& world);
+
     std::vector<Clip> clips_;
     std::vector<StateMachine> machines_;
+    asset::Identity identity_;
+    std::string manifest_directory_;
+    std::map<std::string, std::uint32_t> authored_;
+    std::set<std::string> failed_;
 };
 
 } // namespace resonate::animation

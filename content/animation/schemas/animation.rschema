@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<schema module="resonate.animation">
+  <!-- The animation domain's authored surface. The player materializes its
+       runtime AnimationState from an Animation component: the clip id resolves
+       through the products manifest, the flags seed the state's playback. -->
+
+  <!-- The authored clip reference and its playback flags. The two halves are
+       one asset id; the scene format authors it as clip="@guid[:sub]". -->
+  <component name="Animation" version="1">
+    <field name="clip_low" type="u64"/>
+    <field name="clip_high" type="u64"/>
+    <field name="looping" type="bool" default="true"/>
+    <field name="speed" type="f32" default="1"/>
+  </component>
+
+</schema>

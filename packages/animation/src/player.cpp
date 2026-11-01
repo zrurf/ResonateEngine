@@ -1,6 +1,11 @@
 #include <resonate/animation/player.h>
 
 #include <algorithm>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "resonate.animation/components.gen.h"
 
 #include <resonate/hierarchy/tree.h>
 
@@ -10,6 +15,7 @@ namespace resonate::animation
 bool AnimationPlayer::registerComponents(ecs::World& world)
 {
     bool ok = world.registerComponent<AnimationState>() != ecs::kInvalidComponent;
+    ok = world.registerComponent<Animation>() != ecs::kInvalidComponent && ok;
     ok = world.registerComponent<MachineState>() != ecs::kInvalidComponent && ok;
     return ok;
 }
@@ -93,8 +99,112 @@ void AnimationPlayer::advanceMachines(ecs::World& world, float delta_seconds)
         &update);
 }
 
+bool AnimationPlayer::loadManifest(const std::string& path, std::string& error)
+{
+    if (!identity_.loadFile(path, error))
+    {
+        error = path + ": " + error;
+        return false;
+    }
+    /* A product's path is relative to the manifest's own directory. */
+    const std::size_t separator = path.find_last_of("/\\");
+    manifest_directory_ =
+        separator == std::string::npos ? std::string() : path.substr(0U, separator);
+    return true;
+}
+
+bool AnimationPlayer::clipFor(const asset::AssetId& id, std::uint32_t& out_index,
+                              std::string& error)
+{
+    const std::string key = std::to_string(id.guid_low) + ":" + std::to_string(id.guid_high) +
+                            ":" + std::to_string(id.sub_id);
+    const auto cached = authored_.find(key);
+    if (cached != authored_.end())
+    {
+        out_index = cached->second;
+        return true;
+    }
+    const std::optional<std::string> located = identity_.locate(id);
+    if (!located.has_value())
+    {
+        error = "the manifest does not know this clip id";
+        return false;
+    }
+    const std::string full = manifest_directory_.empty()
+                                 ? *located
+                                 : manifest_directory_ + "/" + *located;
+    Clip clip;
+    if (!Clip::loadFile(full, clip, error))
+    {
+        error = full + ": " + error;
+        return false;
+    }
+    const std::uint32_t index = addClip(std::move(clip));
+    authored_.emplace(key, index);
+    out_index = index;
+    return true;
+}
+
+void AnimationPlayer::materialize(ecs::World& world)
+{
+    const ecs::ComponentIndex authored[] = {ecs::ComponentTraits<Animation>::index};
+    ecs::QueryDesc desc{};
+    desc.all = resonate::Span<const ecs::ComponentIndex>(authored, 1U);
+    ecs::Query query = world.createQuery(desc);
+    if (!query.valid())
+    {
+        return;
+    }
+    /* The walk only collects: adding AnimationState moves the entity to a new
+       archetype, and the world refuses a structural change inside a query. */
+    struct Authored
+    {
+        ecs::Entity entity;
+        Animation component;
+    };
+    std::vector<Authored> pending;
+    query.forEachChunk(
+        [](void* context, ecs::ChunkView view)
+        {
+            auto* collected = static_cast<std::vector<Authored>*>(context);
+            const ecs::Column<Animation> components = ecs::column<Animation>(view);
+            for (std::uint32_t row = 0; row < view.count; ++row)
+            {
+                collected->push_back({view.entities[row], components.data[row]});
+            }
+        },
+        &pending);
+    for (const Authored& record : pending)
+    {
+        if (world.get<AnimationState>(record.entity) != nullptr)
+        {
+            continue;
+        }
+        const asset::AssetId id{record.component.clip_low, record.component.clip_high, 1U};
+        std::uint32_t index = 0U;
+        std::string error;
+        if (!clipFor(id, index, error))
+        {
+            const std::string key = std::to_string(id.guid_low) + ":" +
+                                    std::to_string(id.guid_high) + ":" +
+                                    std::to_string(id.sub_id);
+            if (failed_.insert(key).second)
+            {
+                world.report(ecs::World::Report::Warning, "animation: %s", error.c_str());
+            }
+            continue;
+        }
+        AnimationState state;
+        state.clip = index;
+        state.looping = record.component.looping;
+        state.speed = record.component.speed;
+        world.add(record.entity, state);
+    }
+}
+
 void AnimationPlayer::invoke(ecs::World& world, float delta_seconds)
 {
+    materialize(world);
     advanceMachines(world, delta_seconds);
 
     const ecs::ComponentIndex states[] = {ecs::ComponentTraits<AnimationState>::index};
