@@ -164,7 +164,23 @@
       <Box key="machine-header-line" class="separator" height="1"/>
       <Label key="machine-empty" class="label-dim" height="22" text="选中带状态机的对象"
              font_size="12" v_align="Middle" padding_left="12"/>
-      <Scroll key="machine-scroll" position="Absolute" x="0" y="29" width="0" height="-30"
+      <Panel key="machine-buttons" position="Absolute" x="0" y="-32" width="0" height="30"
+             anchor_min="0 1" anchor_max="1 1"
+             direction="Row" align="Center" gap="4" padding_left="12" padding_right="12">
+        <Button key="machine-add-state" class="button" width="76" height="24">
+          <Label key="machine-add-state-label" class="label" width="76" height="24" text="添加状态"
+                 font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
+        </Button>
+        <Button key="machine-add-transition" class="button" width="76" height="24">
+          <Label key="machine-add-transition-label" class="label" width="76" height="24" text="添加转换"
+                 font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
+        </Button>
+        <Button key="machine-delete" class="button" width="76" height="24">
+          <Label key="machine-delete-label" class="label" width="76" height="24" text="删除所选"
+                 font_size="12" v_align="Middle" align="Center" color="0 0 0 0"/>
+        </Button>
+      </Panel>
+      <Scroll key="machine-scroll" position="Absolute" x="0" y="29" width="0" height="-62"
               step="24" anchor_min="0 0" anchor_max="1 1"
               direction="Column" align="Stretch" gap="0"
               padding_left="0" padding_top="0" padding_right="0" padding_bottom="0">

@@ -151,8 +151,16 @@ struct EditorState
     Entity state_row_prototype{};
     Entity transition_row_prototype{};
     Entity machine_list{};
-    std::vector<Entity> machine_rows;
+    std::vector<Entity> machine_state_rows;   /* parallel to model.states */
+    std::vector<Entity> machine_transition_rows; /* parallel to model.transitions */
     Entity machine_shown_entity{};
+    /* The pane's edit operations latch here; the tick mutates the model. */
+    Entity machine_add_state{};
+    Entity machine_add_transition{};
+    Entity machine_delete{};
+    bool machine_add_state_pending = false;
+    bool machine_add_transition_pending = false;
+    bool machine_delete_pending = false;
 
     /* The status bar's segments, rewritten only when their text changes. */
     std::string shown_count{};
@@ -515,14 +523,22 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
     {
         return;
     }
-    for (const Entity row : state.machine_rows)
+    for (const Entity row : state.machine_state_rows)
     {
         if (world.alive(row))
         {
             destroySubtree(world, row);
         }
     }
-    state.machine_rows.clear();
+    for (const Entity row : state.machine_transition_rows)
+    {
+        if (world.alive(row))
+        {
+            destroySubtree(world, row);
+        }
+    }
+    state.machine_state_rows.clear();
+    state.machine_transition_rows.clear();
 
     const Entity entity = state.machine_shown_entity;
     resonate::scene::MachineModel model;
@@ -556,7 +572,7 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
         }
         const Entity row =
             cloneRow(state, world, state.state_row_prototype, state.machine_list, caption);
-        state.machine_rows.push_back(row);
+        state.machine_state_rows.push_back(row);
     }
     for (const resonate::scene::MachineModelTransition& transition : model.transitions)
     {
@@ -581,7 +597,31 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
         }
         const Entity row = cloneRow(state, world, state.transition_row_prototype,
                                     state.machine_list, caption);
-        state.machine_rows.push_back(row);
+        state.machine_transition_rows.push_back(row);
+    }
+}
+
+/* Writes the edited model back into the object's MachineSource: the old
+   fragment blob dies with the new one taking its place. */
+void storeMachineModel(resonate::ecs::World& world, Entity entity,
+                       const resonate::scene::MachineModel& model)
+{
+    const std::string fragment = resonate::scene::serializeMachineFragment(model);
+    auto* source = world.get<resonate::scene::MachineSource>(entity);
+    if (source == nullptr)
+    {
+        return;
+    }
+    if (world.alive(source->text))
+    {
+        (void)world.destroyBlob(source->text);
+    }
+    const resonate::ecs::BlobHandle text =
+        world.createBlob(entity, fragment.size(), fragment.data());
+    if (text.valid())
+    {
+        source->text = text;
+        (void)world.markChanged<resonate::scene::MachineSource>(entity);
     }
 }
 
@@ -1602,6 +1642,41 @@ bool toggleMachine(void* context, resonate::ecs::World& world, resonate::ecs::En
     return true;
 }
 
+/* The machine pane's edit buttons: they only latch, the tick mutates the
+   model -- structural changes stay out of the input phase. */
+bool machineAddState(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+                     resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->machine_add_state_pending = true;
+    return true;
+}
+
+bool machineAddTransition(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+                          resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->machine_add_transition_pending = true;
+    return true;
+}
+
+bool machineDelete(void* context, resonate::ecs::World&, resonate::ecs::Entity,
+                   resonate::ui::EventPhase phase, resonate::ui::Event&)
+{
+    if (phase != resonate::ui::EventPhase::Target)
+    {
+        return false;
+    }
+    static_cast<EditorState*>(context)->machine_delete_pending = true;
+    return true;
+}
+
 /* One axis of the position: the field shows it, a typed number writes it.
    A field that does not parse keeps its text and is not retried until the
    next edit. Each accepted write pushes one undo entry whose closures also
@@ -1708,6 +1783,101 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         state->duplicate_pending = false;
         duplicateSelected(*state, world);
+    }
+    if (state->machine_add_state_pending || state->machine_add_transition_pending ||
+        state->machine_delete_pending)
+    {
+        const bool add_state = state->machine_add_state_pending;
+        const bool add_transition = state->machine_add_transition_pending;
+        const bool remove_selected = state->machine_delete_pending;
+        state->machine_add_state_pending = false;
+        state->machine_add_transition_pending = false;
+        state->machine_delete_pending = false;
+
+        const Entity entity = state->machine_shown_entity;
+        if (entity.valid() && world.alive(entity))
+        {
+            resonate::scene::MachineModel model;
+            bool has_machine = false;
+            if (const auto* source = world.get<resonate::scene::MachineSource>(entity);
+                source != nullptr && world.alive(source->text))
+            {
+                const auto* bytes = static_cast<const char*>(world.blobData(source->text));
+                const std::size_t size = world.blobSize(source->text);
+                if (bytes != nullptr && size != 0U)
+                {
+                    std::string parse_error;
+                    has_machine = resonate::scene::parseMachineFragment(
+                        std::string_view(bytes, size), model, parse_error);
+                }
+            }
+            if (has_machine)
+            {
+                if (add_state)
+                {
+                    /* The name is the first free stateN; the clip copies the
+                       first state's, so the new state is runnable at once. */
+                    std::string name;
+                    for (std::uint32_t attempt = 0U;; ++attempt)
+                    {
+                        name = "state" + std::to_string(attempt);
+                        const auto taken = std::find_if(
+                            model.states.begin(), model.states.end(),
+                            [&name](const resonate::scene::MachineModelState& state)
+                            { return state.name == name; });
+                        if (taken == model.states.end())
+                        {
+                            break;
+                        }
+                    }
+                    model.states.push_back({name, model.states.front().clip, {}});
+                }
+                if (add_transition && model.states.size() >= 1U)
+                {
+                    const std::string& from = model.states.front().name;
+                    const std::string& to =
+                        model.states.size() > 1U ? model.states[1U].name : from;
+                    model.transitions.push_back({from, to, {}, {}, {}, {}});
+                }
+                if (remove_selected)
+                {
+                    const Entity selected =
+                        resonate::ui::selectedChild(world, state->machine_list);
+                    const auto state_at = std::find(state->machine_state_rows.begin(),
+                                                    state->machine_state_rows.end(), selected);
+                    const auto transition_at =
+                        std::find(state->machine_transition_rows.begin(),
+                                  state->machine_transition_rows.end(), selected);
+                    if (state_at != state->machine_state_rows.end())
+                    {
+                        const std::size_t index =
+                            static_cast<std::size_t>(state_at - state->machine_state_rows.begin());
+                        const std::string name = model.states[index].name;
+                        model.states.erase(model.states.begin() +
+                                           static_cast<std::ptrdiff_t>(index));
+                        model.transitions.erase(
+                            std::remove_if(model.transitions.begin(),
+                                           model.transitions.end(),
+                                           [&name](const resonate::scene::MachineModelTransition&
+                                                       transition)
+                                           {
+                                               return transition.from == name ||
+                                                      transition.to == name;
+                                           }),
+                            model.transitions.end());
+                    }
+                    else if (transition_at != state->machine_transition_rows.end())
+                    {
+                        const std::size_t index = static_cast<std::size_t>(
+                            transition_at - state->machine_transition_rows.begin());
+                        model.transitions.erase(
+                            model.transitions.begin() + static_cast<std::ptrdiff_t>(index));
+                    }
+                }
+                storeMachineModel(world, entity, model);
+            }
+        }
+        rebuildMachineRows(*state, world);
     }
     if (state->reparent_pending)
     {
@@ -2127,6 +2297,10 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->transition_row_prototype =
         resonate::ui::findByKey(world, canvas, "machine-transition-row");
     state->machine_list = resonate::ui::findByKey(world, canvas, "machine-scroll");
+    state->machine_add_state = resonate::ui::findByKey(world, canvas, "machine-add-state");
+    state->machine_add_transition =
+        resonate::ui::findByKey(world, canvas, "machine-add-transition");
+    state->machine_delete = resonate::ui::findByKey(world, canvas, "machine-delete");
     state->splitter_console = resonate::ui::findByKey(world, canvas, "splitter-console");
     state->inspector = resonate::ui::findByKey(world, canvas, "inspector");
     state->console_pane = resonate::ui::findByKey(world, canvas, "console");
@@ -2173,6 +2347,9 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     attachToggle("tb-inspector", &toggleInspector);
     attachToggle("tb-console", &toggleConsole);
     attachToggle("tb-machine", &toggleMachine);
+    attachClick("machine-add-state", &machineAddState);
+    attachClick("machine-add-transition", &machineAddTransition);
+    attachClick("machine-delete", &machineDelete);
     state->status_fps = resonate::ui::findByKey(world, canvas, "status-fps");
     state->animation_value = resonate::ui::findByKey(world, canvas, "animation-value");
     if (const std::string products = productsPath(); !products.empty())
