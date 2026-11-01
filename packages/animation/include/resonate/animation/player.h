@@ -47,6 +47,8 @@ struct AnimationState
        belonged to; a clip switch restarts the delta at time zero. */
     float root_time = 0.0F;
     std::uint32_t root_clip = 0xFFFFFFFFU;
+    /* The driven clock without the loop wrap; root motion consumes this one. */
+    float raw_time = 0.0F;
 };
 
 /* One entity's state machine: an index into the player's machine table and the

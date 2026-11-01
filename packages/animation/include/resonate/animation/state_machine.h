@@ -105,6 +105,9 @@ struct MachineRuntime
     std::uint32_t triggers = 0U;
     /* False until the first advance() enters the initial state. */
     bool started = false;
+    /* The same clock without the loop wrap: root motion reads it so a frame
+       that crosses the clip's end contributes the tail it passed. */
+    float raw_time = 0.0F;
 
     void setValue(std::uint32_t parameter, float value);
     void setTrigger(std::uint32_t parameter);

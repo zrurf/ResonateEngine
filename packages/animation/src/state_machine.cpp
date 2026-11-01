@@ -145,6 +145,7 @@ const Transition* advance(const StateMachine& machine, MachineRuntime& runtime,
         runtime.current = machine.initial < machine.states.size() ? machine.initial : 0U;
         runtime.previous = runtime.current;
         runtime.time = 0.0F;
+        runtime.raw_time = 0.0F;
         runtime.previous_time = 0.0F;
         runtime.fade_duration = 0.0F;
         runtime.fade_remaining = 0.0F;
@@ -156,6 +157,7 @@ const Transition* advance(const StateMachine& machine, MachineRuntime& runtime,
 
     const State& state = machine.states[runtime.current];
     runtime.time += delta_seconds;
+    runtime.raw_time += delta_seconds;
     if (state.looping && state.duration > 0.0F)
     {
         runtime.time = std::fmod(runtime.time, state.duration);
@@ -223,6 +225,9 @@ const Transition* advance(const StateMachine& machine, MachineRuntime& runtime,
     {
         runtime.time = 0.0F;
     }
+    /* A transition restarts the root-motion clock with the state: the entity
+       keeps its place rather than jumping by the skipped part of the clip. */
+    runtime.raw_time = 0.0F;
     runtime.fade_duration = std::max(chosen->fade_seconds, 0.0F);
     runtime.fade_remaining = runtime.fade_duration;
     return chosen;

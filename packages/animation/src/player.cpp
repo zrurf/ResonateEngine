@@ -133,6 +133,7 @@ void AnimationPlayer::advanceMachines(ecs::World& world, float delta_seconds)
                 playback->clip = current.clip;
                 playback->looping = current.looping;
                 playback->time = runtime.time;
+                playback->raw_time = runtime.raw_time;
                 playback->previous_clip = runtime.previous < definition->states.size()
                                               ? definition->states[runtime.previous].clip
                                               : current.clip;
@@ -322,9 +323,12 @@ void AnimationPlayer::invoke(ecs::World& world, float delta_seconds)
                 /* Root motion adds its delta onto the transform instead of
                    writing a pose; the incoming clip's delta ramps in with the
                    blend. A clip switch or a clock reset restarts the delta at
-                   zero so the entity does not jump. */
+                   zero so the entity does not jump. The driven clock is the
+                   machine's unwrapped one, so a frame that crosses the clip's
+                   end contributes the whole segment. */
+                const float clock = state.driven ? state.raw_time : state.time;
                 if (state.root_clip != state.clip ||
-                    (state.speed >= 0.0F && state.time < state.root_time))
+                    (state.speed >= 0.0F && clock < state.root_time))
                 {
                     state.root_clip = state.clip;
                     state.root_time = 0.0F;
@@ -341,11 +345,10 @@ void AnimationPlayer::invoke(ecs::World& world, float delta_seconds)
                     {
                         transform->position =
                             transform->position +
-                            rootDelta(*played, state.root_time, state.time, state.looping) *
-                                weight;
+                            rootDelta(*played, state.root_time, clock, state.looping) * weight;
                     }
                 }
-                state.root_time = state.time;
+                state.root_time = clock;
                 (void)update->world->markChanged<hierarchy::LocalTransform>(entity);
             }
         },

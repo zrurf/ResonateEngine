@@ -4,6 +4,7 @@
 #include <string>
 
 #include <resonate/animation/player.h>
+#include <resonate/animation/state_machine.h>
 #include <resonate/core/allocator.h>
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/tree.h>
@@ -350,4 +351,47 @@ TEST_CASE("animation: a root-motion clip moves the entity instead of its pose", 
     CHECK(near(moved->position.x, 6.25F));
     player.invoke(world, 0.2F);
     CHECK(near(moved->position.x, 6.45F));
+}
+
+TEST_CASE("animation: a machine-driven loop keeps its root motion across the wrap", "[animation]")
+{
+    Clip root;
+    root.duration = 1.0F;
+    root.position = positionsOf({{0.0F, Vec3{0.0F, 0.0F, 0.0F}}, {1.0F, Vec3{1.0F, 0.0F, 0.0F}}});
+    root.position_root_motion = true;
+
+    World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::animation::AnimationPlayer::registerComponents(world));
+
+    resonate::animation::AnimationPlayer player;
+    const std::uint32_t clip = player.addClip(root);
+    resonate::animation::StateMachine machine;
+    machine.states.push_back(resonate::animation::State{clip, 1.0F, true});
+    machine.initial = 0U;
+    const std::uint32_t machine_index = player.addMachine(std::move(machine));
+
+    resonate::hierarchy::LocalTransform start;
+    start.position = Vec3{5.0F, 0.0F, 0.0F};
+    const Entity entity = world.create();
+    REQUIRE(world.add(entity, start) != nullptr);
+    resonate::animation::AnimationState state;
+    state.clip = clip;
+    state.looping = true;
+    state.driven = true;
+    REQUIRE(world.add(entity, state) != nullptr);
+    REQUIRE(world.add(entity, resonate::animation::MachineState{machine_index,
+                                                               resonate::animation::MachineRuntime{}}) !=
+            nullptr);
+
+    /* The machine wraps its sampled time at the clip's end; the root motion
+       reads the unwrapped clock, so the fourth step contributes its quarter
+       instead of resetting. */
+    for (int step = 0; step < 5; ++step)
+    {
+        player.invoke(world, 0.25F);
+    }
+    const auto* moved = world.get<resonate::hierarchy::LocalTransform>(entity);
+    REQUIRE(moved != nullptr);
+    CHECK(near(moved->position.x, 6.25F));
 }
