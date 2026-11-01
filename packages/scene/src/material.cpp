@@ -266,14 +266,9 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
                   const ResourceAliases* aliases, ecs::Entity entity,
                   animation::AnimationPlayer* player, std::string& error)
 {
-    if (player == nullptr)
-    {
-        /* A host without an animation player loads the scene without the
-           machine: the objects stand still rather than the load failing. */
-        world.report(ecs::World::Report::Warning,
-                     "animation: the scene has a machine but the run has no player");
-        return true;
-    }
+    /* The fragment is authored data and exists with or without a runtime: a host
+       that cannot build the machine still stores what the document said, so a
+       capture writes the machine back. */
     animation::StateMachine machine;
     std::map<std::string, std::uint16_t> names;
     std::vector<std::pair<std::string, asset::AssetId>> machine_aliases;
@@ -369,16 +364,19 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
             }
         }
         std::uint32_t clip_index = 0U;
-        if (!player->clipFor(id, clip_index, error))
+        if (player != nullptr && !player->clipFor(id, clip_index, error))
         {
             error = "the state '" + name + "': " + error;
             return false;
         }
-        const animation::Clip* played = player->clip(clip_index);
-        machine.states.push_back(
-            animation::State{clip_index, played != nullptr ? played->duration : 0.0F,
-                             looping_text.empty() || looping_text == "true"});
-        names.emplace(name, static_cast<std::uint16_t>(machine.states.size() - 1U));
+        if (player != nullptr)
+        {
+            const animation::Clip* played = player->clip(clip_index);
+            machine.states.push_back(
+                animation::State{clip_index, played != nullptr ? played->duration : 0.0F,
+                                 looping_text.empty() || looping_text == "true"});
+        }
+        names.emplace(name, static_cast<std::uint16_t>(names.size()));
         fragment += "  <State name=\"" + escapeAttribute(name) + "\" clip=\"" +
                     escapeAttribute(clip->value) + "\"";
         if (!looping_text.empty())
@@ -387,12 +385,11 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
         }
         fragment += "/>\n";
     }
-    if (machine.states.empty())
+    if (names.empty())
     {
         error = "the Machine has no states";
         return false;
     }
-    std::fprintf(stderr, "DBG machine states=%zu\n", machine.states.size());
     const auto entry_found = names.find(entry_name);
     if (!entry_name.empty() && entry_found == names.end())
     {
@@ -456,7 +453,16 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
         if (const dom::Field* authored = document.property(child, document.intern("fade"));
             authored != nullptr)
         {
-            edge.fade_seconds = std::strtof(std::string(authored->value).c_str(), nullptr);
+            const std::string number_text(authored->value);
+            char* stop = nullptr;
+            const float value = std::strtof(number_text.c_str(), &stop);
+            if (stop == number_text.c_str() ||
+                stop != number_text.c_str() + number_text.size())
+            {
+                error = "the transition's fade must be one number";
+                return false;
+            }
+            edge.fade_seconds = value;
             fragment += " fade=\"" + escapeAttribute(authored->value) + "\"";
         }
         if (const dom::Field* authored = document.property(child, document.intern("sync"));
@@ -509,18 +515,22 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
             }
             animation::Condition condition;
             condition.parameter = parameter_index;
-            bool matched = false;
+            std::uint32_t tests = 0U;
             std::string condition_fragment = "    <Condition parameter=\"" +
                                              escapeAttribute(parameter_name) + "\"";
-            const auto compared = [&](const char* attribute,
-                                      animation::ConditionTest test)
+            const auto comparison = [&](const char* attribute,
+                                        animation::ConditionTest test)
             {
-                matched = true;
                 const dom::Field* authored =
                     document.property(condition_node, document.intern(attribute));
                 if (authored == nullptr)
                 {
                     return true;
+                }
+                if (++tests > 1U)
+                {
+                    error = "a Condition carries more than one test";
+                    return false;
                 }
                 condition.test = test;
                 const std::string number_text(authored->value);
@@ -538,50 +548,43 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
                     "\"";
                 return true;
             };
-            bool parsed = true;
-            const auto take = [&](const char* attribute, animation::ConditionTest test,
-                                  bool* flag)
+            const auto flag_test = [&](const char* attribute, animation::ConditionTest when_true,
+                                       animation::ConditionTest when_false)
             {
-                if (const dom::Field* authored =
-                        document.property(condition_node, document.intern(attribute));
-                    authored != nullptr)
+                const dom::Field* authored =
+                    document.property(condition_node, document.intern(attribute));
+                if (authored == nullptr)
                 {
-                    matched = true;
-                    condition.test = test;
-                    *flag = authored->value == "true";
-                    condition_fragment += std::string(" ") + attribute + "=\"" +
-                                          escapeAttribute(authored->value) + "\"";
+                    return true;
                 }
+                if (++tests > 1U)
+                {
+                    error = "a Condition carries more than one test";
+                    return false;
+                }
+                if (authored->value != "true" && authored->value != "false")
+                {
+                    error = std::string("the condition's ") + attribute + " is true or false";
+                    return false;
+                }
+                condition.test = authored->value == "true" ? when_true : when_false;
+                condition_fragment += std::string(" ") + attribute + "=\"" +
+                                      escapeAttribute(authored->value) + "\"";
+                return true;
             };
-            parsed = parsed && compared("greater", animation::ConditionTest::Greater);
-            parsed = parsed && compared("less", animation::ConditionTest::Less);
-            parsed = parsed && compared("equal", animation::ConditionTest::Equal);
-            parsed = parsed && compared("not_equal", animation::ConditionTest::NotEqual);
+            const bool parsed =
+                comparison("greater", animation::ConditionTest::Greater) &&
+                comparison("less", animation::ConditionTest::Less) &&
+                comparison("equal", animation::ConditionTest::Equal) &&
+                comparison("not_equal", animation::ConditionTest::NotEqual) &&
+                flag_test("is", animation::ConditionTest::True, animation::ConditionTest::False) &&
+                flag_test("trigger", animation::ConditionTest::Triggered,
+                          animation::ConditionTest::Triggered);
             if (!parsed)
             {
                 return false;
             }
-            {
-                bool flag = false;
-                take("is", animation::ConditionTest::True, &flag);
-                if (flag)
-                {
-                    matched = true;
-                }
-                else if (document.property(condition_node, document.intern("is")) != nullptr)
-                {
-                    take("is", animation::ConditionTest::False, &flag);
-                }
-            }
-            {
-                bool flag = false;
-                take("trigger", animation::ConditionTest::Triggered, &flag);
-                if (flag)
-                {
-                    matched = true;
-                }
-            }
-            if (!matched)
+            if (tests == 0U)
             {
                 error = "a Condition carries no test";
                 return false;
@@ -600,7 +603,7 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
         }
         machine.transitions.push_back(edge);
     }
-    if (!machine.validate(error))
+    if (player != nullptr && !machine.validate(error))
     {
         return false;
     }
@@ -619,6 +622,26 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
                    asset_text + "\"/>\n" + fragment;
     }
 
+    const ecs::BlobHandle text = world.createBlob(entity, fragment.size(), fragment.data());
+    if (text == ecs::BlobHandle{})
+    {
+        error = "the machine fragment could not be stored";
+        return false;
+    }
+    if (world.add(entity, scene::MachineSource{text}) == nullptr)
+    {
+        error = "the machine could not be attached";
+        return false;
+    }
+    if (player == nullptr)
+    {
+        /* The authored data is stored above; without a runtime the objects stand
+           still rather than the load failing. */
+        world.report(ecs::World::Report::Warning,
+                     "animation: the scene has a machine but the run has no player");
+        return true;
+    }
+
     const std::uint16_t initial = machine.initial;
     const animation::State& entry_state = machine.states[initial];
     const std::uint32_t machine_index = player->addMachine(std::move(machine));
@@ -626,10 +649,7 @@ bool applyMachine(ecs::World& world, dom::Document& document, dom::NodeHandle no
     state.clip = entry_state.clip;
     state.looping = entry_state.looping;
     state.driven = true;
-    const ecs::BlobHandle text = world.createBlob(entity, fragment.size(), fragment.data());
     if (world.add(entity, state) == nullptr ||
-        text == ecs::BlobHandle{} ||
-        world.add(entity, scene::MachineSource{text}) == nullptr ||
         world.add(entity, animation::MachineState{machine_index, animation::MachineRuntime{}}) ==
             nullptr)
     {

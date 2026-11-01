@@ -141,6 +141,49 @@ TEST_CASE("machine model: the grammar's refusals carry the reason", "[scene][mac
     CHECK(error.find("names no state") != std::string::npos);
 }
 
+TEST_CASE("machine model: resource rows and a self-closing transition survive", "[scene][machine]")
+{
+    /* The shape applyMachine stores: alias rows for the clips, then a
+       transition whose attributes carry the edge's timing. */
+    constexpr const char* kStored = R"xml(    <Resource key="bob" asset="@15cc75a0-14ca-4c8e-b752-bf5ac010bc9a"/>
+    <Resource key="spin" asset="@075a7fcb-478e-4962-b2ef-0b37cdf9641a"/>
+<Machine entry="bob">
+  <State name="bob" clip="#bob"/>
+  <State name="spin" clip="#spin"/>
+  <Transition from="bob" to="spin" at_end="true" fade="0.4" sync="true"/>
+</Machine>)xml";
+    resonate::scene::MachineModel model;
+    std::string error;
+    const bool parsed = resonate::scene::parseMachineFragment(kStored, model, error);
+    INFO("parse: " << error);
+    REQUIRE(parsed);
+    REQUIRE(model.resources.size() == 2U);
+    CHECK(model.resources[0].key == "bob");
+    CHECK(model.resources[1].key == "spin");
+    REQUIRE(model.transitions.size() == 1U);
+    CHECK(model.transitions[0].at_end == "true");
+    CHECK(model.transitions[0].fade == "0.4");
+    CHECK(model.transitions[0].sync == "true");
+
+    const std::string text = resonate::scene::serializeMachineFragment(model);
+    CHECK(text.rfind("    <Resource key=\"bob\"", 0U) == 0U);
+    resonate::scene::MachineModel reparsed;
+    REQUIRE(resonate::scene::parseMachineFragment(text, reparsed, error));
+    CHECK(reparsed.resources.size() == 2U);
+    CHECK(reparsed.transitions[0].sync == "true");
+    CHECK(resonate::scene::serializeMachineFragment(reparsed) == text);
+
+    /* A malformed or duplicated row is refused rather than dropped. */
+    CHECK_FALSE(resonate::scene::parseMachineFragment(
+        R"xml(<Resource key="bob"/><Machine><State name="a" clip="#a"/></Machine>)xml",
+        model, error));
+    CHECK(error.find("key and an asset") != std::string::npos);
+    CHECK_FALSE(resonate::scene::parseMachineFragment(
+        R"xml(<Resource key="bob" asset="@a"/><Resource key="bob" asset="@b"/>
+<Machine><State name="a" clip="#a"/></Machine>)xml", model, error));
+    CHECK(error.find("twice") != std::string::npos);
+}
+
 TEST_CASE("machine model: a condition spec formats and parses both ways", "[scene][machine]")
 {
     using resonate::scene::MachineModelCondition;

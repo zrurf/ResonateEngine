@@ -313,9 +313,56 @@ bool parseMachineFragment(std::string_view xml, MachineModel& out, std::string& 
         return false;
     }
     MachineTag root;
-    if (!reader.readTag(root, error))
+    for (;;)
     {
-        return false;
+        root = MachineTag{};
+        if (!reader.readTag(root, error))
+        {
+            return false;
+        }
+        if (!root.closing && root.name == "Resource")
+        {
+            if (!root.self_closing)
+            {
+                error = "machine:" + std::to_string(reader.line()) +
+                        ": a Resource takes no children";
+                return false;
+            }
+            const MachineAttribute* key = attribute(root, "key");
+            const MachineAttribute* asset = attribute(root, "asset");
+            if (key == nullptr || key->value.empty() || asset == nullptr ||
+                asset->value.empty())
+            {
+                error = "machine:" + std::to_string(reader.line()) +
+                        ": a Resource needs a key and an asset";
+                return false;
+            }
+            for (const MachineAttribute& item : root.attributes)
+            {
+                if (item.name != "key" && item.name != "asset")
+                {
+                    error = "machine:" + std::to_string(reader.line()) +
+                            ": unknown attribute '" + item.name + "' on Resource";
+                    return false;
+                }
+            }
+            for (const MachineModelResource& known : out.resources)
+            {
+                if (known.key == key->value)
+                {
+                    error = "machine:" + std::to_string(reader.line()) +
+                            ": the fragment names the resource '" + key->value + "' twice";
+                    return false;
+                }
+            }
+            out.resources.push_back(MachineModelResource{key->value, asset->value});
+            if (!reader.skipMisc(error))
+            {
+                return false;
+            }
+            continue;
+        }
+        break;
     }
     if (root.closing || root.name != "Machine")
     {
@@ -438,7 +485,6 @@ bool parseMachineFragment(std::string_view xml, MachineModel& out, std::string& 
             }
             continue;
         }
-        if (!tag.self_closing)
         {
             MachineModelTransition transition;
             if (const MachineAttribute* from = attribute(tag, "from"); from != nullptr)
@@ -480,6 +526,13 @@ bool parseMachineFragment(std::string_view xml, MachineModel& out, std::string& 
                             ": unknown attribute '" + item.name + "' on Transition";
                     return false;
                 }
+            }
+            /* A self-closing transition carries no conditions; its attributes
+               mean the same as on the open form. */
+            if (tag.self_closing)
+            {
+                out.transitions.push_back(std::move(transition));
+                continue;
             }
             for (;;)
             {
@@ -587,17 +640,6 @@ bool parseMachineFragment(std::string_view xml, MachineModel& out, std::string& 
             out.transitions.push_back(std::move(transition));
             continue;
         }
-        /* A self-closing transition: no conditions. */
-        MachineModelTransition transition;
-        if (const MachineAttribute* from = attribute(tag, "from"); from != nullptr)
-        {
-            transition.from = from->value;
-        }
-        if (const MachineAttribute* to = attribute(tag, "to"); to != nullptr)
-        {
-            transition.to = to->value;
-        }
-        out.transitions.push_back(std::move(transition));
     }
     if (out.states.empty())
     {
@@ -630,7 +672,13 @@ bool parseMachineFragment(std::string_view xml, MachineModel& out, std::string& 
 
 std::string serializeMachineFragment(const MachineModel& model)
 {
-    std::string out = "<Machine";
+    std::string out;
+    for (const MachineModelResource& resource : model.resources)
+    {
+        out += "    <Resource key=\"" + escape(resource.key) + "\" asset=\"" +
+               escape(resource.asset) + "\"/>\n";
+    }
+    out += "<Machine";
     if (!model.entry.empty())
     {
         out += " entry=\"" + escape(model.entry) + "\"";

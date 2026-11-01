@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -19,6 +20,7 @@
 #include <resonate/renderer/renderer.h>
 #include <resonate/scene/capture.h>
 #include <resonate/scene/document.h>
+#include <resonate/scene/machine_model.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/layout.h>
 
@@ -955,6 +957,101 @@ TEST_CASE("scene: an authored Machine builds a running state machine", "[scene][
     CHECK_FALSE(resonate::scene::instantiate(fixture.world, *broken, &sceneComponents(),
                                              broken_root, error, nullptr, &player));
     CHECK(error.find("nope") != std::string::npos);
+}
+
+TEST_CASE("scene: a machine without a player keeps its authored fragment", "[scene][animation]")
+{
+    constexpr const char* kMachine = R"xml(<document version="1" schemas="resonate.scene">
+  <Scene key="yard">
+    <Object key="crate">
+      <Machine entry="bob" parameters="input_x">
+        <State name="bob" clip="@0704c7df-7013-4c31-818d-b515207bb7df"/>
+        <State name="spin" clip="@123e4567-e89b-42d3-a456-426614174000"/>
+        <Transition from="bob" to="spin" at_end="true" fade="0.4" sync="true"/>
+      </Machine>
+    </Object>
+  </Scene>
+</document>)xml";
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(kMachine, &sceneSchemas(), diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+
+    Fixture fixture;
+    REQUIRE(resonate::ui::registerComponents(fixture.world));
+    Entity root{};
+    std::string error;
+    /* The editor instantiates without a player; the authored data still has to
+       survive, or a save drops the machine. */
+    const bool ok = resonate::scene::instantiate(fixture.world, *document, &sceneComponents(),
+                                                 root, error);
+    INFO("instantiate error: " << error);
+    REQUIRE(ok);
+    const Entity crate = resonate::scene::findByKey(fixture.world, root, "crate");
+    REQUIRE(crate.valid());
+    CHECK(fixture.world.get<resonate::animation::AnimationState>(crate) == nullptr);
+    CHECK(fixture.world.get<resonate::animation::MachineState>(crate) == nullptr);
+
+    const auto* source = fixture.world.get<resonate::scene::MachineSource>(crate);
+    REQUIRE(source != nullptr);
+    REQUIRE(fixture.world.alive(source->text));
+    const auto* bytes = static_cast<const char*>(fixture.world.blobData(source->text));
+    const std::size_t size = fixture.world.blobSize(source->text);
+    REQUIRE(bytes != nullptr);
+    resonate::scene::MachineModel model;
+    REQUIRE(resonate::scene::parseMachineFragment(std::string_view(bytes, size), model, error));
+    REQUIRE(model.transitions.size() == 1U);
+    CHECK(model.transitions[0].at_end == "true");
+    CHECK(model.transitions[0].fade == "0.4");
+    CHECK(model.transitions[0].sync == "true");
+
+    std::string xml;
+    REQUIRE(resonate::scene::capture(fixture.world, crate, xml, error));
+    CHECK(xml.find("<Machine entry=\"bob\"") != std::string::npos);
+    CHECK(xml.find("<State name=\"bob\"") != std::string::npos);
+}
+
+TEST_CASE("scene: a machine condition carries exactly one test", "[scene][animation]")
+{
+    constexpr const char* kTemplate = R"xml(<document version="1" schemas="resonate.scene">
+  <Scene key="yard">
+    <Object key="crate">
+      <Machine entry="a">
+        <State name="a" clip="@0704c7df-7013-4c31-818d-b515207bb7df"/>
+        <Transition from="a" to="a">%s</Transition>
+      </Machine>
+    </Object>
+  </Scene>
+</document>)xml";
+
+    struct Case
+    {
+        const char* condition;
+        const char* why;
+    };
+    const Case cases[] = {
+        {"<Condition parameter=\"p\"/>", "no test"},
+        {"<Condition parameter=\"p\" greater=\"1\" less=\"2\"/>", "more than one"},
+        {"<Condition parameter=\"p\" greater=\"fast\"/>", "one number"},
+    };
+    for (const Case& scenario : cases)
+    {
+        char text[2048] = {};
+        std::snprintf(text, sizeof(text), kTemplate, scenario.condition);
+        std::vector<resonate::dom::Diagnostic> diagnostics;
+        auto document = resonate::dom::Document::parse(text, &sceneSchemas(), diagnostics);
+        REQUIRE(document != nullptr);
+        World world{resonate::systemAllocator()};
+        REQUIRE(resonate::hierarchy::registerComponents(world));
+        REQUIRE(resonate::renderer::RenderSystem::registerComponents(world));
+        REQUIRE(resonate::animation::AnimationPlayer::registerComponents(world));
+        Entity root{};
+        std::string error;
+        CHECK_FALSE(resonate::scene::instantiate(world, *document, &sceneComponents(), root,
+                                                 error));
+        INFO("condition: " << scenario.condition << " error: " << error);
+        CHECK(error.find(scenario.why) != std::string::npos);
+    }
 }
 
 TEST_CASE("scene: a malformed document is refused with a reason", "[scene]")

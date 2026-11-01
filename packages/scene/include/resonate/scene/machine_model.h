@@ -47,17 +47,26 @@ struct MachineModelTransition
     std::vector<MachineModelCondition> conditions;
 };
 
+struct MachineModelResource
+{
+    std::string key;   /* the alias a clip names, "#key" */
+    std::string asset; /* "@guid[:sub]" as authored */
+};
+
 struct MachineModel
 {
     std::string entry;
     std::string parameters; /* space separated, as authored */
     std::vector<MachineModelState> states;
     std::vector<MachineModelTransition> transitions;
+    /* Resource rows the machine's clips resolved through, kept so a capture and
+       the editor can write the fragment back without losing the aliases. */
+    std::vector<MachineModelResource> resources;
 };
 
-/* Parses the authored <Machine> element (a single root). Unknown elements,
-   missing names or clips, duplicate state names, and malformed numbers in
-   condition values are errors with a line number. */
+/* Parses the authored fragment: optional <Resource/> rows, then the <Machine>
+   element. Unknown elements, missing names or clips, duplicate state names,
+   and malformed numbers in condition values are errors with a line number. */
 [[nodiscard]] bool parseMachineFragment(std::string_view xml, MachineModel& out,
                                         std::string& error);
 
