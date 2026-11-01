@@ -22,6 +22,7 @@
   <entry key="editor.entry">入口</entry>
   <entry key="editor.looping">循环</entry>
   <entry key="editor.parameters">参数</entry>
+  <entry key="editor.condition">条件</entry>
   <entry key="editor.add_condition">添加条件</entry>
   <entry key="editor.delete_condition">删条件</entry>
   <entry key="editor.duplicate">复制</entry>

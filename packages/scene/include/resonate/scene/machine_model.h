@@ -66,6 +66,13 @@ struct MachineModel
    serializations of one model are byte-identical. */
 [[nodiscard]] std::string serializeMachineFragment(const MachineModel& model);
 
+/* The editor's one-line condition spec, `<parameter> <test> <value>`, and its
+   parser. The parser accepts the four comparisons (a numeric value), `trigger`
+   (no value) and `is` (true/false); anything else is refused with a reason. */
+[[nodiscard]] std::string formatConditionSpec(const MachineModelCondition& condition);
+[[nodiscard]] bool parseConditionSpec(std::string_view text, MachineModelCondition& out,
+                                      std::string& error);
+
 } // namespace resonate::scene
 
 #endif /* RESONATE_SCENE_MACHINE_MODEL_H */

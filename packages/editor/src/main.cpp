@@ -223,6 +223,20 @@ struct EditorState
     Entity machine_condition_delete{};
     bool machine_condition_add_pending = false;
     bool machine_condition_delete_pending = false;
+    Entity condition_row_prototype{};
+    /* One per authored condition, in model order: the row and its input, the
+       indices they edit, and the spec the model holds (the commit compares
+       against it). */
+    struct MachineConditionRow
+    {
+        Entity row{};
+        Entity field{};
+        std::size_t transition = 0U;
+        std::size_t condition = 0U;
+        std::string mirror;
+        bool focused = false;
+    };
+    std::vector<MachineConditionRow> machine_condition_fields;
     /* A node drag: pressed on a box, the handler captures the pointer and
        moves the box live; the release latches the commit for the tick. */
     bool node_dragging = false;
@@ -423,6 +437,14 @@ resonate::ecs::Entity cloneRow(EditorState& state, resonate::ecs::World& world, 
         {
             world.add(copy, *styles);
         }
+        if (const auto* input = world.get<resonate::ui::Input>(child))
+        {
+            world.add(copy, *input);
+        }
+        if (const auto* item = world.get<resonate::ui::LayoutItem>(child))
+        {
+            world.add(copy, *item);
+        }
         if (text != nullptr)
         {
             std::string error;
@@ -597,8 +619,10 @@ bool machineNodeEvent(void* context, resonate::ecs::World& world,
 void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
 {
     if (!state.state_row_prototype.valid() || !state.transition_row_prototype.valid() ||
-        !state.machine_list.valid() || !world.alive(state.state_row_prototype) ||
-        !world.alive(state.transition_row_prototype) || !world.alive(state.machine_list))
+        !state.condition_row_prototype.valid() || !state.machine_list.valid() ||
+        !world.alive(state.state_row_prototype) ||
+        !world.alive(state.transition_row_prototype) ||
+        !world.alive(state.condition_row_prototype) || !world.alive(state.machine_list))
     {
         return;
     }
@@ -616,8 +640,16 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
             destroySubtree(world, row);
         }
     }
+    for (const auto& row : state.machine_condition_fields)
+    {
+        if (row.row.valid() && world.alive(row.row))
+        {
+            destroySubtree(world, row.row);
+        }
+    }
     state.machine_state_rows.clear();
     state.machine_transition_rows.clear();
+    state.machine_condition_fields.clear();
 
     const Entity entity = state.machine_shown_entity;
     resonate::scene::MachineModel model;
@@ -689,6 +721,7 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
         state.machine_state_rows.push_back(node);
         ++state_index;
     }
+    std::size_t transition_index = 0U;
     for (const resonate::scene::MachineModelTransition& transition : model.transitions)
     {
         std::string caption =
@@ -713,6 +746,28 @@ void rebuildMachineRows(EditorState& state, resonate::ecs::World& world)
         const Entity row = cloneRow(state, world, state.transition_row_prototype,
                                     state.machine_list, caption);
         state.machine_transition_rows.push_back(row);
+
+        /* One editable spec row per condition, indented under its transition. */
+        for (std::size_t condition_index = 0U; condition_index < transition.conditions.size();
+             ++condition_index)
+        {
+            const std::string spec = resonate::scene::formatConditionSpec(
+                transition.conditions[condition_index]);
+            const Entity condition_row = cloneRow(state, world, state.condition_row_prototype,
+                                                  state.machine_list, spec);
+            Entity field{};
+            for (const Entity child : resonate::hierarchy::children(world, condition_row))
+            {
+                if (world.get<resonate::ui::Input>(child) != nullptr)
+                {
+                    field = child;
+                    break;
+                }
+            }
+            state.machine_condition_fields.push_back(EditorState::MachineConditionRow{
+                condition_row, field, transition_index, condition_index, spec, false});
+        }
+        ++transition_index;
     }
 }
 
@@ -2230,6 +2285,87 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
             }
         }
     }
+    /* A condition spec commits when its field loses focus: one edit, one undo
+       entry (committing per keystroke would flood the stack). An invalid spec
+       stays in the field and is retried on the next blur. */
+    if (!state->machine_condition_fields.empty())
+    {
+        const Entity focused = resonate::ui::focusedEntity(world, state->canvas);
+        for (auto& row : state->machine_condition_fields)
+        {
+            if (focused == row.field)
+            {
+                row.focused = true;
+                continue;
+            }
+            if (!row.focused)
+            {
+                continue;
+            }
+            row.focused = false;
+            if (!row.field.valid() || !world.alive(row.field))
+            {
+                continue;
+            }
+            const std::string text = resonate::ui::widgetText(world, row.field);
+            if (text == row.mirror)
+            {
+                continue;
+            }
+            resonate::scene::MachineModelCondition condition;
+            std::string spec_error;
+            if (!resonate::scene::parseConditionSpec(text, condition, spec_error))
+            {
+                continue;
+            }
+            const Entity entity = state->machine_shown_entity;
+            std::string before;
+            if (entity.valid() && world.alive(entity))
+            {
+                if (const auto* source = world.get<resonate::scene::MachineSource>(entity);
+                    source != nullptr && world.alive(source->text))
+                {
+                    const auto* bytes = static_cast<const char*>(world.blobData(source->text));
+                    const std::size_t size = world.blobSize(source->text);
+                    if (bytes != nullptr && size != 0U)
+                    {
+                        before.assign(bytes, size);
+                    }
+                }
+            }
+            resonate::scene::MachineModel model;
+            std::string parse_error;
+            if (before.empty() ||
+                !resonate::scene::parseMachineFragment(before, model, parse_error) ||
+                row.transition >= model.transitions.size() ||
+                row.condition >= model.transitions[row.transition].conditions.size())
+            {
+                continue;
+            }
+            model.transitions[row.transition].conditions[row.condition] = condition;
+            const std::string after = resonate::scene::serializeMachineFragment(model);
+            if (after == before)
+            {
+                row.mirror = text;
+                continue;
+            }
+            writeMachineFragment(world, entity, after);
+            rebuildMachineRows(*state, world);
+            pushUndo(
+                *state, localized("editor.condition") + " " + text,
+                [&state, entity, before](resonate::ecs::World& target)
+                {
+                    writeMachineFragment(target, entity, before);
+                    rebuildMachineRows(*state, target);
+                },
+                [&state, entity, after](resonate::ecs::World& target)
+                {
+                    writeMachineFragment(target, entity, after);
+                    rebuildMachineRows(*state, target);
+                });
+            break;
+        }
+    }
     /* Condition add/delete on the selected transition. */
     if (state->machine_condition_add_pending || state->machine_condition_delete_pending)
     {
@@ -3056,6 +3192,8 @@ void ready(void* context, resonate::ecs::World& world, Entity canvas)
     state->state_row_prototype = resonate::ui::findByKey(world, canvas, "machine-state-row");
     state->transition_row_prototype =
         resonate::ui::findByKey(world, canvas, "machine-transition-row");
+    state->condition_row_prototype =
+        resonate::ui::findByKey(world, canvas, "machine-condition-row");
     state->machine_list = resonate::ui::findByKey(world, canvas, "machine-scroll");
     state->machine_canvas = resonate::ui::findByKey(world, canvas, "machine-canvas");
     state->node_prototype = resonate::ui::findByKey(world, canvas, "machine-node-row");

@@ -255,6 +255,14 @@
           </Label>
           <Selectable color="0.16 0.17 0.19 1"/>
         </Panel>
+        <Panel key="machine-condition-row" height="24" direction="Row" align="Center" gap="6"
+               padding_left="28" padding_right="12" shown="false">
+          <Label key="machine-condition-field" class="field label" text="" font_size="12"
+                 height="24" v_align="Middle" padding_left="6">
+            <Input/>
+            <LayoutItem grow="1"/>
+          </Label>
+        </Panel>
       </Scroll>
     </Panel>
 

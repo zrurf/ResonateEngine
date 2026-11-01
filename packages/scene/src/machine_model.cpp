@@ -700,4 +700,80 @@ std::string serializeMachineFragment(const MachineModel& model)
     return out;
 }
 
+std::string formatConditionSpec(const MachineModelCondition& condition)
+{
+    return condition.parameter + " " + condition.test + " " + condition.value;
+}
+
+bool parseConditionSpec(std::string_view text, MachineModelCondition& out, std::string& error)
+{
+    std::vector<std::string_view> tokens;
+    std::size_t at = 0U;
+    while (at < text.size())
+    {
+        while (at < text.size() && (text[at] == ' ' || text[at] == '\t'))
+        {
+            ++at;
+        }
+        const std::size_t begin = at;
+        while (at < text.size() && text[at] != ' ' && text[at] != '\t')
+        {
+            ++at;
+        }
+        if (at > begin)
+        {
+            tokens.push_back(text.substr(begin, at - begin));
+        }
+    }
+    if (tokens.size() < 2U)
+    {
+        error = "expected <parameter> <test> [value]";
+        return false;
+    }
+    const std::string_view test = tokens[1];
+    const std::string_view value = tokens.size() > 2U ? tokens[2] : std::string_view{};
+    if (tokens.size() > 3U)
+    {
+        error = "a condition spec carries at most three words";
+        return false;
+    }
+    if (test == "greater" || test == "less" || test == "equal" || test == "not_equal")
+    {
+        if (!isNumber(value))
+        {
+            error = "the comparison needs one number";
+            return false;
+        }
+    }
+    else if (test == "trigger")
+    {
+        if (!value.empty() && value != "true")
+        {
+            error = "trigger takes no value (or \"true\")";
+            return false;
+        }
+    }
+    else if (test == "is")
+    {
+        if (value != "true" && value != "false")
+        {
+            error = "is needs true or false";
+            return false;
+        }
+    }
+    else
+    {
+        error = "unknown test '" + std::string(test) + "'";
+        return false;
+    }
+    out.parameter = std::string(tokens[0]);
+    out.test = std::string(test);
+    out.value = std::string(value);
+    if (test == "trigger")
+    {
+        out.value = "true";
+    }
+    return true;
+}
+
 } // namespace resonate::scene

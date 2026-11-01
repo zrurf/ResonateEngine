@@ -140,3 +140,51 @@ TEST_CASE("machine model: the grammar's refusals carry the reason", "[scene][mac
         error));
     CHECK(error.find("names no state") != std::string::npos);
 }
+
+TEST_CASE("machine model: a condition spec formats and parses both ways", "[scene][machine]")
+{
+    using resonate::scene::MachineModelCondition;
+    using resonate::scene::formatConditionSpec;
+    using resonate::scene::parseConditionSpec;
+
+    MachineModelCondition comparison{"input_x", "greater", "0.5"};
+    CHECK(formatConditionSpec(comparison) == "input_x greater 0.5");
+
+    MachineModelCondition parsed;
+    std::string error;
+    REQUIRE(parseConditionSpec(formatConditionSpec(comparison), parsed, error));
+    CHECK(parsed.parameter == "input_x");
+    CHECK(parsed.test == "greater");
+    CHECK(parsed.value == "0.5");
+
+    /* Every authored test survives the round trip. */
+    for (const char* test : {"less", "equal", "not_equal"})
+    {
+        MachineModelCondition condition{"p", test, "-1.25"};
+        REQUIRE(parseConditionSpec(formatConditionSpec(condition), parsed, error));
+        CHECK(parsed.test == test);
+        CHECK(parsed.value == "-1.25");
+    }
+    REQUIRE(parseConditionSpec("jump trigger", parsed, error));
+    CHECK(parsed.value == "true");
+    CHECK(formatConditionSpec(parsed) == "jump trigger true");
+    REQUIRE(parseConditionSpec("armed is false", parsed, error));
+    CHECK(parsed.test == "is");
+    CHECK(parsed.value == "false");
+
+    /* Extra whitespace is tolerated; anything else is refused with a reason. */
+    REQUIRE(parseConditionSpec("  a\tgreater   2  ", parsed, error));
+    CHECK(parsed.parameter == "a");
+    CHECK_FALSE(parseConditionSpec("a", parsed, error));
+    CHECK(error.find("parameter") != std::string::npos);
+    CHECK_FALSE(parseConditionSpec("a greater", parsed, error));
+    CHECK(error.find("number") != std::string::npos);
+    CHECK_FALSE(parseConditionSpec("a greater 1 2", parsed, error));
+    CHECK(error.find("three") != std::string::npos);
+    CHECK_FALSE(parseConditionSpec("a faster 1", parsed, error));
+    CHECK(error.find("unknown test") != std::string::npos);
+    CHECK_FALSE(parseConditionSpec("a is maybe", parsed, error));
+    CHECK(error.find("true or false") != std::string::npos);
+    CHECK_FALSE(parseConditionSpec("a trigger false", parsed, error));
+    CHECK(error.find("trigger takes no value") != std::string::npos);
+}
