@@ -90,6 +90,13 @@ class DisplayList
     void clear();
     void push(const Quad& quad);
 
+    /* Appends the three axis-aligned segments of an orthogonal edge from
+       `from` to `to` (out of the source's right, into the target's left, over
+       the midpoint between them), each as a plain quad of `width` thickness.
+       Zero-length segments are skipped. This is what a node graph draws for
+       its edges without a rotated-quad or bezier primitive. */
+    void pushEdge(Vec2 from, Vec2 to, float width, Vec4 color);
+
     [[nodiscard]] bool empty() const noexcept;
     [[nodiscard]] std::size_t size() const noexcept;
     [[nodiscard]] Span<const Quad> quads() const noexcept;

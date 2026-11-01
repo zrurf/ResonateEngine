@@ -46,6 +46,34 @@ TEST_CASE("machine model: a fragment parses into the authored strings", "[scene]
     CHECK(model.transitions[1].conditions[0].test == "trigger");
 }
 
+TEST_CASE("machine model: layout hints round trip verbatim", "[scene][machine]")
+{
+    constexpr const char* kPositioned = R"xml(<Machine entry="a">
+  <State name="a" clip="#a" x="120" y="80"/>
+  <State name="b" clip="#a"/>
+</Machine>)xml";
+    resonate::scene::MachineModel model;
+    std::string error;
+    REQUIRE(resonate::scene::parseMachineFragment(kPositioned, model, error));
+    CHECK(model.states[0].x == "120");
+    CHECK(model.states[0].y == "80");
+    CHECK(model.states[1].x.empty());
+
+    /* The visual editor's layout hints survive a capture round trip. */
+    const std::string text = resonate::scene::serializeMachineFragment(model);
+    CHECK(text.find("x=\"120\" y=\"80\"") != std::string::npos);
+    resonate::scene::MachineModel reparsed;
+    REQUIRE(resonate::scene::parseMachineFragment(text, reparsed, error));
+    CHECK(reparsed.states[0].x == "120");
+    CHECK(reparsed.states[0].y == "80");
+
+    /* A non-numeric position is refused, so the editor never sees a layout it
+       cannot place. */
+    CHECK_FALSE(resonate::scene::parseMachineFragment(
+        R"xml(<Machine><State name="a" clip="#a" x="left"/></Machine>)xml", model, error));
+    CHECK(error.find("must be a number") != std::string::npos);
+}
+
 TEST_CASE("machine model: serialize and parse agree", "[scene][machine]")
 {
     resonate::scene::MachineModel model;

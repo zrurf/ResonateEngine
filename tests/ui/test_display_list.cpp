@@ -287,3 +287,42 @@ TEST_CASE("ui display list: a focused checkbox draws no caret", "[ui][display-li
        a fifth column spanning the line box. */
     CHECK(list.quads().size() == 5U);
 }
+
+TEST_CASE("display list: pushEdge routes an orthogonal edge", "[ui][display]")
+{
+    resonate::ui::DisplayList list;
+    const resonate::Vec4 color{1.0F, 0.5F, 0.0F, 1.0F};
+    /* A left-to-right edge: out of the source at (100, 50), into the target
+       at (300, 90). Three segments: horizontal, vertical, horizontal. */
+    list.pushEdge(resonate::Vec2{100.0F, 50.0F}, resonate::Vec2{300.0F, 90.0F}, 4.0F,
+                  color);
+    const auto quads = list.quads();
+    REQUIRE(quads.size() == 3U);
+    /* Segment 1 spans the horizontal run at the source's y. */
+    CHECK(quads[0].y + quads[0].height * 0.5F == 50.0F);
+    CHECK(quads[0].x == 100.0F);
+    CHECK(quads[0].width == 100.0F);
+    /* Segment 2 is the vertical run at the midpoint. */
+    CHECK(quads[1].x + quads[1].width * 0.5F == 200.0F);
+    CHECK(quads[1].y == 50.0F);
+    CHECK(quads[1].height == 40.0F);
+    /* Segment 3 spans the horizontal run at the target's y. */
+    CHECK(quads[2].y + quads[2].height * 0.5F == 90.0F);
+    CHECK(quads[2].x == 200.0F);
+    CHECK(quads[2].width == 100.0F);
+    for (const auto& quad : quads)
+    {
+        CHECK((quad.height >= 4.0F || quad.width >= 4.0F));
+        CHECK(quad.color.x == color.x);
+        CHECK(quad.color.y == color.y);
+        CHECK(quad.color.z == color.z);
+        CHECK(quad.color.w == color.w);
+    }
+
+    /* A straight vertical drop needs only the vertical segment. */
+    resonate::ui::DisplayList straight;
+    straight.pushEdge(resonate::Vec2{50.0F, 0.0F}, resonate::Vec2{50.0F, 80.0F}, 2.0F,
+                      color);
+    CHECK(straight.quads().size() == 1U);
+    CHECK(straight.quads()[0].height == 80.0F);
+}

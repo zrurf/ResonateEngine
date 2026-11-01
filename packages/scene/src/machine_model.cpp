@@ -393,9 +393,29 @@ bool parseMachineFragment(std::string_view xml, MachineModel& out, std::string& 
                 }
                 state.looping = looping->value;
             }
+            for (const char* position : {"x", "y"})
+            {
+                if (const MachineAttribute* authored = attribute(tag, position);
+                    authored != nullptr && !isNumber(authored->value))
+                {
+                    error = "machine:" + std::to_string(reader.line()) + ": the state '" +
+                            state.name + "' has " + position + "='" + authored->value +
+                            "'; it must be a number";
+                    return false;
+                }
+            }
+            if (const MachineAttribute* authored = attribute(tag, "x"); authored != nullptr)
+            {
+                state.x = authored->value;
+            }
+            if (const MachineAttribute* authored = attribute(tag, "y"); authored != nullptr)
+            {
+                state.y = authored->value;
+            }
             for (const MachineAttribute& item : tag.attributes)
             {
-                if (item.name != "name" && item.name != "clip" && item.name != "looping")
+                if (item.name != "name" && item.name != "clip" && item.name != "looping" &&
+                    item.name != "x" && item.name != "y")
                 {
                     error = "machine:" + std::to_string(reader.line()) +
                             ": unknown attribute '" + item.name + "' on State";
@@ -627,6 +647,14 @@ std::string serializeMachineFragment(const MachineModel& model)
         if (!state.looping.empty())
         {
             out += " looping=\"" + state.looping + "\"";
+        }
+        if (!state.x.empty())
+        {
+            out += " x=\"" + escape(state.x) + "\"";
+        }
+        if (!state.y.empty())
+        {
+            out += " y=\"" + escape(state.y) + "\"";
         }
         out += "/>\n";
     }

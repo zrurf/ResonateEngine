@@ -22,6 +22,10 @@ struct MachineModelState
     std::string name;
     std::string clip; /* "@guid[:sub]" or "#alias" as authored */
     std::string looping; /* "true"/"false" as authored; empty takes the default */
+    /* The visual editor's layout hints, authored and written back verbatim;
+       empty when the document never positioned the state. */
+    std::string x;
+    std::string y;
 };
 
 struct MachineModelCondition

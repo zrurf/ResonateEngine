@@ -523,6 +523,42 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
     return true;
 }
 
+void DisplayList::pushEdge(Vec2 from, Vec2 to, float width, Vec4 color)
+{
+    const float mid_x = (from.x + to.x) * 0.5F;
+    const auto horizontal = [this, width, color](float x0, float x1, float y)
+    {
+        if (x0 == x1)
+        {
+            return;
+        }
+        Quad segment;
+        segment.x = std::fmin(x0, x1);
+        segment.y = y - width * 0.5F;
+        segment.width = std::fabs(x1 - x0);
+        segment.height = width;
+        segment.color = color;
+        push(segment);
+    };
+    const auto vertical = [this, width, color](float x, float y0, float y1)
+    {
+        if (y0 == y1)
+        {
+            return;
+        }
+        Quad segment;
+        segment.x = x - width * 0.5F;
+        segment.y = std::fmin(y0, y1);
+        segment.width = width;
+        segment.height = std::fabs(y1 - y0);
+        segment.color = color;
+        push(segment);
+    };
+    horizontal(from.x, mid_x, from.y);
+    vertical(mid_x, from.y, to.y);
+    horizontal(mid_x, to.x, to.y);
+}
+
 void DisplayList::clear()
 {
     quads_.clear();
