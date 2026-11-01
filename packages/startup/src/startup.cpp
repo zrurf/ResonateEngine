@@ -1201,6 +1201,11 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
         [](void* context, ecs::World& world, ecs::CommandBuffer&, float delta)
         { static_cast<animation::AnimationPlayer*>(context)->invoke(world, delta); },
         &animation_player};
+    /* The demo scene's driver: both the context and its descriptor outlive the
+       run, because the host keeps the descriptor's address for every frame. */
+    MachineDrive machine_drive;
+    const EngineSystemDesc machine_drive_desc{"demo.machine_drive", RESONATE_STAGE_UPDATE,
+                                              &MachineDrive::invoke, &machine_drive};
     renderer::RenderSystem render_system;
     /* Resolution trades against frame time; a handheld GPU cannot afford the
        full 2400-wide target for this pipeline, so the budget adapts the scale
@@ -1550,7 +1555,6 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
         /* The demo scene is what the window shows until scenes load from disk;
            it is plain ECS entities, created before the frame loop starts. */
         std::vector<ecs::Entity> scene_roots;
-        MachineDrive machine_drive;
         machine_drive.player = &animation_player;
         composeDemoScene(world, &animation_player, scene_roots, &machine_drive);
         if (void* input = resonate_capability_find(
@@ -1560,9 +1564,6 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
         {
             machine_drive.input = static_cast<const ResonateInput*>(input);
         }
-        const EngineSystemDesc machine_drive_desc{
-            "demo.machine_drive", RESONATE_STAGE_UPDATE, &MachineDrive::invoke,
-            &machine_drive};
         if (addEngineSystem(host, machine_drive_desc) != RESONATE_OK)
         {
             return RESONATE_E_INVALID;
