@@ -730,3 +730,51 @@ TEST_CASE("offscreen: the probe pipeline reads the same texel at 1x and 4x",
 
     host->detachAll();
 }
+
+/* A slot retired and handed to a new resource keeps the generation it bumped,
+   so a handle from before the retire is refused instead of naming the
+   newcomer. */
+TEST_CASE("offscreen: a retired image handle stays dead", "[render][offscreen]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    REQUIRE(resonate::render::publishOffscreen(host->capabilities(), 64U, 64U) == RESONATE_OK);
+    REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+    REQUIRE(host->resolve() == RESONATE_OK);
+    REQUIRE(host->attachAll() == RESONATE_OK);
+
+    auto* device = static_cast<ResonateRenderDevice*>(resonate_capability_find(
+        host->capabilities(), resonate::detail::CapabilityTraits<ResonateRenderDevice>::id.value(),
+        1U, nullptr));
+    REQUIRE(device != nullptr);
+    REQUIRE(device->attach_offscreen(device->self, 64U, 64U) == RESONATE_OK);
+
+    ResonateRenderImageDesc desc = {};
+    desc.struct_size = sizeof(desc);
+    desc.format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+    desc.width = 1U;
+    desc.height = 1U;
+    desc.usage = RESONATE_RENDER_IMAGE_SAMPLED;
+    ResonateRenderImage first = {};
+    REQUIRE(device->create_image(device->self, &desc, &first) == RESONATE_OK);
+    device->destroy_image(device->self, first);
+
+    ResonateRenderImage second = {};
+    REQUIRE(device->create_image(device->self, &desc, &second) == RESONATE_OK);
+    /* The pool reuses the index; the generation is what tells them apart. */
+    CHECK(static_cast<std::uint32_t>(second.value) ==
+          static_cast<std::uint32_t>(first.value));
+    CHECK((second.value >> 32U) != (first.value >> 32U));
+
+    /* The stale handle must not name the new image. */
+    const std::uint8_t texel[4] = {255U, 255U, 255U, 255U};
+    CHECK(device->upload_image(device->self, first, texel, sizeof(texel), 4U) ==
+          RESONATE_E_INVALID);
+    CHECK(device->upload_image(device->self, second, texel, sizeof(texel), 4U) == RESONATE_OK);
+    device->destroy_image(device->self, second);
+
+    host->detachAll();
+}

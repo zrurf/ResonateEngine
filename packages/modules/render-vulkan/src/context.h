@@ -290,7 +290,7 @@ class Context
     ResonateStatus createOffscreen(uint32_t width, uint32_t height);
     VkBuffer resolveBuffer(ResonateRenderBuffer handle) const;
     void destroySwapchainObjects();
-    void recreateSwapchain();
+    bool recreateSwapchain();
     /* A pass is its full identity: formats, sample count and the attachment
        actions. Pipelines may run in any pass over their formats at their
        sample count — Vulkan render-pass compatibility ignores load/store — so

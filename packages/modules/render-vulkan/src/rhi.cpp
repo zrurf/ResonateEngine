@@ -101,7 +101,11 @@ ResonateStatus Context::createBuffer(const ResonateRenderBufferDesc& desc,
 
     BufferSlot* slot = nullptr;
     const uint32_t index = buffers_.acquire(&slot);
+    /* The pool keeps the generation it incremented on retire; resetting the
+       slot to its defaults would hand the old handle back to a new resource. */
+    const uint32_t generation = slot->generation;
     *slot = BufferSlot{};
+    slot->generation = generation;
     slot->size = desc.size_bytes;
 
     /* A storage buffer takes a table slot; its handle keeps the pool index.
@@ -223,7 +227,9 @@ ResonateStatus Context::createImage(const ResonateRenderImageDesc& desc, Resonat
 
     ImageSlot* slot = nullptr;
     const uint32_t index = images_.acquire(&slot);
+    const uint32_t generation = slot->generation;
     *slot = ImageSlot{};
+    slot->generation = generation;
     if ((desc.usage & RESONATE_RENDER_IMAGE_SAMPLED) != 0U)
     {
         uint32_t table_slot = 0;
@@ -362,7 +368,9 @@ ResonateStatus Context::createSampler(const ResonateRenderSamplerDesc& desc,
 
     SamplerSlot* slot = nullptr;
     const uint32_t index = samplers_.acquire(&slot);
+    const uint32_t generation = slot->generation;
     *slot = SamplerSlot{};
+    slot->generation = generation;
 
     VkSamplerCreateInfo sampler{};
     sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -422,7 +430,9 @@ ResonateStatus Context::createShader(ResonateRenderShaderStage stage, const void
 
     ShaderSlot* slot = nullptr;
     const uint32_t index = shaders_.acquire(&slot);
+    const uint32_t generation = slot->generation;
     *slot = ShaderSlot{};
+    slot->generation = generation;
 
     VkShaderModuleCreateInfo module{};
     module.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -639,7 +649,9 @@ ResonateStatus Context::createPipeline(const ResonateRenderGraphicsPipelineDesc&
 
     PipelineSlot* slot = nullptr;
     const uint32_t index = pipelines_.acquire(&slot);
+    const uint32_t generation = slot->generation;
     *slot = PipelineSlot{};
+    slot->generation = generation;
     const VkResult created =
         vkCreateGraphicsPipelines(device_, pipeline_cache_, 1, &pipeline, nullptr, &slot->pipeline);
     if (created != VK_SUCCESS)
@@ -984,7 +996,9 @@ ResonateStatus Context::createComputePipeline(ResonateRenderShader shader,
 
     PipelineSlot* slot = nullptr;
     const uint32_t index = pipelines_.acquire(&slot);
+    const uint32_t generation = slot->generation;
     *slot = PipelineSlot{};
+    slot->generation = generation;
     if (vkCreateComputePipelines(device_, pipeline_cache_, 1, &pipeline, nullptr,
                                  &slot->pipeline) != VK_SUCCESS)
     {

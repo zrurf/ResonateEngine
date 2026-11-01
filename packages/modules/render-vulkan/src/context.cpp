@@ -1606,7 +1606,8 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
     info.imageColorSpace = surface_format_.colorSpace;
     info.imageExtent = extent_;
     info.imageArrayLayers = 1;
-    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    /* TRANSFER_SRC is what the debug canvas and texel trace read back. */
+    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = pre_transform;
     info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -1830,12 +1831,15 @@ void Context::destroySwapchainObjects()
     }
 }
 
-void Context::recreateSwapchain()
+bool Context::recreateSwapchain()
 {
     trace("recreate swapchain");
     vkDeviceWaitIdle(device_);
     destroySwapchainObjects();
-    createSwapchain(canvas_width_, canvas_height_);
+    /* A failed recreation leaves no swapchain behind; the caller turns that
+       into E_STATE instead of acquiring from a null handle. */
+    return createSwapchain(canvas_width_, canvas_height_) == RESONATE_OK &&
+           swapchain_ != VK_NULL_HANDLE;
 }
 
 VkFormat Context::formatOf(ResonateRenderFormat format) const
@@ -2309,7 +2313,11 @@ ResonateStatus Context::beginFrame()
         canvas_width_ = width;
         canvas_height_ = height;
         recreate_pending_ = false;
-        recreateSwapchain();
+        if (!recreateSwapchain())
+        {
+            note(surface_failed_, "the swapchain could not be recreated");
+            return RESONATE_E_STATE;
+        }
     }
 
     Frame& frame = frames_[frame_ % kFramesInFlight];
@@ -2365,7 +2373,11 @@ ResonateStatus Context::beginFrame()
         if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
         {
             trace("acquire out of date");
-            recreateSwapchain();
+            if (!recreateSwapchain())
+            {
+                note(surface_failed_, "the swapchain could not be recreated");
+                return RESONATE_E_STATE;
+            }
             acquired = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
                                              frame.image_available, VK_NULL_HANDLE, &image_index);
         }
@@ -2375,10 +2387,12 @@ ResonateStatus Context::beginFrame()
             note(surface_failed_, "image acquisition failed");
             return RESONATE_E_STATE;
         }
-        recreate_pending_ = acquired == VK_SUBOPTIMAL_KHR;
+        /* A suboptimal acquire is a hint, not a reason to drain and rebuild the
+           swapchain every frame; the present path schedules the rebuild when
+           the surface is actually out of date. */
+        recreate_pending_ = false;
         image_index_ = image_index;
-        trace("acquire result=%d image=%u suboptimal=%d", static_cast<int>(acquired), image_index,
-              recreate_pending_ ? 1 : 0);
+        trace("acquire result=%d image=%u", static_cast<int>(acquired), image_index);
     }
 
     vkResetFences(device_, 1, &frame.in_flight);
@@ -2523,24 +2537,18 @@ Context::MsaaTarget& Context::ensureMsaa(uint32_t width, uint32_t height,
 
 void Context::discardMsaa()
 {
-    /* Canvas framebuffers attach the transient views this call is about to
-       destroy. They go through the graveyard like any other retired object, so
-       a frame still holding one finishes first. */
+    /* Every cached framebuffer may attach one of the views this call destroys;
+       a graph-image framebuffer carries source == 0 just like a canvas one.
+       They all go through the graveyard, so a frame still holding one finishes
+       first. The cache is per extent and pass, so recreating them is cheap. */
     {
         Frame& frame = frames_[frame_ % kFramesInFlight];
-        for (auto entry = framebuffer_cache_.begin(); entry != framebuffer_cache_.end();)
+        for (const auto& entry : framebuffer_cache_)
         {
-            if (entry->first.source != 0U)
-            {
-                frame.graveyard.push_back(
-                    Retired{kRetiredFramebuffer, static_cast<void*>(entry->second), nullptr});
-                entry = framebuffer_cache_.erase(entry);
-            }
-            else
-            {
-                ++entry;
-            }
+            frame.graveyard.push_back(
+                Retired{kRetiredFramebuffer, static_cast<void*>(entry.second), nullptr});
         }
+        framebuffer_cache_.clear();
     }
     for (auto& entry : msaa_cache_)
     {
