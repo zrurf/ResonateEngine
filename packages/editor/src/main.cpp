@@ -30,6 +30,7 @@
 #include <resonate/ui/document.h>
 #include <resonate/ui/event.h>
 #include <resonate/ui/string_table.h>
+#include <resonate/ui/hit_test.h>
 #include <resonate/ui/text_runtime.h>
 
 #include "resonate.ui/components.gen.h"
@@ -117,6 +118,16 @@ struct EditorState
        so the first save asks and later ones write straight to it. */
     std::string document_path{};
     bool open_pending = false;
+    /* The tree's drag gesture. The host key pass records the pointer and the
+       rows it moves between; the tick performs the reparent on release. */
+    float pointer_x = 0.0F;
+    float pointer_y = 0.0F;
+    Entity row_press{};
+    Entity row_hover{};
+    bool row_dragging = false;
+    Entity reparent_child{};
+    Entity reparent_parent{};
+    bool reparent_pending = false;
     /* The scene roots the run or the last open produced, and the hidden row
        every visible tree row is cloned from: both let an open replace the
        scene without losing the list's shape. */
@@ -496,6 +507,25 @@ void selectEntity(EditorState& state, resonate::ecs::World& world, Entity entity
     selectRow(world, state.scene_list, rowOf(state, entity));
 }
 
+/* The scene row a hit belongs to: the pointer lands on the row's caption, and
+   the row is the child of the list the caption hangs from. */
+Entity rowUnderList(resonate::ecs::World& world, Entity list, Entity hit)
+{
+    Entity current = hit;
+    for (std::uint32_t depth = 0U; current.valid() && depth <= resonate::hierarchy::kMaxDepth;
+         ++depth)
+    {
+        const Entity parent = resonate::hierarchy::parentOf(world, current);
+        if (parent != list)
+        {
+            current = parent;
+            continue;
+        }
+        return current;
+    }
+    return Entity{};
+}
+
 /* Delete removes the selected object from the scene and from the tree list.
    The object is captured as a document first, so undo reinstantiates it under
    the parent it had. The list rebuilds around the change. */
@@ -657,6 +687,55 @@ void duplicateSelected(EditorState& state, resonate::ecs::World& world)
             rebuildSceneList(state, target);
             selectEntity(state, target, restored);
         });
+}
+
+/* A drop moves `entity` under `new_parent`: nesting is the scene format's
+   parenting, so the gesture is one hierarchy command, and the undo entry
+   records the parent it came from. */
+void reparentObject(EditorState& state, resonate::ecs::World& world, Entity entity,
+                    Entity new_parent)
+{
+    if (!world.alive(entity) || !world.alive(new_parent) || entity == new_parent)
+    {
+        return;
+    }
+    /* A drop inside the moved subtree would fold the tree; ignore it rather
+       than let the command's refusal be the only answer. */
+    if (resonate::hierarchy::isAncestorOf(world, entity, new_parent))
+    {
+        return;
+    }
+    const Entity old_parent = resonate::hierarchy::parentOf(world, entity);
+    if (old_parent == new_parent)
+    {
+        return;
+    }
+    const std::string name = resonate::hierarchy::nameOf(world, entity);
+    {
+        resonate::ecs::CommandBuffer commands(world);
+        resonate::hierarchy::setParent(commands, entity, new_parent);
+        world.play(commands);
+    }
+    rebuildSceneList(state, world);
+    selectEntity(state, world, entity);
+    const auto move = [&state, entity](resonate::ecs::World& target, Entity parent)
+    {
+        if (!target.alive(entity) || !parent.valid() || !target.alive(parent))
+        {
+            return;
+        }
+        resonate::ecs::CommandBuffer commands(target);
+        resonate::hierarchy::setParent(commands, entity, parent);
+        target.play(commands);
+        rebuildSceneList(state, target);
+        selectEntity(state, target, entity);
+    };
+    pushUndo(
+        state, localized("editor.move") + " " + name,
+        [&state, entity, old_parent, move](resonate::ecs::World& target)
+        { move(target, old_parent); },
+        [&state, entity, new_parent, move](resonate::ecs::World& target)
+        { move(target, new_parent); });
 }
 
 /* Every object under the scene roots, parents before children, with its depth:
@@ -1174,7 +1253,56 @@ void sceneRootsLoaded(void* context, resonate::ecs::World&, const std::vector<En
 bool editorKeys(void* context, resonate::ecs::World& world, const ResonateInput* input)
 {
     auto* state = static_cast<EditorState*>(context);
-    if (input == nullptr || resonate::ui::focusedTextEditable(world, state->canvas))
+    if (input == nullptr)
+    {
+        return false;
+    }
+    /* The pointer's sample and the tree's drag gesture run every frame: rows
+       are not text fields, so focus does not gate them. The release only arms
+       a latch -- structural changes wait for the tick. */
+    {
+        ResonateVec2 position{};
+        input->pointer_position(input->self, &position);
+        state->pointer_x = position.x;
+        state->pointer_y = position.y;
+        const auto* pointer = world.get<resonate::ui::PointerState>(state->canvas);
+        if (pointer != nullptr)
+        {
+            if (pointer->down && !state->row_press.valid())
+            {
+                if (rowOf(*state, pointer->press).valid())
+                {
+                    state->row_press = pointer->press;
+                }
+            }
+            else if (pointer->down && state->row_press.valid())
+            {
+                const Entity hit =
+                    resonate::ui::hitTest(world, state->canvas, state->pointer_x,
+                                          state->pointer_y);
+                const Entity hover = rowUnderList(world, state->scene_list, hit);
+                if (hover.valid() && hover != state->row_press)
+                {
+                    state->row_dragging = true;
+                    state->row_hover = hover;
+                }
+            }
+            else if (!pointer->down && state->row_press.valid())
+            {
+                if (state->row_dragging && state->row_hover.valid())
+                {
+                    state->reparent_child = entityOfRow(*state, state->row_press);
+                    state->reparent_parent = entityOfRow(*state, state->row_hover);
+                    state->reparent_pending = state->reparent_child.valid() &&
+                                              state->reparent_parent.valid();
+                }
+                state->row_press = {};
+                state->row_hover = {};
+                state->row_dragging = false;
+            }
+        }
+    }
+    if (resonate::ui::focusedTextEditable(world, state->canvas))
     {
         return false;
     }
@@ -1365,6 +1493,13 @@ void tick(void* context, resonate::ecs::World& world, resonate::ecs::CommandBuff
     {
         state->duplicate_pending = false;
         duplicateSelected(*state, world);
+    }
+    if (state->reparent_pending)
+    {
+        state->reparent_pending = false;
+        reparentObject(*state, world, state->reparent_child, state->reparent_parent);
+        state->reparent_child = {};
+        state->reparent_parent = {};
     }
     if (state->open_pending)
     {
