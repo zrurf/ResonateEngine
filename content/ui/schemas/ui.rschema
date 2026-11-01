@@ -421,6 +421,7 @@
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color border_color border_width"/>
+    <uses component="Shown" expose="shown"/>
     <uses component="LayoutGroup"
           expose="direction justify align gap wrap padding_left padding_top padding_right padding_bottom"/>
     <field name="bind-x" type="binding"/>
@@ -464,6 +465,7 @@
     <uses component="RectTransform"
           expose="x y width height anchor_min anchor_max pivot z position"/>
     <uses component="Background" expose="color border_color border_width"/>
+    <uses component="Shown" expose="shown"/>
     <field name="bind-x" type="binding"/>
     <field name="bind-y" type="binding"/>
     <field name="bind-width" type="binding"/>

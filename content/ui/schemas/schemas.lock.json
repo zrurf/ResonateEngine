@@ -37,7 +37,8 @@
         "  field bind-width binding",
         "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
-        "  uses Background expose border_color border_width color"
+        "  uses Background expose border_color border_width color",
+        "  uses Shown expose shown"
       ]
     },
     {
@@ -271,6 +272,7 @@
         "  field bind-height binding",
         "  uses RectTransform expose anchor_max anchor_min height pivot position width x y z",
         "  uses Background expose border_color border_width color",
+        "  uses Shown expose shown",
         "  uses LayoutGroup expose align direction gap justify padding_bottom padding_left padding_right padding_top wrap"
       ]
     },
