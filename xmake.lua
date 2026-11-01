@@ -80,6 +80,9 @@ end
 -- unreachable here; the Gitee mirror is used instead.
 includes("packages/thirdparty/harfbuzz")
 includes("packages/thirdparty/basisu")
+-- Project-local package: the official release tarball through the archive
+-- host's codeload endpoint, built portable on every target.
+includes("packages/thirdparty/blake3")
 
 -- The engine libraries and modules alone: no window, editor, launcher or
 -- tests. A cross-compiled build (Android) uses this to skip the host-only
@@ -94,6 +97,7 @@ add_requires("basisu 1.16.4")
 add_requires("harfbuzz 13.1.1", {configs = {freetype = false, icu = false, glib = false}})
 add_requires("toml++ v3.4.0")
 add_requires("xxhash v0.8.4", {verify = false, configs = {cmake = false}})
+add_requires("blake3 1.8.7", {verify = false})
 if not get_config("engine_only") then
     add_requires("catch2 v3.16.0", {verify = false})
     add_requires("libsdl3 3.4.16", {verify = false})

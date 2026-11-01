@@ -98,6 +98,7 @@ target("Resonate.Tests")
     add_deps("Resonate.Module", "Resonate.Window", "Resonate.Render",
              "Resonate.UI.Abi", "Resonate.PAL", "Resonate.Runtime",
              "Resonate.Core.Container", "Resonate.Core.Math", "Resonate.Core.Job",
+             "Resonate.Core.Hash",
              "Resonate.ECS", "Resonate.Gameplay", "Resonate.Hierarchy", "Resonate.UI",
              "Resonate.Document", "Resonate.Document.Bind", "Resonate.Renderer", "Resonate.Text",
              "Resonate.CSharp", "Resonate.Startup", "Resonate.Animation", "Resonate.Scene")
