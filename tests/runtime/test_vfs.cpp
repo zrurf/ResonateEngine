@@ -138,3 +138,50 @@ TEST_CASE("vfs: a missing manifest fails the open", "[asset][vfs]")
     CHECK(resonate::asset::DirectoryVfs::open("no/such/products.toml", error) == nullptr);
     CHECK(error.find("cannot open") != std::string::npos);
 }
+
+TEST_CASE("vfs: a CAS store reads a product through its chunk manifest", "[asset][vfs]")
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "resonate_vfs_cas";
+    std::error_code code;
+    std::filesystem::remove_all(root, code);
+    std::filesystem::create_directories(root, code);
+
+    resonate::asset::ContentKey key{};
+    for (std::size_t index = 0; index < key.size(); ++index)
+    {
+        key[index] = static_cast<std::uint8_t>(index * 3U + 1U);
+    }
+    const std::string content = "a product that lives in chunks";
+    resonate::asset::CasManifest chunks;
+    std::string error;
+    REQUIRE(resonate::asset::storeBuffer(
+        root.string(), key,
+        resonate::Span<const std::byte>(reinterpret_cast<const std::byte*>(content.data()),
+                                        content.size()),
+        chunks, error));
+    writeFile(root / "product.cas.toml", resonate::asset::formatManifest(chunks));
+    writeFile(root / "products.toml",
+              "[[product]]\nguid = \"0197d6e4-8a2f-7c31-9b40-5d6e7f8091a2\"\n"
+              "sub_id = 1\npath = \"product.cas.toml\"\n");
+
+    const AssetId id = makeId("0197d6e4-8a2f-7c31-9b40-5d6e7f8091a2", 1U);
+    const std::unique_ptr<resonate::asset::CasVfs> vfs =
+        resonate::asset::CasVfs::open(root.string(), key, error);
+    REQUIRE(vfs != nullptr);
+    std::vector<std::byte> bytes;
+    REQUIRE(vfs->read(id, bytes, error));
+    CHECK(textOf(bytes) == content);
+
+    /* The key is the salt: another one reaches the same files and rejects
+       every chunk. */
+    resonate::asset::ContentKey other = key;
+    other[0] = static_cast<std::uint8_t>(other[0] ^ 0xFFU);
+    const std::unique_ptr<resonate::asset::CasVfs> foreign =
+        resonate::asset::CasVfs::open(root.string(), other, error);
+    REQUIRE(foreign != nullptr);
+    CHECK_FALSE(foreign->read(id, bytes, error));
+    CHECK(error.find("corrupt") != std::string::npos);
+
+    std::filesystem::remove_all(root, code);
+}

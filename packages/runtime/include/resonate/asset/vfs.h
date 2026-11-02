@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include <resonate/asset/cas.h>
 #include <resonate/asset/identity.h>
 
 namespace resonate::asset
@@ -67,6 +68,36 @@ class DirectoryVfs final : public Vfs
     }
 
     std::string root_;
+    Identity products_;
+};
+
+/* Products stored in a local CAS container: `products.toml` beside a
+   `chunks/` tree, with each product's path naming its chunk manifest. */
+class CasVfs final : public Vfs
+{
+  public:
+    /* `root` holds `products.toml` and `chunks/`; `key` is the salt the
+       product manifests were written with. */
+    [[nodiscard]] static std::unique_ptr<CasVfs> open(const std::string& root,
+                                                      const ContentKey& key, std::string& error);
+
+    [[nodiscard]] bool read(const AssetId& id, std::vector<std::byte>& out,
+                            std::string& error) const override;
+    [[nodiscard]] std::optional<std::string> locate(const AssetId& id) const override;
+
+    [[nodiscard]] const Identity& products() const noexcept
+    {
+        return products_;
+    }
+
+  private:
+    CasVfs(std::string root, ContentKey key, Identity products)
+        : root_(std::move(root)), key_(key), products_(std::move(products))
+    {
+    }
+
+    std::string root_;
+    ContentKey key_;
     Identity products_;
 };
 
