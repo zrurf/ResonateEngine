@@ -726,7 +726,8 @@ bool Clip::loadFile(const std::string& path, Clip& out, std::string& error)
     }
     const std::string text((std::istreambuf_iterator<char>(in)),
                            std::istreambuf_iterator<char>());
-    if (!parse(text, out, error))
+    const auto* const bytes = reinterpret_cast<const std::byte*>(text.data());
+    if (!parseBytes(Span<const std::byte>(bytes, text.size()), out, error))
     {
         error = path + ": " + error;
         return false;

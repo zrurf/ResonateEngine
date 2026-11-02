@@ -190,9 +190,7 @@ bool AnimationPlayer::clipFor(const asset::AssetId& id, std::uint32_t& out_index
             return false;
         }
         Clip clip;
-        if (!Clip::parse(std::string_view(reinterpret_cast<const char*>(bytes.data()),
-                                          bytes.size()),
-                         clip, error))
+        if (!Clip::parseBytes(Span<const std::byte>(bytes.data(), bytes.size()), clip, error))
         {
             return false;
         }

@@ -353,6 +353,16 @@ task("texcook")
         description = "Cook the source textures into the runtime KTX2 container.",
     }
 
+task("cook")
+    set_category("plugin")
+    on_run(function ()
+        os.execv(os.programfile(), {"build", "-y", "Resonate.Tools.Cook"})
+    end)
+    set_menu {
+        usage = "xmake cook",
+        description = "Cook the content tree into the tree a packaged build ships.",
+    }
+
 task("icons")
     set_category("plugin")
     on_run(function ()
@@ -439,6 +449,7 @@ if not get_config("engine_only") then
     includes("packages/tools/texcook")
     includes("packages/tools/assetindex")
     includes("packages/tools/iconcook")
+    includes("packages/tools/cook")
     includes("packages/editor")
     includes("packages/launcher")
     includes("tests")

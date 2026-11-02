@@ -9,11 +9,13 @@
  */
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include <resonate/core/math.h>
+#include <resonate/core/span.h>
 #include "resonate.hierarchy/components.gen.h"
 
 namespace resonate::animation
@@ -88,6 +90,24 @@ struct Clip
     /* Reads the file at `path` and parses it; errors carry the path. */
     [[nodiscard]] static bool loadFile(const std::string& path, Clip& out,
                                        std::string& error);
+
+    /* --- cooked codec --- */
+
+    /* True when the bytes begin with the cooked clip magic. */
+    [[nodiscard]] static bool isBinary(Span<const std::byte> bytes) noexcept;
+
+    /* Parses either form: the XML source during development, the binary form a
+       packaged build ships. */
+    [[nodiscard]] static bool parseBytes(Span<const std::byte> bytes, Clip& out,
+                                         std::string& error);
+
+    /* The cooked form. A loaded clip is plain keyframe data, so the binary is a
+       track table; the checks the XML parser applies (positive duration, keys
+       inside the clip and strictly ascending) are the ones the decoder applies
+       too. */
+    [[nodiscard]] std::vector<std::byte> toBinary() const;
+    [[nodiscard]] static bool parseBinary(Span<const std::byte> bytes, Clip& out,
+                                          std::string& error);
 
     /* The same blend with each clip sampled at its own time, which is what a
        cross-fade between two states of a machine needs: the outgoing clip is

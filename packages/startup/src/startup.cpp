@@ -735,6 +735,26 @@ bool readTextFile(const std::string& path, std::string& out)
     return true;
 }
 
+/* A document arrives as XML in the source tree and as the cooked binary in a
+   packaged tree; the file's magic picks the codec, so the same load path serves
+   both. */
+std::unique_ptr<dom::Document> loadDocument(const std::string& path,
+                                            std::vector<dom::Diagnostic>& diagnostics)
+{
+    std::string bytes;
+    if (!readTextFile(path, bytes))
+    {
+        return nullptr;
+    }
+    const auto* first = reinterpret_cast<const std::byte*>(bytes.data());
+    if (dom::Document::isBinary(Span<const std::byte>(first, bytes.size())))
+    {
+        return dom::Document::parseBinary(Span<const std::byte>(first, bytes.size()),
+                                          diagnostics);
+    }
+    return dom::Document::parse(bytes, &contentSchema(), diagnostics);
+}
+
 /* The demo scene: content/scene/demo.rscene instantiated through the scene
    adapter. The middle box's state machine and the ceiling light grid stay
    procedural: animation authoring and stress fixtures are not content yet. */
@@ -752,14 +772,8 @@ void composeDemoScene(ecs::World& world, animation::AnimationPlayer* player,
         std::fprintf(stderr, "resonate: scene: content/scene/demo.rscene is missing\n");
         return;
     }
-    std::string text;
-    if (!readTextFile(path, text))
-    {
-        std::fprintf(stderr, "resonate: scene: cannot read %s\n", path.c_str());
-        return;
-    }
     std::vector<dom::Diagnostic> diagnostics;
-    auto document = dom::Document::parse(text, &contentSchema(), diagnostics);
+    auto document = loadDocument(path, diagnostics);
     if (document == nullptr)
     {
         for (const dom::Diagnostic& diagnostic : diagnostics)
@@ -868,14 +882,8 @@ ecs::Entity loadDemoHud(ecs::World& world, const std::string& configured, bool r
         return composeBuiltinHud(world);
     }
 
-    std::string text;
-    if (!readTextFile(path, text))
-    {
-        std::fprintf(stderr, "resonate: ui document: cannot read %s\n", path.c_str());
-        return ecs::Entity{};
-    }
     std::vector<dom::Diagnostic> diagnostics;
-    auto document = dom::Document::parse(text, &contentSchema(), diagnostics);
+    auto document = loadDocument(path, diagnostics);
     if (document == nullptr)
     {
         for (const dom::Diagnostic& diagnostic : diagnostics)
@@ -1513,12 +1521,17 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
             {
                 std::string xml;
                 std::string strings_error;
-                if (!readTextFile(strings_path, xml) ||
-                    (g_ui_strings = ui::StringTable::parse(xml, strings_error)) == nullptr)
+                if (!readTextFile(strings_path, xml))
                 {
-                    std::fprintf(stderr, "resonate: ui strings: %s\n",
-                                 strings_error.empty() ? strings_path.c_str()
-                                                       : strings_error.c_str());
+                    std::fprintf(stderr, "resonate: ui strings: cannot read %s\n",
+                                 strings_path.c_str());
+                    return RESONATE_E_INVALID;
+                }
+                const auto* const bytes = reinterpret_cast<const std::byte*>(xml.data());
+                if ((g_ui_strings = ui::StringTable::parseBytes(
+                         Span<const std::byte>(bytes, xml.size()), strings_error)) == nullptr)
+                {
+                    std::fprintf(stderr, "resonate: ui strings: %s\n", strings_error.c_str());
                     return RESONATE_E_INVALID;
                 }
             }

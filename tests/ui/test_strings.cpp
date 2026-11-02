@@ -68,6 +68,41 @@ TEST_CASE("ui strings: a table resolves keys and decodes entities", "[ui][string
     CHECK(table->find("missing") == nullptr);
 }
 
+TEST_CASE("ui strings: the cooked table round trips", "[ui][strings]")
+{
+    const char* const xml = R"xml(<?xml version="1.0" encoding="utf-8"?>
+<strings locale="en">
+  <entry key="b">second</entry>
+  <entry key="a">first &amp; only</entry>
+</strings>)xml";
+    std::string error;
+    const std::unique_ptr<StringTable> table = StringTable::parse(xml, error);
+    REQUIRE(table != nullptr);
+
+    const std::vector<std::byte> cooked = table->toBinary();
+    CHECK(StringTable::isBinary(resonate::Span<const std::byte>(cooked.data(), cooked.size())));
+    const std::unique_ptr<StringTable> reloaded = StringTable::parseBytes(
+        resonate::Span<const std::byte>(cooked.data(), cooked.size()), error);
+    REQUIRE(reloaded != nullptr);
+    CHECK(reloaded->locale() == "en");
+    REQUIRE(reloaded->find("a") != nullptr);
+    CHECK(*reloaded->find("a") == "first & only");
+    REQUIRE(reloaded->find("b") != nullptr);
+    CHECK(*reloaded->find("b") == "second");
+
+    SECTION("damage is refused")
+    {
+        CHECK(StringTable::parseBytes(
+                  resonate::Span<const std::byte>(cooked.data(), cooked.size() - 1U), error) ==
+              nullptr);
+        std::vector<std::byte> extended = cooked;
+        extended.push_back(std::byte{0});
+        CHECK(StringTable::parseBytes(
+                  resonate::Span<const std::byte>(extended.data(), extended.size()), error) ==
+              nullptr);
+    }
+}
+
 TEST_CASE("ui strings: malformed tables name the reason", "[ui][strings]")
 {
     const auto fails = [](const char* xml, const char* reason)

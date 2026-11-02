@@ -1,7 +1,9 @@
 #include <catch2/catch_all.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <string>
+#include <vector>
 
 #include <resonate/animation/player.h>
 #include <resonate/animation/state_machine.h>
@@ -264,6 +266,63 @@ TEST_CASE("a clip parses from the .rclip XML subset", "[animation]")
   <track field="position" root_motion="true"><key t="0" value="0 0 0"/></track>
 </clip>)xml", clip, error));
     CHECK(clip.position_root_motion);
+}
+
+TEST_CASE("a clip round trips through the cooked codec", "[animation]")
+{
+    constexpr const char* kText = R"xml(<clip duration="2">
+  <track field="position" root_motion="true">
+    <key t="0" value="0 0 0"/>
+    <key t="2" value="0 0 4"/>
+  </track>
+  <track field="rotation">
+    <key t="0.5" value="0 0 0.6 0.8"/>
+  </track>
+  <track field="scale">
+    <key t="0" value="1 1 1"/>
+    <key t="1" value="2 2 2"/>
+  </track>
+</clip>)xml";
+    Clip clip;
+    std::string error;
+    REQUIRE(Clip::parse(kText, clip, error));
+
+    const std::vector<std::byte> bytes = clip.toBinary();
+    CHECK(Clip::isBinary(resonate::Span<const std::byte>(bytes.data(), bytes.size())));
+
+    Clip reloaded;
+    REQUIRE(Clip::parseBinary(resonate::Span<const std::byte>(bytes.data(), bytes.size()),
+                              reloaded, error));
+    CHECK(near(reloaded.duration, clip.duration));
+    CHECK(reloaded.position_root_motion);
+    REQUIRE(reloaded.position.keys.size() == 2U);
+    REQUIRE(reloaded.rotation.keys.size() == 1U);
+    REQUIRE(reloaded.scale.keys.size() == 2U);
+    CHECK(near(reloaded.rotation.keys[0].value.w, 0.8F));
+
+    /* The point of the codec is the sampled result, not the bytes. */
+    resonate::hierarchy::LocalTransform from_source;
+    resonate::hierarchy::LocalTransform from_cooked;
+    clip.sample(0.75F, false, from_source);
+    reloaded.sample(0.75F, false, from_cooked);
+    CHECK(near(from_cooked.position.y, from_source.position.y));
+    CHECK(near(from_cooked.scale.x, from_source.scale.x));
+    CHECK(near(from_cooked.rotation.w, from_source.rotation.w));
+    CHECK(near(clip.rootAt(1.0F).z, reloaded.rootAt(1.0F).z));
+
+    SECTION("damage is refused")
+    {
+        CHECK_FALSE(Clip::parseBinary(
+            resonate::Span<const std::byte>(bytes.data(), bytes.size() / 2U), reloaded, error));
+        std::vector<std::byte> extended = bytes;
+        extended.push_back(std::byte{0});
+        CHECK_FALSE(Clip::parseBinary(
+            resonate::Span<const std::byte>(extended.data(), extended.size()), reloaded, error));
+        std::vector<std::byte> future = bytes;
+        future[4] = std::byte{9};
+        CHECK_FALSE(Clip::parseBinary(
+            resonate::Span<const std::byte>(future.data(), future.size()), reloaded, error));
+    }
 }
 
 TEST_CASE("a clip refuses what the grammar does not name", "[animation]")
