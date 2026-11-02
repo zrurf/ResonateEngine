@@ -8,6 +8,7 @@
 #include <utility>
 
 #include <resonate/core/blake3.h>
+#include <resonate/pal/io.h>
 
 namespace resonate::save
 {
@@ -73,7 +74,37 @@ bool validName(const std::string& name)
             return false;
         }
     }
-    return name.find("..") == std::string::npos;
+    if (name.find("..") != std::string::npos)
+    {
+        return false;
+    }
+    /* Windows opens a device, not a file, for these stems whatever follows
+       them; a save named CON would write to the console and then fail its
+       rename. The stem is what precedes the first dot. */
+    static const char* const kReserved[] = {"con",    "prn",  "aux",  "nul",  "com1", "com2",
+                                            "com3",   "com4", "com5", "com6", "com7", "com8",
+                                            "com9",   "lpt1", "lpt2", "lpt3", "lpt4", "lpt5",
+                                            "lpt6",   "lpt7", "lpt8", "lpt9"};
+    const std::size_t stem_end = name.find('.');
+    const std::string stem =
+        name.substr(0U, stem_end == std::string::npos ? name.size() : stem_end);
+    for (const char* const reserved : kReserved)
+    {
+        bool same = stem.size() == std::strlen(reserved);
+        for (std::size_t index = 0U; same && index < stem.size(); ++index)
+        {
+            const char lowered =
+                stem[index] >= 'A' && stem[index] <= 'Z'
+                    ? static_cast<char>(stem[index] - 'A' + 'a')
+                    : stem[index];
+            same = lowered == reserved[index];
+        }
+        if (same)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -181,29 +212,58 @@ bool SaveStore::write(const std::string& name, const SaveFile& file, std::string
         }
         out.write(reinterpret_cast<const char*>(bytes.data()),
                   static_cast<std::streamsize>(bytes.size()));
-        if (!out.good())
+        out.close();
+        if (!out)
         {
             std::filesystem::remove(temporary, code);
             error = "cannot write " + *target;
             return false;
         }
     }
+    /* The rename is the atomic step, so the bytes have to reach the disk
+       before it: after a power loss the metadata can commit while the data
+       blocks have not. */
+    ResonateFileHandle handle{};
+    if (resonate_pal_io_open_file(&handle, temporary.c_str(), RESONATE_FILE_WRITE) ==
+        RESONATE_PAL_OK)
+    {
+        resonate_pal_io_flush(&handle);
+        resonate_pal_io_close_file(&handle);
+    }
+    else
+    {
+        std::filesystem::remove(temporary, code);
+        error = "cannot flush " + *target;
+        return false;
+    }
     std::filesystem::rename(temporary, *target, code);
     if (code)
     {
-        /* Some platforms refuse to rename over an existing file; replacing it
-           is the documented outcome, and the temporary is still intact. */
-        std::error_code ignored;
-        std::filesystem::remove(*target, ignored);
+        /* Some platforms refuse to rename over an existing file. The old save
+           moves aside first, so a failed replace still leaves one of the two
+           under the slot's name. */
+        const std::string backup = *target + ".bak";
+        std::error_code backup_code;
+        std::filesystem::rename(*target, backup, backup_code);
+        if (backup_code)
+        {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+            error = "cannot replace " + *target;
+            return false;
+        }
         code.clear();
         std::filesystem::rename(temporary, *target, code);
-    }
-    if (code)
-    {
+        if (code)
+        {
+            std::error_code ignored;
+            std::filesystem::rename(backup, *target, ignored);
+            std::filesystem::remove(temporary, ignored);
+            error = "cannot replace " + *target;
+            return false;
+        }
         std::error_code ignored;
-        std::filesystem::remove(temporary, ignored);
-        error = "cannot replace " + *target;
-        return false;
+        std::filesystem::remove(backup, ignored);
     }
     return true;
 }

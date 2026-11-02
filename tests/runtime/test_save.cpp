@@ -141,6 +141,14 @@ TEST_CASE("save: names cannot escape the save directory", "[save]")
         CHECK_FALSE(store.pathOf(name).has_value());
         CHECK_FALSE(store.write(name, file, error));
     }
+    /* Windows reserves these stems whatever follows them. */
+    for (const char* name : {"con", "NUL", "Com1", "con.save"})
+    {
+        INFO("name: " << name);
+        CHECK_FALSE(store.pathOf(name).has_value());
+    }
     /* A plain stem still works. */
     CHECK(store.write("slot-1_ok", file, error));
+    /* A stem that merely contains a reserved word is fine. */
+    CHECK(store.write("console", file, error));
 }
