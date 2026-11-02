@@ -30,7 +30,9 @@ target("Resonate.Renderer")
              "Resonate.Animation",
              "Resonate.Hierarchy", "Resonate.UI", "Resonate.Core.Math",
              "Resonate.Runtime")
-    if not get_config("engine_only") then
+    -- The cook runs on the machine that builds the desktop tree; a cross
+    -- build stages the same platform-independent textures from it.
+    if not get_config("engine_only") and is_plat(os.host()) then
         add_deps("Resonate.Tools.TexCook", {links = false, inherit = false})
     end
     add_packages("basisu", {public = true})
