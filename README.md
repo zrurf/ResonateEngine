@@ -24,7 +24,7 @@ packages/launcher     game binary
 packages/tools/*      host tools: the schema compiler (C#) and, later, its siblings
 content/*             content modules: schema declarations (.rschema), assets later
 schema/               file-shape contracts: JSON Schema for the manifests, XSD for the schema language
-scripts/              xmake task scripts (module-check, schema, slang, format)
+packages/tools/builder the C# SDK builder: schema, contracts, assets, cook, packaging, task commands
 tests/                Catch2 v3 suite; tests/bench holds the ECS acceptance bench
 ```
 

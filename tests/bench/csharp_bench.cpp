@@ -126,7 +126,7 @@ int main()
     if (assets.empty())
     {
         std::printf("[csharp-bench] missing build/tools/csharp-bench; "
-                    "run scripts/csharp_bench.lua\n");
+                    "run `xmake csharp-bench`\n");
         return 1;
     }
 

@@ -641,7 +641,7 @@ TEST_CASE("a tree planted in UPDATE is transformed by the same frame's LATE", "[
 TEST_CASE("a headless run calls a managed system every fixed step", "[runtime][frame][csharp]")
 {
     const std::string fixture = resonate::test::findBuildDirectory("tools/csharp-test");
-    INFO("scripts/csharp_test.lua publishes the fixture before this target builds");
+    INFO("the builder's csharp-test command publishes the fixture before this target builds");
     REQUIRE_FALSE(fixture.empty());
 
     resonate::csharp::ManagedSystems systems;

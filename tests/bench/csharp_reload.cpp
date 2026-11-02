@@ -101,7 +101,7 @@ int main()
     const std::string reload = resonate::test::findBuildDirectory("tools/csharp-reload");
     if (fixture.empty() || bootstrap.empty() || reload.empty())
     {
-        std::printf("[csharp-reload] missing fixtures; run scripts/csharp_reload.lua\n");
+        std::printf("[csharp-reload] missing fixtures; run `xmake csharp-reload`\n");
         return 1;
     }
 

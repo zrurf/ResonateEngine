@@ -27,8 +27,8 @@ using RegisterFn = int (*)(void*);
 /* The fixture's counter block; the managed tick documents the indices. */
 constexpr int kCounterWords = 12;
 
-/* The fixture is tests/csharp/managed; scripts/csharp_test.lua publishes it to
-   build/tools/csharp-test before the test target builds. */
+/* The fixture is tests/csharp/managed; the builder's csharp-test command
+   publishes it to build/tools/csharp-test before the test target builds. */
 struct Fixture
 {
     std::string directory;

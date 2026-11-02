@@ -67,7 +67,6 @@ internal static class SchemaParser
         SchemaFile file = new(path, module.Value, module.Line, module.Column);
         foreach (XmlElement element in root.Children)
         {
-            System.Console.Error.WriteLine($"DBG {path} child <{element.Name}>");
             if (element.Name == "import")
             {
                 ParseImport(element, file, diagnostics);

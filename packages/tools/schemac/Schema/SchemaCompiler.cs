@@ -44,7 +44,6 @@ internal static class SchemaCompiler
         }
         foreach (ModuleUnit module in modules)
         {
-            System.Console.Error.WriteLine($"DBG {module.Id} imports=[{string.Join(",", module.Imports)}] files={module.Files.Count}");
             IndexTypes(module, diagnostics);
             foreach (TypeDecl type in module.Types)
             {
