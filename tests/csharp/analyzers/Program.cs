@@ -51,6 +51,16 @@ internal static class Program
         "namespace System { public static class Console {" +
         " public static readonly System.IO.TextWriter Error = null; } }";
 
+    /* Every case compiles against the same assemblies. The reference holds a
+       mapped PE image, so creating one per case reads the metadata again and
+       again; one cached set keeps the self-check's footprint flat. */
+    private static readonly MetadataReference CoreReference =
+        MetadataReference.CreateFromFile(typeof(object).Assembly.Location);
+
+    private static readonly MetadataReference InteropReference =
+        MetadataReference.CreateFromFile(
+            typeof(System.Runtime.InteropServices.UnmanagedCallersOnlyAttribute).Assembly.Location);
+
     private const string Marked = "[assembly: Resonate.CSharp.ResonateBehaviour]\n";
     private const string Mutable =
         "namespace Game { public static class State { public static int Frames; } }";
@@ -151,7 +161,7 @@ internal static class Program
             "Behaviour",
             new[] { CSharpSyntaxTree.ParseText(Stubs, parse),
                     CSharpSyntaxTree.ParseText(source, parse) },
-            new[] { MetadataReference.CreateFromFile(typeof(object).Assembly.Location) },
+            new[] { CoreReference },
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true));
         ImmutableArray<Diagnostic> diagnostics = compilation
             .WithAnalyzers(ImmutableArray.Create<DiagnosticAnalyzer>(
@@ -184,13 +194,7 @@ internal static class Program
             "Behaviour",
             new[] { CSharpSyntaxTree.ParseText(Stubs, parse),
                     CSharpSyntaxTree.ParseText(source, parse) },
-            new[]
-            {
-                MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
-                MetadataReference.CreateFromFile(
-                    typeof(System.Runtime.InteropServices.UnmanagedCallersOnlyAttribute).Assembly
-                        .Location),
-            },
+            new[] { CoreReference, InteropReference },
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true));
 
         GeneratorDriver driver = CSharpGeneratorDriver.Create(new RegistrationGenerator());

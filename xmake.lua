@@ -142,10 +142,6 @@ target("Resonate.Vulkan")
         add_syslinks("vulkan", {public = true})
     end
 
-local function tidy_check_output(output)
-    return (output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", ""))
-end
-
 add_rules("resonate.module-check")
 
 local check_done = false

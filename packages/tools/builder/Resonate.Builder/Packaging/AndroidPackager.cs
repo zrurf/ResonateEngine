@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -336,46 +334,6 @@ internal sealed class AndroidPackager
 
     private static void Run(string program, params string[] arguments)
     {
-        List<string> actual = [.. arguments];
-        string executable = program;
-        /* A .bat is not an executable image: CreateProcess needs cmd.exe to
-           interpret it, and d8 ships as a batch file on Windows. */
-        if (OperatingSystem.IsWindows() && program.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
-        {
-            executable = "cmd.exe";
-            actual.Insert(0, program);
-            actual.Insert(0, "/c");
-        }
-        ProcessStartInfo info = new(executable) { UseShellExecute = false };
-        foreach (string argument in actual)
-        {
-            info.ArgumentList.Add(argument);
-        }
-        try
-        {
-            using Process? process = Process.Start(info);
-            if (process is null)
-            {
-                throw new BuilderException($"{program}: could not be started");
-            }
-            process.WaitForExit();
-            if (process.ExitCode != 0)
-            {
-                throw new BuilderException($"{program} failed with code {process.ExitCode}");
-            }
-        }
-        catch (Win32Exception error)
-        {
-            throw new BuilderException($"{program}: {error.Message}");
-        }
-    }
-}
-
-/* A packaging problem with a message meant for the developer, not a stack
-   trace. */
-internal sealed class BuilderException : Exception
-{
-    internal BuilderException(string message) : base(message)
-    {
+        ProcessRunner.MustRun(program, arguments);
     }
 }

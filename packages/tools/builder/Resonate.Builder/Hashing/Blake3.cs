@@ -175,6 +175,15 @@ internal static class Blake3
             Iv[0], Iv[1], Iv[2], Iv[3],
             (uint)counter, (uint)(counter >> 32), blockLength, flags,
         ];
+        RunRounds(state, block);
+        for (int index = 0; index < 8; ++index)
+        {
+            cv[index] = state[index] ^ state[index + 8];
+        }
+    }
+
+    private static void RunRounds(uint[] state, uint[] block)
+    {
         uint[] message = new uint[16];
         Array.Copy(block, message, 16);
         for (int round = 0; round < 7; ++round)
@@ -196,10 +205,6 @@ internal static class Blake3
             Mix(state, message, 1, 6, 11, 12, 10, 11);
             Mix(state, message, 2, 7, 8, 13, 12, 13);
             Mix(state, message, 3, 4, 9, 14, 14, 15);
-        }
-        for (int index = 0; index < 8; ++index)
-        {
-            cv[index] = state[index] ^ state[index + 8];
         }
     }
 
@@ -277,28 +282,7 @@ internal static class Blake3
                 Iv[0], Iv[1], Iv[2], Iv[3],
                 (uint)counter, (uint)(counter >> 32), blockLength, flags,
             ];
-            uint[] message = new uint[16];
-            Array.Copy(block, message, 16);
-            for (int round = 0; round < 7; ++round)
-            {
-                if (round != 0)
-                {
-                    uint[] permuted = new uint[16];
-                    for (int index = 0; index < 16; ++index)
-                    {
-                        permuted[index] = message[MessagePermutation[index]];
-                    }
-                    message = permuted;
-                }
-                Mix(state, message, 0, 4, 8, 12, 0, 1);
-                Mix(state, message, 1, 5, 9, 13, 2, 3);
-                Mix(state, message, 2, 6, 10, 14, 4, 5);
-                Mix(state, message, 3, 7, 11, 15, 6, 7);
-                Mix(state, message, 0, 5, 10, 15, 8, 9);
-                Mix(state, message, 1, 6, 11, 12, 10, 11);
-                Mix(state, message, 2, 7, 8, 13, 12, 13);
-                Mix(state, message, 3, 4, 9, 14, 14, 15);
-            }
+            RunRounds(state, block);
             return state;
         }
     }
