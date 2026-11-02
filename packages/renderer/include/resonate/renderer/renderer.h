@@ -24,6 +24,11 @@
 
 struct ResonateCapabilityRegistry;
 
+namespace resonate::asset
+{
+class Vfs;
+}
+
 namespace resonate::renderer
 {
 
@@ -65,6 +70,11 @@ class RenderSystem
     /* The registry the device capability is resolved through. Borrowed; the
        host outlives the frame loop. */
     void setRegistry(ResonateCapabilityRegistry* registry);
+
+    /* The store authored texture references resolve through. Borrowed and set
+       before the frame loop; every product is decoded once on the render
+       thread. */
+    void setAssetStore(const asset::Vfs* store);
 
     /* The live settings below may be changed from any thread while frames run:
        the render thread applies the request at the top of the next frame. */

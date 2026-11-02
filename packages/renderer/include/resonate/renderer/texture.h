@@ -33,6 +33,10 @@ bool decodeKtx2Rgba8(const std::vector<std::uint8_t>& bytes, TextureImage& out_i
    Basis payload. False with a named error for anything else. */
 bool loadTexture(const std::string& path, TextureImage& out_image, std::string& out_error);
 
+/* The same decode over bytes a store already read. */
+bool loadTextureBytes(const std::vector<std::uint8_t>& bytes, TextureImage& out_image,
+                      std::string& out_error);
+
 } // namespace resonate::renderer
 
 #endif /* RESONATE_RENDERER_TEXTURE_H */

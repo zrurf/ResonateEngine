@@ -1230,6 +1230,22 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
     const EngineSystemDesc machine_drive_desc{"demo.machine_drive", RESONATE_STAGE_UPDATE,
                                               &MachineDrive::invoke, &machine_drive};
     renderer::RenderSystem render_system;
+    /* The texture cook writes its own manifest; every product in it is decoded
+       once by the renderer, so authored TextureRefs resolve by id. */
+    std::unique_ptr<asset::Vfs> texture_store;
+    {
+        const std::string products = findContentFile("build/content/textures/products.toml");
+        if (!products.empty())
+        {
+            std::string store_error;
+            texture_store = asset::DirectoryVfs::open(products, store_error);
+            if (texture_store == nullptr)
+            {
+                std::fprintf(stderr, "resonate: textures: %s\n", store_error.c_str());
+            }
+        }
+    }
+    render_system.setAssetStore(texture_store.get());
     /* Resolution trades against frame time; a handheld GPU cannot afford the
        full 2400-wide target for this pipeline, so the budget adapts the scale
        instead of leaving the device at 14 fps. */

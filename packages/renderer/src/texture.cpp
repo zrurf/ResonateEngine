@@ -171,7 +171,17 @@ bool loadTexture(const std::string& path, TextureImage& out_image, std::string& 
     }
     const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
                                           std::istreambuf_iterator<char>());
+    if (!loadTextureBytes(bytes, out_image, out_error))
+    {
+        out_error = path + ": " + out_error;
+        return false;
+    }
+    return true;
+}
 
+bool loadTextureBytes(const std::vector<std::uint8_t>& bytes, TextureImage& out_image,
+                      std::string& out_error)
+{
     /* The uncompressed v1 layout takes the direct path; everything else with a
        KTX2 identifier goes through libktx (Basis payloads are transcoded). */
     if (bytes.size() >= kHeaderSize &&

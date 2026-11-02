@@ -39,6 +39,10 @@ class Vfs
     /* Where the product lives, for tooling and diagnostics; nothing for an id
        this backend does not know. */
     [[nodiscard]] virtual std::optional<std::string> locate(const AssetId& id) const = 0;
+
+    /* What the backend can serve, for a consumer that preloads a product
+       family (the renderer's textures). */
+    [[nodiscard]] virtual const Identity& products() const noexcept = 0;
 };
 
 /* Products stored as plain files beside a products manifest: the development
@@ -56,7 +60,7 @@ class DirectoryVfs final : public Vfs
     [[nodiscard]] std::optional<std::string> locate(const AssetId& id) const override;
 
     /* The manifest's products, for an editor or a tool that enumerates them. */
-    [[nodiscard]] const Identity& products() const noexcept
+    [[nodiscard]] const Identity& products() const noexcept override
     {
         return products_;
     }
@@ -84,8 +88,7 @@ class CasVfs final : public Vfs
     [[nodiscard]] bool read(const AssetId& id, std::vector<std::byte>& out,
                             std::string& error) const override;
     [[nodiscard]] std::optional<std::string> locate(const AssetId& id) const override;
-
-    [[nodiscard]] const Identity& products() const noexcept
+    [[nodiscard]] const Identity& products() const noexcept override
     {
         return products_;
     }

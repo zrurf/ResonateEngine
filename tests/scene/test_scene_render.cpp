@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,7 @@
 #include <resonate/renderer/renderer.h>
 #include <resonate/scene/capture.h>
 #include <resonate/asset/identity.h>
+#include <resonate/asset/vfs.h>
 #include <resonate/scene/document.h>
 #include <resonate/ui/document.h>
 #include <resonate/ui/layout.h>
@@ -187,6 +189,15 @@ TEST_CASE("scene render: a guid texture reference resolves to the cooked texture
 
     resonate::renderer::RenderSystem render_system;
     render_system.setRegistry(host->capabilities());
+    /* The authored textures come through the store the cook wrote; without
+       one the renderer's path-based checker remains the fallback. */
+    std::string store_error;
+    const std::unique_ptr<resonate::asset::DirectoryVfs> texture_store =
+        resonate::asset::DirectoryVfs::open(
+            resonate::test::findBuildDirectory("content/textures") + "/products.toml",
+            store_error);
+    REQUIRE(texture_store != nullptr);
+    render_system.setAssetStore(texture_store.get());
     for (int frame = 0; frame < 8; ++frame)
     {
         render_system.run(world);

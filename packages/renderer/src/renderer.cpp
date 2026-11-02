@@ -22,6 +22,7 @@
 #include <vector>
 
 #include <resonate/core/math.h>
+#include <resonate/asset/vfs.h>
 #include <resonate/ecs/query.h>
 #include <resonate/hierarchy/name.h>
 #include <resonate/hierarchy/tree.h>
@@ -204,6 +205,10 @@ struct DrawInstance
     std::uint32_t texture; /* 0 = white, 1 = checker (v1's built-ins) */
     float roughness = 0.5F;
     float metallic = 0.0F;
+    /* An authored reference wins over the legacy slot; the render thread maps
+       it through the store's texture table. */
+    asset::AssetId texture_asset{};
+    bool has_texture_asset = false;
 };
 
 /* The first entity carrying Canvas is the overlay's root this frame. */
@@ -306,6 +311,12 @@ std::string contentTexturesDirectory()
         directory = directory.parent_path();
     }
     return {};
+}
+
+/* A texture table key: the canonical GUID plus the product index. */
+std::string assetKey(const asset::AssetId& id)
+{
+    return asset::formatGuid(id) + ":" + std::to_string(id.sub_id);
 }
 
 /* A tightly packed RGBA8 texture in the sampled-image table. */
@@ -550,6 +561,13 @@ struct RenderSystem::Impl
     std::uint64_t checker_asset_high = 0U;
     std::uint32_t checker_asset_sub = 0U;
     bool checker_asset_known = false;
+    /* Authored textures decoded once on the render thread, keyed by asset id
+       text. The main thread only reads the table after warmup; extract carries
+       ids, never slots. */
+    const asset::Vfs* asset_store = nullptr;
+    std::unordered_map<std::string, std::uint32_t> texture_slots;
+    std::unordered_set<std::string> missing_textures;
+    std::vector<ResonateRenderImage> asset_textures;
     std::uint32_t font_atlas_slot = 0U;
     std::uint32_t font_atlas_revision = 0U;
     bool albedo_ready = false;
@@ -1955,7 +1973,10 @@ bool RenderSystem::Impl::createAlbedoTextures(const FrameSnapshot& snapshot)
     const std::vector<std::uint8_t> white_pixels(4U, 255U);
     TextureImage checker;
     std::string texture_error;
-    const std::string content_directory = contentTexturesDirectory();
+    /* With a store the authored textures come through it; the procedural
+       checker stays the fallback for legacy material ids. */
+    const std::string content_directory =
+        asset_store == nullptr ? contentTexturesDirectory() : std::string();
     const bool checker_loaded =
         !content_directory.empty() &&
         loadTexture(content_directory + "/checker.ktx2", checker, texture_error);
@@ -2003,6 +2024,49 @@ bool RenderSystem::Impl::createAlbedoTextures(const FrameSnapshot& snapshot)
     }
     white_texture_slot = slotOf(white_texture);
     checker_texture_slot = slotOf(checker_texture);
+    /* Every product the store names is decoded once, here on the render
+       thread; the table is immutable afterwards, so a reader after warmup
+       never races it. */
+    if (asset_store != nullptr)
+    {
+        const asset::Identity& products = asset_store->products();
+        for (std::size_t index = 0; index < products.size(); ++index)
+        {
+            const asset::Product* product = products.at(index);
+            if (product == nullptr)
+            {
+                continue;
+            }
+            std::vector<std::byte> bytes;
+            if (!asset_store->read(product->id, bytes, texture_error))
+            {
+                complain(("texture " + assetKey(product->id) + ": " + texture_error).c_str());
+                continue;
+            }
+            std::vector<std::uint8_t> encoded(bytes.size());
+            if (!encoded.empty())
+            {
+                std::memcpy(encoded.data(), bytes.data(), encoded.size());
+            }
+            TextureImage image;
+            if (!loadTextureBytes(encoded, image, texture_error))
+            {
+                complain(("texture " + assetKey(product->id) + ": " + texture_error).c_str());
+                continue;
+            }
+            const ResonateRenderFormat format = image.srgb ? RESONATE_RENDER_FORMAT_R8G8B8A8_SRGB
+                                                           : RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+            ResonateRenderImage texture{};
+            if (!createSampledTexture(*device, image.width, image.height, format, image.rgba,
+                                      texture))
+            {
+                complain(("texture " + assetKey(product->id) + ": upload failed").c_str());
+                continue;
+            }
+            asset_textures.push_back(texture);
+            texture_slots[assetKey(product->id)] = slotOf(texture);
+        }
+    }
     /* Which asset the checker is: the products manifest beside the texture
        names it, and a scene's texture references resolve through this. */
     if (checker_loaded && !content_directory.empty())
@@ -2265,12 +2329,14 @@ bool RenderSystem::Impl::extract(ecs::World& world)
                        the fallback for content that predates asset identity. */
                     if (const render::TextureRef* reference =
                             self->extract_world->get<render::TextureRef>(view.entities[row]);
-                        reference != nullptr && self->checker_asset_known &&
-                        reference->guid_low == self->checker_asset_low &&
-                        reference->guid_high == self->checker_asset_high &&
-                        reference->sub_id == self->checker_asset_sub)
+                        reference != nullptr)
                     {
-                        instance.texture = self->checker_texture_slot;
+                        /* The slot is the render thread's to pick; extract
+                           carries the id the authoring named. */
+                        instance.has_texture_asset = true;
+                        instance.texture_asset =
+                            asset::AssetId{reference->guid_low, reference->guid_high,
+                                           reference->sub_id};
                     }
                     instance.color = Vec3{instance.color.x * material->tint.x,
                                           instance.color.y * material->tint.y,
@@ -2649,7 +2715,24 @@ void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
 
         constants.model = instance.model;
         constants.tint = Vec4{instance.color.x, instance.color.y, instance.color.z, 1.0F};
-        constants.texture_slot = instance.texture == 1U ? checker_texture_slot : white_texture_slot;
+        std::uint32_t texture_slot =
+            instance.texture == 1U ? checker_texture_slot : white_texture_slot;
+        if (instance.has_texture_asset)
+        {
+            const std::string key = assetKey(instance.texture_asset);
+            const auto found = texture_slots.find(key);
+            if (found != texture_slots.end())
+            {
+                texture_slot = found->second;
+            }
+            else if (missing_textures.insert(key).second)
+            {
+                /* Once per id: a scene naming a texture the store lacks should
+                   not flood the log every frame. */
+                complain(("no texture for " + key).c_str());
+            }
+        }
+        constants.texture_slot = texture_slot;
         constants.roughness = instance.roughness;
         constants.metallic = instance.metallic;
         device.set_constants(device.self, &constants, sizeof(constants));
@@ -3016,6 +3099,11 @@ void RenderSystem::setRegistry(ResonateCapabilityRegistry* registry)
     impl_->registry = registry;
 }
 
+void RenderSystem::setAssetStore(const asset::Vfs* store)
+{
+    impl_->asset_store = store;
+}
+
 void RenderSystem::setFeatures(const FeatureStack& stack)
 {
     std::lock_guard<std::mutex> lock(impl_->settings_mutex);
@@ -3157,8 +3245,13 @@ std::string RenderSystem::featureChain() const
 std::uint32_t RenderSystem::assetTextureSlot(std::uint64_t guid_low, std::uint64_t guid_high,
                                              std::uint32_t sub_id) const
 {
-    /* One manifest-backed texture for now (the checker); the table grows with
-       the texture slice. */
+    const auto found =
+        impl_->texture_slots.find(assetKey(asset::AssetId{guid_low, guid_high, sub_id}));
+    if (found != impl_->texture_slots.end())
+    {
+        return found->second;
+    }
+    /* The manifest-beside-the-file path, for a run without a store. */
     if (impl_->checker_asset_known && impl_->checker_asset_low == guid_low &&
         impl_->checker_asset_high == guid_high && impl_->checker_asset_sub == sub_id)
     {
@@ -3222,6 +3315,16 @@ void RenderSystem::release()
     /* tgfx holds the shared device; release it before the module detaches. */
     impl.releaseTgfx();
 #endif
+    /* Authored textures are the renderer's own images; the device is still
+       alive here and the render thread has joined. */
+    if (impl.device != nullptr)
+    {
+        for (const ResonateRenderImage& texture : impl.asset_textures)
+        {
+            impl.device->destroy_image(impl.device->self, texture);
+        }
+    }
+    impl.asset_textures.clear();
     /* The executor's destruction calls into the device; the render thread is
        gone and the capability is still alive. */
     impl.executor.reset();
