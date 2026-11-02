@@ -189,6 +189,38 @@ TEST_CASE("savegame: the scene round trips and leaves the host's entities alone"
     CHECK(machine->runtime.values[0] == 1.0F);
 }
 
+TEST_CASE("savegame: a scene hosted outside the save leaves the host's list clean", "[savegame]")
+{
+    UserData data("host");
+    Scene scene;
+
+    /* The UI tree hosts the scene root: alive across the load, not part of
+       the save. */
+    const Entity host = scene.world.create();
+    REQUIRE(host.valid());
+    CommandBuffer commands(scene.world);
+    resonate::hierarchy::setParent(commands, scene.root, host);
+    scene.world.play(commands);
+    REQUIRE(resonate::hierarchy::childCount(scene.world, host) == 1U);
+
+    REQUIRE(resonate::startup::saveScene(scene.world, {scene.root}, "slot", scene.error));
+    std::vector<Entity> roots;
+    REQUIRE(resonate::startup::loadScene(scene.world, {scene.root}, "slot", roots, scene.error));
+
+    CHECK(scene.world.alive(host));
+    /* The replaced scene left no dead handle in the host's child list. */
+    CHECK(resonate::hierarchy::childCount(scene.world, host) == 0U);
+    REQUIRE(roots.size() == 1U);
+    CHECK(scene.world.alive(roots[0]));
+
+    /* Re-attaching the restored scene is the caller's job; the list takes it. */
+    CommandBuffer reattach(scene.world);
+    resonate::hierarchy::setParent(reattach, roots[0], host);
+    scene.world.play(reattach);
+    REQUIRE(resonate::hierarchy::childCount(scene.world, host) == 1U);
+    CHECK(resonate::hierarchy::children(scene.world, host)[0] == roots[0]);
+}
+
 TEST_CASE("savegame: a damaged or newer slot leaves the live scene untouched", "[savegame]")
 {
     UserData data("damage");

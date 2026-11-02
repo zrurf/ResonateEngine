@@ -71,6 +71,13 @@ using EntityMapper = ecs::Entity (*)(void* user_data, ecs::Entity entity);
 void remapChildren(ecs::World& world, Span<const ecs::Entity> entities, void* user_data,
                    EntityMapper map);
 
+/* Detaches `entity` from its parent right now, outside the command buffer: the
+   parent's child list forgets it and the Parent component goes away. This is
+   the synchronous counterpart of clearParent, for teardown that cannot wait
+   for a playback — destroying a child through `world.destroy` alone leaves a
+   dead handle in a surviving parent's child list. */
+void detach(ecs::World& world, ecs::Entity child);
+
 /* Whether `ancestor` is `entity` itself or above it. The walk is bounded by
    kMaxDepth, so a corrupted tree answers false instead of looping. */
 [[nodiscard]] bool isAncestorOf(const ecs::World& world, ecs::Entity ancestor,

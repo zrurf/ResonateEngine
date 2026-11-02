@@ -183,12 +183,30 @@ bool loadScene(ecs::World& world, const std::vector<ecs::Entity>& roots, const s
     hierarchy::remapChildren(world, Span<const ecs::Entity>(restored.data(), restored.size()),
                              &entity_remap, &mapSavedEntity);
 
-    for (const ecs::Entity entity : sceneEntities(world, roots))
+    /* A root whose parent lives outside the save (the UI tree hosting the
+       scene) must leave that parent's child list properly: a plain destroy
+       would strand a dead handle there forever. */
+    const std::vector<ecs::Entity> entities = sceneEntities(world, roots);
+    std::unordered_set<std::uint64_t> dying;
+    dying.reserve(entities.size());
+    for (const ecs::Entity entity : entities)
     {
-        if (world.alive(entity))
+        dying.insert((static_cast<std::uint64_t>(entity.index) << 32U) | entity.generation);
+    }
+    for (const ecs::Entity entity : entities)
+    {
+        if (!world.alive(entity))
         {
-            world.destroy(entity);
+            continue;
         }
+        const auto* parent = world.get<hierarchy::Parent>(entity);
+        if (parent != nullptr && parent->parent.valid() && world.alive(parent->parent) &&
+            dying.find((static_cast<std::uint64_t>(parent->parent.index) << 32U) |
+                       parent->parent.generation) == dying.end())
+        {
+            hierarchy::detach(world, entity);
+        }
+        world.destroy(entity);
     }
 
     out_roots.clear();

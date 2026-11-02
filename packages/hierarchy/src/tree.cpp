@@ -409,10 +409,19 @@ void remapChildren(World& world, Span<const Entity> entities, void* user_data, E
         }
         if (!world.resizeBlob(blob, mapped.size() * sizeof(Entity)))
         {
+            /* The blob keeps the save-time handles otherwise: worse than no
+               list, because a walk reads them as children. */
+            world.destroyBlob(blob);
+            (void)world.remove<Children>(entity);
             continue;
         }
         std::memcpy(world.blobData(blob), mapped.data(), mapped.size() * sizeof(Entity));
     }
+}
+
+void detach(World& world, Entity child)
+{
+    detachFromParent(world, child);
 }
 
 bool isAncestorOf(const ecs::World& world, Entity ancestor, Entity entity) noexcept
