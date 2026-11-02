@@ -80,9 +80,6 @@ end
 -- unreachable here; the Gitee mirror is used instead.
 includes("packages/thirdparty/harfbuzz")
 includes("packages/thirdparty/basisu")
--- Project-local package: the official release tarball through the archive
--- host's codeload endpoint, built portable on every target.
-includes("packages/thirdparty/blake3")
 
 -- The engine libraries and modules alone: no window, editor, launcher or
 -- tests. A cross-compiled build (Android) uses this to skip the host-only
