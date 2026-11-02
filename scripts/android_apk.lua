@@ -1,5 +1,6 @@
 -- Packages the built Android host, its plugin libraries and their manifests
--- into a signed APK. Run it after the build: xmake android-apk.
+-- into a signed APK. Run it after the build and after `xmake cook`:
+-- xmake android-apk.
 --
 -- The SDK's own tools rather than Gradle: the shell has no Java code, so the
 -- manifest names NativeActivity and the native entry point does the rest.
@@ -129,11 +130,18 @@ for _, shader in ipairs(shaders) do
     os.cp(shader, path.join(staging, "assets", "shaders"))
 end
 
--- The UI document is source text for now; it needs no cook step. The host
--- extracts this directory and points the startup at the document and its
--- string table; the fonts stay in one flat directory because the asset
--- manager lists directories without nesting.
-local ui_source = path.join(os.projectdir(), "content", "ui")
+-- Assets ship cooked: the source documents are XML and the package carries the
+-- binary codec's form, which is also what keeps the authored text out of the
+-- APK. The host extracts this directory and points the startup at the
+-- document and its string table; the fonts stay in one flat directory because
+-- the asset manager lists directories without nesting.
+-- The cooked tree is platform-independent (the codecs store plain fields), so
+-- one host-side cook serves every target; the task builds it.
+local cooked = path.join(os.projectdir(), "build", "cooked")
+if not os.isdir(cooked) then
+    raise("no cooked content under " .. cooked .. "; run `xmake cook` first")
+end
+local ui_source = path.join(cooked, "ui")
 local ui_assets = os.files(path.join(ui_source, "*.rui"))
 local ui_sheets = os.files(path.join(ui_source, "*.rcss"))
 local ui_strings = os.files(path.join(ui_source, "*.rstrings"))
@@ -166,12 +174,22 @@ if #ui_images > 0 then
     end
 end
 
--- The demo scene document: source text like the UI documents.
-local scene_documents = os.files(path.join(os.projectdir(), "content", "scene", "*.rscene"))
+-- The demo scene document, cooked like the UI ones.
+local scene_documents = os.files(path.join(cooked, "scene", "*.rscene"))
 if #scene_documents > 0 then
     os.mkdir(path.join(staging, "assets", "scene"))
     for _, document in ipairs(scene_documents) do
         os.cp(document, path.join(staging, "assets", "scene"))
+    end
+end
+
+-- Clips are cooked like the documents; the player resolves them by id when the
+-- host stages a products manifest beside them.
+local clips = os.files(path.join(cooked, "animation", "*.rclip"))
+if #clips > 0 then
+    os.mkdir(path.join(staging, "assets", "animation"))
+    for _, clip in ipairs(clips) do
+        os.cp(clip, path.join(staging, "assets", "animation"))
     end
 end
 
