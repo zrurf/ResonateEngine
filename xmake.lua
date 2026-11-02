@@ -320,7 +320,8 @@ task("csharp-reload")
 task("assets")
     set_category("plugin")
     on_run(function ()
-        os.execv(os.programfile(), {"build", "-y", "Resonate.Tools.AssetIndex"})
+        import("builder")
+        builder.run({"assets"})
     end)
     set_menu {
         usage = "xmake assets",
@@ -335,6 +336,17 @@ task("texcook")
     set_menu {
         usage = "xmake texcook",
         description = "Cook the source textures into the runtime KTX2 container.",
+    }
+
+task("builder-check")
+    set_category("plugin")
+    on_run(function ()
+        import("builder")
+        builder.run({"selfcheck"})
+    end)
+    set_menu {
+        usage = "xmake builder-check",
+        description = "Run the C# builder's own checks (BLAKE3 vectors, identity rules).",
     }
 
 task("cook")
@@ -376,6 +388,8 @@ task("suite")
         if not (plat == "windows" or plat == "linux" or plat == "macosx") then
             raise("switch to a host platform first (xmake f -p windows -a x64 -m debug -y)")
         end
+        import("builder")
+        builder.run({"selfcheck"})
         os.execv(os.programfile(), {"test", "-j1"})
     end)
     set_menu {
@@ -456,7 +470,6 @@ end
 if not get_config("engine_only") then
     includes("packages/csharp")
     includes("packages/tools/texcook")
-    includes("packages/tools/assetindex")
     includes("packages/tools/iconcook")
     includes("packages/tools/cook")
     includes("packages/editor")

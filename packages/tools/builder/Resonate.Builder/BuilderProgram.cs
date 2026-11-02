@@ -100,6 +100,10 @@ public static class BuilderProgram
                 return Commands.ModuleCheckCommand.Run(context, rest);
             case "package":
                 return Commands.PackageCommand.Run(context, rest);
+            case "selfcheck":
+                return Commands.SelfCheckCommand.Run(context, rest);
+            case "assets":
+                return Commands.AssetsCommand.Run(context, rest);
             default:
                 error.WriteLine($"resonate: unknown command '{command}'");
                 return Usage(error);
@@ -113,6 +117,8 @@ public static class BuilderProgram
         error.WriteLine("  csbind   generate the managed/engine binding ids from the contract");
         error.WriteLine("  module-check  validate module manifests against descriptors and headers");
         error.WriteLine("  package android  assemble and sign the APK from an Android build");
+        error.WriteLine("  selfcheck  run the builder's own checks");
+        error.WriteLine("  assets   index the content sidecars into the products manifest");
         error.WriteLine("options: --project <dir> --build <dir>");
         return 2;
     }
