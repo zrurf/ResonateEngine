@@ -361,6 +361,11 @@ std::string_view Document::text(StringId id) const noexcept
     return impl_->strings[id];
 }
 
+std::uint32_t Document::stringCount() const noexcept
+{
+    return static_cast<std::uint32_t>(impl_->strings.size());
+}
+
 std::uint32_t Document::formatVersion() const noexcept
 {
     return impl_->format_version;
@@ -920,6 +925,20 @@ NodeHandle Document::findId(StringId id) const noexcept
 {
     const auto found = impl_->ids.find(id);
     return found != impl_->ids.end() ? found->second : NodeHandle{};
+}
+
+std::vector<NodeHandle> Document::nodes() const
+{
+    std::vector<NodeHandle> result;
+    result.reserve(impl_->slots.size());
+    for (const Impl::Slot& slot : impl_->slots)
+    {
+        if (slot.alive)
+        {
+            result.push_back(slot.self);
+        }
+    }
+    return result;
 }
 
 std::vector<NodeHandle> Document::findType(StringId type_id) const

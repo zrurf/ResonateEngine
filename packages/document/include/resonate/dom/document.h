@@ -1,6 +1,7 @@
 #ifndef RESONATE_DOM_DOCUMENT_H
 #define RESONATE_DOM_DOCUMENT_H
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -112,6 +113,8 @@ class Document
     /* Empty text interned as the null string. */
     StringId intern(std::string_view text);
     [[nodiscard]] std::string_view text(StringId id) const noexcept;
+    /* The number of interned strings; every id below it names one. */
+    [[nodiscard]] std::uint32_t stringCount() const noexcept;
 
     /* --- document header --- */
 
@@ -186,6 +189,10 @@ class Document
 
     /* --- queries --- */
 
+    /* Every alive node, in slot order. Detached nodes are included; the order
+       is what a serializer writes and a loader recreates. */
+    [[nodiscard]] std::vector<NodeHandle> nodes() const;
+
     /* Detached nodes remain findable by key/id. */
     [[nodiscard]] NodeHandle findKey(StringId key) const noexcept;
     [[nodiscard]] NodeHandle findId(StringId id) const noexcept;
@@ -214,6 +221,22 @@ class Document
 
     /* Canonical explicit form: stable ordering and formatting. */
     [[nodiscard]] std::string toXml() const;
+
+    /* --- cooked binary codec --- */
+
+    /* True when the bytes begin with the cooked document magic. */
+    [[nodiscard]] static bool isBinary(Span<const std::byte> bytes) noexcept;
+
+    /* Parses the binary form. The payload is self-describing (strings, schemas,
+       resources, nodes), so no schema registry is needed; a truncated payload,
+       an unknown codec version or a structure the document model refuses comes
+       back as a diagnostic and null. */
+    static std::unique_ptr<Document> parseBinary(Span<const std::byte> bytes,
+                                                 std::vector<Diagnostic>& diagnostics);
+
+    /* The binary form: nodes in slot order, strings in id order. This is what
+       the cook step writes and the runtime reads instead of the XML. */
+    [[nodiscard]] std::vector<std::byte> toBinary() const;
 
   private:
     struct Impl;
