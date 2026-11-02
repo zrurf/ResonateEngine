@@ -316,6 +316,7 @@ void ManagedSystems::unload()
         table.resize(64U);
     }
     frames_ = 0U;
+    first_stage_ = RESONATE_STAGE_LOADING;
     frame_ = bindings::SystemContext{};
     component_ = ecs::kInvalidComponent;
     query_world_ = nullptr;
@@ -405,13 +406,28 @@ bool ManagedSystems::register_entry(std::uint32_t stage, std::uint32_t id, Dispa
     {
         return false;
     }
-    return tables_[stage].set(id, entry);
+    const bool ok = tables_[stage].set(id, entry);
+    refreshFirstStage();
+    return ok;
 }
 
 bool ManagedSystems::usesStage(ResonateStage stage) const
 {
     const std::size_t index = static_cast<std::size_t>(stage);
     return index < tables_.size() && tables_[index].any();
+}
+
+void ManagedSystems::refreshFirstStage()
+{
+    for (std::size_t stage = RESONATE_STAGE_EARLY_UPDATE; stage < tables_.size(); ++stage)
+    {
+        if (tables_[stage].any())
+        {
+            first_stage_ = static_cast<ResonateStage>(stage);
+            return;
+        }
+    }
+    first_stage_ = RESONATE_STAGE_LOADING;
 }
 
 bool ManagedSystems::replace_tracked(std::uint32_t stage, std::uint32_t id, DispatchEntry entry)
@@ -435,7 +451,9 @@ bool ManagedSystems::replace_tracked(std::uint32_t stage, std::uint32_t id, Disp
     {
         frame.previous.push_back(PreviousEntry{stage, id, tables_[stage].get(id)});
     }
-    return tables_[stage].replace(id, entry);
+    const bool ok = tables_[stage].replace(id, entry);
+    refreshFirstStage();
+    return ok;
 }
 
 void ManagedSystems::restoreFrame(PatchFrame& frame)
@@ -452,6 +470,7 @@ void ManagedSystems::restoreFrame(PatchFrame& frame)
             table.clear(previous->id);
         }
     }
+    refreshFirstStage();
 }
 
 void ManagedSystems::set_user(void* user)
@@ -556,7 +575,9 @@ void ManagedSystems::invokeStage(ResonateStage stage, void* context, ecs::World&
     self->frame_.chunk_count = self->chunk_spans_.size();
     self->tables_[index].invoke(id, &self->frame_);
 
-    if (stage == RESONATE_STAGE_UPDATE)
+    /* A frame begins on the earliest stage the assembly registered; the host
+       runs the stages in enum order, so any stage-only assembly advances. */
+    if (stage == self->first_stage_)
     {
         ++self->frames_;
     }

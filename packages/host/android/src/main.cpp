@@ -356,6 +356,19 @@ void android_main(android_app* app)
         }
     }
 
+    /* The products manifests the packager staged: authored clips and textures
+       resolve by asset id through the same VFS the desktop run uses. */
+    const std::string animation = stageAssets(app, "animation");
+    if (access((animation + "/products.toml").c_str(), R_OK) == 0)
+    {
+        setenv("RESONATE_PRODUCTS", (animation + "/products.toml").c_str(), 1);
+    }
+    const std::string textures = stageAssets(app, "textures");
+    if (access((textures + "/products.toml").c_str(), R_OK) == 0)
+    {
+        setenv("RESONATE_TEXTURE_PRODUCTS", (textures + "/products.toml").c_str(), 1);
+    }
+
     const std::string ui = stageAssets(app, "ui");
     if (!ui.empty())
     {

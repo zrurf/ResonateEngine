@@ -3,9 +3,11 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -844,34 +846,6 @@ bool parseDocument(const std::string& path, const std::string& text,
     return true;
 }
 
-std::string escapeXml(const std::string& text)
-{
-    std::string out;
-    out.reserve(text.size());
-    for (const char character : text)
-    {
-        switch (character)
-        {
-        case '&':
-            out += "&amp;";
-            break;
-        case '<':
-            out += "&lt;";
-            break;
-        case '>':
-            out += "&gt;";
-            break;
-        case '"':
-            out += "&quot;";
-            break;
-        default:
-            out += character;
-            break;
-        }
-    }
-    return out;
-}
-
 /* The user layer's document: <binding> replaces the action's bindings on one
    device, <unbind> removes them. Entries are validated against the base map
    after parsing, so a bad file changes nothing. */
@@ -1347,31 +1321,67 @@ bool ActionMap::saveOverrides(const std::string& path, std::string& error) const
 {
     error.clear();
 
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out.is_open())
+    /* The reader has no entity expansion, so a name the escaping below would
+       change cannot round trip; refuse it rather than write a layer that
+       loads back as a different action. */
+    const auto roundTrips = [](const std::string& text)
     {
-        error = "cannot write " + path;
-        return false;
-    }
-    out << "<?xml version=\"1.0\"?>\n<action-overrides>\n";
+        return text.find_first_of("&<>\"") == std::string::npos;
+    };
     for (const OverrideEntry& entry : impl_->overrides)
     {
-        if (entry.bound)
+        if (!roundTrips(entry.action) ||
+            (entry.bound && !roundTrips(entry.control)))
         {
-            out << "  <binding action=\"" << escapeXml(entry.action) << "\" device=\""
-                << deviceName(entry.device) << "\" control=\"" << escapeXml(entry.control)
-                << "\"/>\n";
-        }
-        else
-        {
-            out << "  <unbind action=\"" << escapeXml(entry.action) << "\" device=\""
-                << deviceName(entry.device) << "\"/>\n";
+            error = "the name '" +
+                    (roundTrips(entry.action) ? entry.control : entry.action) +
+                    "' cannot be written to the overrides layer";
+            return false;
         }
     }
-    out << "</action-overrides>\n";
-    if (!out.good())
+
+    /* The temporary is what truncates: a failure here leaves the previous
+       layer on disk instead of a half-written one. */
+    const std::string temporary = path + ".tmp";
     {
-        error = "cannot write " + path;
+        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+        if (!out.is_open())
+        {
+            error = "cannot write " + path;
+            return false;
+        }
+        out << "<?xml version=\"1.0\"?>\n<action-overrides>\n";
+        for (const OverrideEntry& entry : impl_->overrides)
+        {
+            if (entry.bound)
+            {
+                out << "  <binding action=\"" << entry.action << "\" device=\""
+                    << deviceName(entry.device) << "\" control=\"" << entry.control
+                    << "\"/>\n";
+            }
+            else
+            {
+                out << "  <unbind action=\"" << entry.action << "\" device=\""
+                    << deviceName(entry.device) << "\"/>\n";
+            }
+        }
+        out << "</action-overrides>\n";
+        out.close();
+        if (!out)
+        {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+            error = "cannot write " + path;
+            return false;
+        }
+    }
+    std::error_code rename_error;
+    std::filesystem::rename(temporary, path, rename_error);
+    if (rename_error)
+    {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        error = "cannot replace " + path;
         return false;
     }
     return true;

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -382,6 +383,47 @@ TEST_CASE("action map: rebinding persists as a user layer", "[action-map]")
     check.left_mouse = true;
     restored.update(&check.input);
     CHECK_FALSE(restored.state("fire")->held);
+}
+
+TEST_CASE("action map: an unwritable name fails the save and keeps the old layer", "[action-map]")
+{
+    TempMap base;
+    base.write(kDocument);
+    resonate::gameplay::ActionMap map;
+    std::string error;
+    REQUIRE(map.load(base.path(), error));
+
+    TempMap saved;
+    REQUIRE(map.bind("fire", "keyboard", "k", error));
+    REQUIRE(map.saveOverrides(saved.path(), error));
+    const std::string previous = [&saved]
+    {
+        std::ifstream in(saved.path(), std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    }();
+    REQUIRE(previous.find("keyboard") != std::string::npos);
+
+    /* An action name the no-entity reader cannot read back refuses the save;
+       the previous layer stays on disk untouched. The base loader reads the
+       name raw, so the hostile map loads and only the save refuses. */
+    const char* const hostile_text =
+        "<?xml version=\"1.0\"?>\n"
+        "<action-map>\n"
+        "  <action name=\"fir&amp;e\"/>\n"
+        "</action-map>\n";
+    TempMap hostile;
+    hostile.write(hostile_text);
+    resonate::gameplay::ActionMap unrepresentable;
+    REQUIRE(unrepresentable.load(hostile.path(), error));
+    REQUIRE(unrepresentable.bind("fir&amp;e", "keyboard", "k", error));
+    CHECK_FALSE(unrepresentable.saveOverrides(saved.path(), error));
+    CHECK(error.find("cannot be written") != std::string::npos);
+    std::ifstream after(saved.path(), std::ios::binary);
+    const std::string kept((std::istreambuf_iterator<char>(after)),
+                           std::istreambuf_iterator<char>());
+    CHECK(kept == previous);
+    CHECK_FALSE(std::filesystem::exists(saved.path() + ".tmp"));
 }
 
 TEST_CASE("action map: reloading the base map drops the old user layer", "[action-map]")

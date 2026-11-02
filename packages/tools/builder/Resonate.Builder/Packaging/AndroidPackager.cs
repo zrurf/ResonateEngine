@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
+using Resonate.Builder.Hashing;
 
 namespace Resonate.Builder.Packaging;
 
@@ -102,6 +104,8 @@ internal sealed class AndroidPackager
 
         StageShaders();
         StageContent();
+        StageTextures();
+        StageAssetManifest();
         StageJava(androidJar, d8);
 
         string resources = Path.Combine(_staging, "resources.zip");
@@ -194,6 +198,82 @@ internal sealed class AndroidPackager
         {
             Copy(file, Path.Combine(target, Path.GetFileName(file)));
         }
+    }
+
+    /* The texture cook's manifest names its products by bare file name, so it
+       travels beside them unchanged. */
+    private void StageTextures()
+    {
+        string textures = _context.Path("build", "content", "textures");
+        string manifest = Path.Combine(textures, "products.toml");
+        if (!File.Exists(manifest))
+        {
+            _context.Output.WriteLine("android: no texture manifest; the run serves no textures");
+            return;
+        }
+        string target = Path.Combine(_staging, "assets", "textures");
+        Directory.CreateDirectory(target);
+        Copy(manifest, Path.Combine(target, "products.toml"));
+        foreach (string texture in Files(textures, "*.ktx2"))
+        {
+            Copy(texture, Path.Combine(target, Path.GetFileName(texture)));
+        }
+    }
+
+    /* The asset manifest's paths reach back into the source tree; the package
+       ships the cooked products flat, so it writes its own manifest beside
+       them. The identity (guid, sub id, importer) is the source's; the
+       fingerprint is recomputed over the bytes that actually ship. */
+    private void StageAssetManifest()
+    {
+        string dev = _context.Path("build", "content", "products.toml");
+        if (!File.Exists(dev))
+        {
+            return;
+        }
+        string animation = Path.Combine(_staging, "assets", "animation");
+        Directory.CreateDirectory(animation);
+        HashSet<string> staged = Files(animation, "*.rclip")
+                                     .Select(file => Path.GetFileName(file))
+                                     .ToHashSet(StringComparer.Ordinal);
+        StringBuilder text = new();
+        text.Append("# Written by the packager; the runtime's asset identity reads it.\n");
+        int count = 0;
+        foreach (ProductsManifest.Product product in ProductsManifest.Read(dev).Products)
+        {
+            string name = Path.GetFileName(product.Path.Replace('\\', '/'));
+            if (!staged.Contains(name))
+            {
+                continue;
+            }
+            byte[] bytes = File.ReadAllBytes(Path.Combine(animation, name));
+            text.Append("[[product]]\n");
+            text.Append("source = \"").Append(Escape(product.Source)).Append("\"\n");
+            text.Append("guid = \"").Append(product.Guid).Append("\"\n");
+            if (product.Importer.Length != 0)
+            {
+                text.Append("importer = \"").Append(Escape(product.Importer)).Append("\"\n");
+            }
+            text.Append("fingerprint = \"")
+                .Append(Convert.ToHexStringLower(Blake3.Hash(bytes)))
+                .Append("\"\n");
+            text.Append("sub_id = ").Append(product.SubId).Append('\n');
+            text.Append("path = \"").Append(Escape(name)).Append("\"\n\n");
+            ++count;
+        }
+        if (count == 0)
+        {
+            return;
+        }
+        File.WriteAllText(Path.Combine(animation, "products.toml"), text.ToString());
+        _context.Output.WriteLine($"android: {count} asset product(s) staged");
+    }
+
+    private static string Escape(string text)
+    {
+        return text.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal);
     }
 
     /* The Java activity owns the IME input connection (Android delivers

@@ -562,9 +562,12 @@ struct RenderSystem::Impl
     std::uint32_t checker_asset_sub = 0U;
     bool checker_asset_known = false;
     /* Authored textures decoded once on the render thread, keyed by asset id
-       text. The main thread only reads the table after warmup; extract carries
-       ids, never slots. */
+       text. The table fills as the frame's draws demand; the main thread
+       reads it through assetTextureSlot, which takes asset_mutex, and the
+       render thread reads it bare in drawScene — its own thread wrote it.
+       Extract carries ids, never slots. */
     const asset::Vfs* asset_store = nullptr;
+    std::mutex asset_mutex;
     std::unordered_map<std::string, std::uint32_t> texture_slots;
     std::unordered_set<std::string> missing_textures;
     std::vector<ResonateRenderImage> asset_textures;
@@ -651,6 +654,8 @@ struct RenderSystem::Impl
     std::uint32_t shadowExtent() const;
     bool initialize();
     bool createAlbedoTextures(const FrameSnapshot& snapshot);
+    void loadDemandedTextures(const FrameSnapshot& snapshot);
+    bool loadTextureProduct(const asset::AssetId& id, std::string& error);
     bool ensurePipelines();
     ResonateRenderBuffer uploadStorage(std::uint64_t size_bytes, bool host_visible);
     ResonateRenderBuffer uploadUniform(std::uint64_t size_bytes);
@@ -2024,49 +2029,6 @@ bool RenderSystem::Impl::createAlbedoTextures(const FrameSnapshot& snapshot)
     }
     white_texture_slot = slotOf(white_texture);
     checker_texture_slot = slotOf(checker_texture);
-    /* Every product the store names is decoded once, here on the render
-       thread; the table is immutable afterwards, so a reader after warmup
-       never races it. */
-    if (asset_store != nullptr)
-    {
-        const asset::Identity& products = asset_store->products();
-        for (std::size_t index = 0; index < products.size(); ++index)
-        {
-            const asset::Product* product = products.at(index);
-            if (product == nullptr)
-            {
-                continue;
-            }
-            std::vector<std::byte> bytes;
-            if (!asset_store->read(product->id, bytes, texture_error))
-            {
-                complain(("texture " + assetKey(product->id) + ": " + texture_error).c_str());
-                continue;
-            }
-            std::vector<std::uint8_t> encoded(bytes.size());
-            if (!encoded.empty())
-            {
-                std::memcpy(encoded.data(), bytes.data(), encoded.size());
-            }
-            TextureImage image;
-            if (!loadTextureBytes(encoded, image, texture_error))
-            {
-                complain(("texture " + assetKey(product->id) + ": " + texture_error).c_str());
-                continue;
-            }
-            const ResonateRenderFormat format = image.srgb ? RESONATE_RENDER_FORMAT_R8G8B8A8_SRGB
-                                                           : RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
-            ResonateRenderImage texture{};
-            if (!createSampledTexture(*device, image.width, image.height, format, image.rgba,
-                                      texture))
-            {
-                complain(("texture " + assetKey(product->id) + ": upload failed").c_str());
-                continue;
-            }
-            asset_textures.push_back(texture);
-            texture_slots[assetKey(product->id)] = slotOf(texture);
-        }
-    }
     /* Which asset the checker is: the products manifest beside the texture
        names it, and a scene's texture references resolve through this. */
     if (checker_loaded && !content_directory.empty())
@@ -2124,6 +2086,79 @@ bool RenderSystem::Impl::createAlbedoTextures(const FrameSnapshot& snapshot)
         font_atlas_revision = atlas.revision;
         font_atlas_ready = true;
     }
+    return true;
+}
+
+/* Decodes and uploads the products this frame's draws name. The work runs
+   before the graph executes: creating an image inside a pass would interleave
+   with the frame's command recording. A texture therefore appears the same
+   frame it is first referenced; one that fails leaves the draws white. */
+void RenderSystem::Impl::loadDemandedTextures(const FrameSnapshot& snapshot)
+{
+    if (asset_store == nullptr)
+    {
+        return;
+    }
+    for (const DrawInstance& instance : snapshot.instances)
+    {
+        if (!instance.has_texture_asset)
+        {
+            continue;
+        }
+        const std::string key = assetKey(instance.texture_asset);
+        {
+            std::lock_guard<std::mutex> lock{asset_mutex};
+            if (texture_slots.find(key) != texture_slots.end())
+            {
+                continue;
+            }
+        }
+        /* One attempt per id: a product that never loads must not cost the
+           store a read and a decode every frame. */
+        if (!missing_textures.insert(key).second)
+        {
+            continue;
+        }
+        std::string error;
+        if (loadTextureProduct(instance.texture_asset, error))
+        {
+            missing_textures.erase(key);
+        }
+        else
+        {
+            complain(("texture " + key + ": " + error).c_str());
+        }
+    }
+}
+
+bool RenderSystem::Impl::loadTextureProduct(const asset::AssetId& id, std::string& error)
+{
+    std::vector<std::byte> bytes;
+    if (!asset_store->read(id, bytes, error))
+    {
+        return false;
+    }
+    std::vector<std::uint8_t> encoded(bytes.size());
+    if (!encoded.empty())
+    {
+        std::memcpy(encoded.data(), bytes.data(), encoded.size());
+    }
+    TextureImage image;
+    if (!loadTextureBytes(encoded, image, error))
+    {
+        return false;
+    }
+    const ResonateRenderFormat format =
+        image.srgb ? RESONATE_RENDER_FORMAT_R8G8B8A8_SRGB : RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+    ResonateRenderImage texture{};
+    if (!createSampledTexture(*device, image.width, image.height, format, image.rgba, texture))
+    {
+        error = "upload failed";
+        return false;
+    }
+    asset_textures.push_back(texture);
+    std::lock_guard<std::mutex> lock{asset_mutex};
+    texture_slots[assetKey(id)] = slotOf(texture);
     return true;
 }
 
@@ -3245,11 +3280,19 @@ std::string RenderSystem::featureChain() const
 std::uint32_t RenderSystem::assetTextureSlot(std::uint64_t guid_low, std::uint64_t guid_high,
                                              std::uint32_t sub_id) const
 {
-    const auto found =
-        impl_->texture_slots.find(assetKey(asset::AssetId{guid_low, guid_high, sub_id}));
-    if (found != impl_->texture_slots.end())
+    std::uint32_t slot = 0U;
     {
-        return found->second;
+        std::lock_guard<std::mutex> lock{impl_->asset_mutex};
+        const auto found =
+            impl_->texture_slots.find(assetKey(asset::AssetId{guid_low, guid_high, sub_id}));
+        if (found != impl_->texture_slots.end())
+        {
+            slot = found->second;
+        }
+    }
+    if (slot != 0U)
+    {
+        return slot;
     }
     /* The manifest-beside-the-file path, for a run without a store. */
     if (impl_->checker_asset_known && impl_->checker_asset_low == guid_low &&
@@ -3757,6 +3800,11 @@ void RenderSystem::Impl::renderFrame(FrameSnapshot& snapshot)
             complain("albedo textures unavailable");
         }
     }
+    /* After the built-ins: the asset textures take the table slots past them,
+       and the demand scan must never hand a draw the 0 sentinel. The load
+       still runs outside the pass, so a texture first named on frame N draws
+       on frame N + 1. */
+    loadDemandedTextures(snapshot);
 }
 
 } // namespace resonate::renderer

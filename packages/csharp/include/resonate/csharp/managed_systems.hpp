@@ -102,8 +102,9 @@ public:
     static void invokeStage(ResonateStage stage, void* context, ecs::World& world,
                             ecs::CommandBuffer& commands, float delta_seconds);
 
-    /* Fixed steps the UPDATE stage has run: the frame index a managed entry
-       sees. Other stages observe the current step. */
+    /* Frames the assembly has seen: it advances once per frame, on the
+       earliest stage the assembly registered, so any stage-only assembly
+       advances too. Entries read this as their frame index. */
     std::uint64_t frames() const
     {
         return frames_;
@@ -144,6 +145,12 @@ private:
     void restoreFrame(PatchFrame& frame);
     std::vector<PatchFrame> patch_frames_;
     void* bootstrap_unload_ = nullptr;
+
+    /* The earliest stage with a registered entry: the host runs the stages in
+       enum order, so this is where a frame begins and the frame counter
+       advances. */
+    ResonateStage first_stage_ = RESONATE_STAGE_LOADING;
+    void refreshFirstStage();
 };
 
 } // namespace resonate::csharp

@@ -783,6 +783,12 @@ std::unique_ptr<dom::Document> loadDocument(const std::string& path,
     std::string bytes;
     if (!readTextFile(path, bytes))
     {
+        /* The callers print the diagnostics; a file that exists but cannot be
+           read (locked, denied) must say so, not exit silently. */
+        dom::Diagnostic diagnostic;
+        diagnostic.severity = dom::Diagnostic::Severity::Error;
+        diagnostic.message = "cannot read " + path;
+        diagnostics.push_back(std::move(diagnostic));
         return nullptr;
     }
     const auto* first = reinterpret_cast<const std::byte*>(bytes.data());
@@ -1276,12 +1282,41 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
     MachineDrive machine_drive;
     const EngineSystemDesc machine_drive_desc{"demo.machine_drive", RESONATE_STAGE_UPDATE,
                                               &MachineDrive::invoke, &machine_drive};
-    renderer::RenderSystem render_system;
     /* The texture cook writes its own manifest; every product in it is decoded
-       once by the renderer, so authored TextureRefs resolve by id. */
+       once by the renderer, so authored TextureRefs resolve by id. The store
+       lives longer than the render system: a declaration after the render
+       system's would tear it down under the render thread's loads. */
     std::unique_ptr<asset::Vfs> texture_store;
     {
-        const std::string products = findContentFile("build/content/textures/products.toml");
+        /* The dev tree keeps the manifest under build/; a shipped layout walks
+           up from the executable like the content walk, and a staged
+           deployment names the manifest outright. */
+        const char* const staged = std::getenv("RESONATE_TEXTURE_PRODUCTS");
+        std::string products = staged != nullptr && *staged != '\0'
+                                   ? std::string(staged)
+                                   : findContentFile("build/content/textures/products.toml");
+        if (products.empty())
+        {
+            std::filesystem::path directory = resonate_pal_io_executable_directory();
+            for (int level = 0; level < 6 && products.empty(); ++level)
+            {
+                const std::filesystem::path candidate =
+                    directory / "content" / "textures" / "products.toml";
+                std::error_code error;
+                if (std::filesystem::is_regular_file(candidate, error))
+                {
+                    products = candidate.string();
+                }
+                else if (!directory.has_parent_path())
+                {
+                    break;
+                }
+                else
+                {
+                    directory = directory.parent_path();
+                }
+            }
+        }
         if (!products.empty())
         {
             std::string store_error;
@@ -1292,6 +1327,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
             }
         }
     }
+    renderer::RenderSystem render_system;
     render_system.setAssetStore(texture_store.get());
     /* Resolution trades against frame time; a handheld GPU cannot afford the
        full 2400-wide target for this pipeline, so the budget adapts the scale
