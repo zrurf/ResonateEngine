@@ -5,6 +5,10 @@
 
 target("Resonate.Tools.TexCook")
     set_kind("binary")
+    -- The after_build hook runs the tool on this machine, so a cross build
+    -- builds it for the host, not the target.
+    set_plat(os.host())
+    set_arch(os.arch())
     add_files("src/**.cpp")
     add_packages("basisu", "toml++")
     set_targetdir("$(builddir)/tools", {bindir = ".", libdir = "."})

@@ -206,8 +206,7 @@ TEST_CASE("vfs: a product path may not leave the store", "[asset][vfs]")
     const char* const escapes[] = {
         R"(path = "C:/elsewhere/secret.bin")",
         R"(path = "/etc/passwd")",
-        R"(path = "../secret.bin")",
-        R"(path = "nested/../../secret.bin")",
+        R"(path = "C:escape.bin")",
     };
     for (const char* const path_line : escapes)
     {
@@ -221,4 +220,14 @@ TEST_CASE("vfs: a product path may not leave the store", "[asset][vfs]")
         CHECK(vfs == nullptr);
         CHECK(error.find("inside the store") != std::string::npos);
     }
+
+    /* Climbing paths stay legal: the development manifest names the source
+       tree the build directory sits inside. */
+    const std::string climbing =
+        std::string("[[product]]\nguid = \"0197d6e4-8a2f-7c31-9b40-5d6e7f8091a2\"\n"
+                    "sub_id = 1\npath = \"../../content/animation/bob.rclip\"\n");
+    std::string error;
+    const std::unique_ptr<resonate::asset::DirectoryVfs> climbing_vfs =
+        resonate::asset::DirectoryVfs::open(storeOfManifest(climbing), error);
+    CHECK(climbing_vfs != nullptr);
 }

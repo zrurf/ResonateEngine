@@ -111,23 +111,14 @@ bool Identity::loadProducts(std::string_view toml, std::string& error)
     {
         return true;
     }
-    /* A product path is joined onto the store root; a rooted or climbing path
-       would serve bytes from outside the store. */
+    /* A product path is joined onto the store root. A rooted path would
+       replace the root outright and serve bytes from anywhere; climbing paths
+       stay legal, because the development manifest names the source tree the
+       build directory sits inside (`../../content/...`). */
     const auto insideStore = [](const std::string& path)
     {
         const std::filesystem::path relative(path);
-        if (relative.is_absolute() || relative.has_root_path())
-        {
-            return false;
-        }
-        for (const std::filesystem::path& part : relative)
-        {
-            if (part == "..")
-            {
-                return false;
-            }
-        }
-        return true;
+        return !relative.is_absolute() && !relative.has_root_path();
     };
     /* Parsed aside: a manifest with one bad entry leaves the identity exactly
        as it was, so a caller that reports the failure never serves half of it. */
