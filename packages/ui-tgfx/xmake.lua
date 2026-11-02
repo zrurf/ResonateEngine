@@ -44,11 +44,21 @@ target("Resonate.UiTgfx")
 
     before_build(function (target)
         if not os.isfile(tgfx_lib) then
-            local script = path.join(os.projectdir(), "scripts", "tgfx.lua")
-            local output = os.iorunv(os.programfile(), {"lua", script},
-                                     {envs = {RESONATE_TGFX_MODE = tgfx_mode}})
-            if output ~= nil then
-                print(output)
+            local args = {"tgfx", "--platform", is_plat("android") and "android" or "windows",
+                          "--mode", tgfx_mode, "--sdk-version",
+                          tostring(get_config("ndk_sdkver") or 30)}
+            local ndk = get_config("ndk") or os.getenv("ANDROID_NDK_HOME")
+                or os.getenv("ANDROID_NDK_ROOT")
+            if ndk ~= nil and ndk ~= "" then
+                table.insert(args, "--ndk")
+                table.insert(args, ndk)
             end
+            local arch = get_config("arch")
+            if arch ~= nil and arch ~= "" then
+                table.insert(args, "--arch")
+                table.insert(args, arch)
+            end
+            import("builder")
+            builder.run(args)
         end
     end)

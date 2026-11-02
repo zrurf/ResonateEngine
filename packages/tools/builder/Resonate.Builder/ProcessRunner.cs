@@ -49,6 +49,39 @@ internal static class ProcessRunner
         }
     }
 
+    /* Captures stdout: a tool such as vswhere reports a path that the caller
+       has to consume, and mixing it into the build log would be noise. */
+    internal static (int Status, string Output) Capture(string program,
+                                                       IReadOnlyList<string> arguments)
+    {
+        ProcessStartInfo info = new(program)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (string argument in arguments)
+        {
+            info.ArgumentList.Add(argument);
+        }
+        try
+        {
+            using Process? process = Process.Start(info);
+            if (process is null)
+            {
+                throw new BuilderException($"{program}: could not be started");
+            }
+            string output = process.StandardOutput.ReadToEnd();
+            _ = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            return (process.ExitCode, output);
+        }
+        catch (Win32Exception error)
+        {
+            throw new BuilderException($"{program}: {error.Message}");
+        }
+    }
+
     internal static void MustRun(string program, IReadOnlyList<string> arguments,
                                  IReadOnlyDictionary<string, string>? environment = null)
     {

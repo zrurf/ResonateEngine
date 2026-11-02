@@ -118,6 +118,10 @@ public static class BuilderProgram
                 return Commands.CSharpBenchCommand.Run(context, rest);
             case "csharp-reload":
                 return Commands.CSharpReloadCommand.Run(context, rest);
+            case "rust":
+                return Commands.RustCommand.Run(context, rest);
+            case "tgfx":
+                return Commands.TgfCommand.Run(context, rest);
             default:
                 error.WriteLine($"resonate: unknown command '{command}'");
                 return Usage(error);
@@ -137,6 +141,8 @@ public static class BuilderProgram
         error.WriteLine("  format   run clang-format over the source tree");
         error.WriteLine("  analyzers  run the behaviour analyzers' self-checks");
         error.WriteLine("  csharp-test|demo|bench|reload  publish the managed fixtures");
+        error.WriteLine("  rust     build the text island's Rust library");
+        error.WriteLine("  tgfx     fetch and build tgfx");
         error.WriteLine("options: --project <dir> --build <dir>");
         return 2;
     }

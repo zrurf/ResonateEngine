@@ -234,12 +234,24 @@ task("slang")
 task("tgfx")
     set_category("plugin")
     on_run(function ()
-        local script = path.join(os.projectdir(), "scripts", "tgfx.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script},
-                                 {envs = {RESONATE_TGFX_MODE = is_mode("release") and "release" or "debug"}})
-        if output ~= nil then
-            print(tidy_check_output(output))
+        import("core.project.config")
+        config.load()
+        local plat = config.get("plat") or os.host()
+        local mode = os.getenv("RESONATE_TGFX_MODE") or config.get("mode") or "debug"
+        local ndk = config.get("ndk") or os.getenv("ANDROID_NDK_HOME")
+            or os.getenv("ANDROID_NDK_ROOT")
+        local args = {"tgfx", "--platform", plat, "--mode", mode,
+                      "--sdk-version", tostring(config.get("ndk_sdkver") or 30)}
+        if ndk ~= nil and ndk ~= "" then
+            table.insert(args, "--ndk")
+            table.insert(args, ndk)
         end
+        if config.get("arch") ~= nil and config.get("arch") ~= "" then
+            table.insert(args, "--arch")
+            table.insert(args, config.get("arch"))
+        end
+        import("builder")
+        builder.run(args)
     end)
     set_menu {
         usage = "xmake tgfx",

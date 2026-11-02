@@ -22,17 +22,14 @@ target("Resonate.Text")
     add_linkdirs(rust_libdir, {private = true})
     add_links("resonate_text_rust", {private = true})
 
-    -- The Rust library is built by scripts/text_rust.lua through `xmake lua`,
-    -- which has the full environment the package script scope lacks.
+    -- cargo needs the environment vcvars sets, which the builder's rust command
+    -- builds around.
     before_build(function (target)
-        local script = path.join(os.projectdir(), "scripts", "text_rust.lua")
         local envs = {RESONATE_TEXT_PLATFORM = is_plat("android") and "android" or "windows"}
         if is_plat("android") then
             envs.RESONATE_TEXT_NDK = get_config("ndk") or os.getenv("ANDROID_NDK_HOME") or
                                          os.getenv("ANDROID_NDK_ROOT")
         end
-        local output = os.iorunv(os.programfile(), {"lua", script}, {envs = envs})
-        if output ~= nil then
-            print((output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", "")))
-        end
+        import("builder")
+        builder.run({"rust"}, envs)
     end)
