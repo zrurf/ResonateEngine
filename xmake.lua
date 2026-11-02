@@ -10,6 +10,8 @@ set_config("ndk_sdkver", 29)
 add_rules("mode.debug", "mode.release")
 add_rules("plugin.compile_commands.autoupdate", {outputdir = ".compile"})
 
+add_moduledirs("xmake/modules")
+
 set_languages("cxxlatest", "clatest")
 set_fpmodels("precise")
 
@@ -188,22 +190,15 @@ rule("resonate.schema")
             return
         end
         schema_done = true
-
-        local script = path.join(os.projectdir(), "scripts", "schema.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print(tidy_check_output(output))
-        end
+        import("builder")
+        builder.run({"schema"})
     end)
 
 task("schema")
     set_category("plugin")
     on_run(function ()
-        local script = path.join(os.projectdir(), "scripts", "schema.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print(tidy_check_output(output))
-        end
+        import("builder")
+        builder.run({"schema"})
     end)
     set_menu {
         usage = "xmake schema",
@@ -274,12 +269,8 @@ task("tgfx")
 task("schema-lock")
     set_category("plugin")
     on_run(function ()
-        local script = path.join(os.projectdir(), "scripts", "schema.lua")
-        local code = os.execv(os.programfile(), {"lua", script},
-                              {try = true, envs = {RESONATE_SCHEMA_MODE = "update"}})
-        if code ~= 0 then
-            raise("schema lock update failed (exit %s)", tostring(code))
-        end
+        import("builder")
+        builder.run({"schema", "--update-lock"})
     end)
     set_menu {
         usage = "xmake schema-lock",

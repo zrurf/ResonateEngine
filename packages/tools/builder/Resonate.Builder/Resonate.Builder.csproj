@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <AssemblyName>Resonate.Builder</AssemblyName>
+    <RootNamespace>Resonate.Builder</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <!-- The command-line host under cli/ is a project of its own; without this it
+       would be compiled into the library as well. -->
+  <ItemGroup>
+    <Compile Remove="cli/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../schemac/Resonate.Tools.Schemac.csproj" />
+  </ItemGroup>
+
+</Project>

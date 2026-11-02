@@ -108,6 +108,15 @@ target("Resonate.Tests")
     -- so a stale or missing assembly fails the build instead of a test that
     -- quietly skips the only coverage of the managed path.
     before_build(function (target)
+        -- The schema CLI tests run the shipped compiler. Schema compilation for
+        -- the build itself goes through the builder, so the test tree publishes
+        -- the CLI it exercises.
+        local schemac = path.join(os.projectdir(), "packages", "tools", "schemac", "cli",
+                                  "Schemac.Cli.csproj")
+        local schemac_out = path.join(os.projectdir(), "build", "tools", "schemac", "publish")
+        os.execv("dotnet", {"publish", schemac, "-c", "Release", "-o", schemac_out,
+                            "--nologo", "-v", "quiet"})
+
         local script = path.join(os.projectdir(), "scripts", "csharp_test.lua")
         local output = os.iorunv(os.programfile(), {"lua", script})
         if output ~= nil then

@@ -13,9 +13,6 @@ target("Resonate.Animation")
     -- The Animation component is schema-declared in content/animation. The
     -- hook is idempotent; a second run in one build is a freshness check.
     before_build(function (target)
-        local script = path.join(os.projectdir(), "scripts", "schema.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print((output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", "")))
-        end
+        import("builder")
+        builder.run({"schema"})
     end)

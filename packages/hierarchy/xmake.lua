@@ -21,9 +21,6 @@ target("Resonate.Hierarchy")
     end)
 
     before_build(function (target)
-        local script = path.join(os.projectdir(), "scripts", "schema.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print((output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", "")))
-        end
+        import("builder")
+        builder.run({"schema"})
     end)

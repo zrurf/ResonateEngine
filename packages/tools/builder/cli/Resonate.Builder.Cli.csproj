@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <!-- The binary keeps the builder's name: xmake tasks and hooks invoke it as
+         `resonate`, whatever the assemblies are called. -->
+    <AssemblyName>resonate</AssemblyName>
+    <RootNamespace>Resonate.Builder.Cli</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Resonate.Builder/Resonate.Builder.csproj" />
+  </ItemGroup>
+
+</Project>
