@@ -23,6 +23,11 @@ struct Writer
 {
     std::vector<std::byte>& out;
 
+    void u8(std::uint8_t value)
+    {
+        out.push_back(std::byte{value});
+    }
+
     void u16(std::uint16_t value)
     {
         for (int byte = 0; byte < 2; ++byte)
@@ -68,6 +73,11 @@ struct Reader
     Span<const std::byte> data;
     std::size_t at = 0;
 
+    [[nodiscard]] std::size_t remaining() const noexcept
+    {
+        return data.size() - at;
+    }
+
     [[nodiscard]] bool take(std::size_t size, Span<const std::byte>& out)
     {
         if (size > data.size() - at)
@@ -76,6 +86,17 @@ struct Reader
         }
         out = Span<const std::byte>(data.data() + at, size);
         at += size;
+        return true;
+    }
+
+    [[nodiscard]] bool u8(std::uint8_t& out)
+    {
+        if (at >= data.size())
+        {
+            return false;
+        }
+        out = std::to_integer<std::uint8_t>(data[at]);
+        at += 1U;
         return true;
     }
 
@@ -132,6 +153,7 @@ struct TableEntry
 {
     std::string name;
     std::uint32_t version = 1U;
+    bool opaque = false;
     ecs::ComponentIndex index = ecs::kInvalidComponent;
     const dom::ComponentDesc* desc = nullptr;
 };
@@ -389,6 +411,7 @@ bool encodeWorld(const ecs::World& world, const dom::ComponentRegistry& schema,
         writer.u16(static_cast<std::uint16_t>(names[entry].size()));
         writer.text(names[entry]);
         writer.u32(registered[entry].desc != nullptr ? registered[entry].desc->version : 1U);
+        writer.u8(registered[entry].opaque ? 1U : 0U);
     }
 
     std::vector<std::uint32_t> present;
@@ -524,17 +547,34 @@ bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
         return false;
     }
 
+    /* A header count is untrusted: a table entry costs at least the u16 length,
+       the u32 version and the opaque byte, so anything beyond that cannot be
+       backed by the payload. */
+    constexpr std::size_t kTableEntryBytes = 2U + 4U + 1U;
+    if (table_count > reader.remaining() / kTableEntryBytes)
+    {
+        error = "the world snapshot's component table is truncated";
+        return false;
+    }
     std::vector<TableEntry> table(table_count);
     for (std::size_t position = 0; position < table.size(); ++position)
     {
         TableEntry& entry = table[position];
         std::uint16_t length = 0U;
+        std::uint8_t opaque = 0U;
         Span<const std::byte> name;
-        if (!reader.u16(length) || !reader.take(length, name) || !reader.u32(entry.version))
+        if (!reader.u16(length) || !reader.take(length, name) || !reader.u32(entry.version) ||
+            !reader.u8(opaque))
         {
             error = "the world snapshot's component table is truncated";
             return false;
         }
+        if (opaque > 1U)
+        {
+            error = "the world snapshot's component table names a bad opaque flag";
+            return false;
+        }
+        entry.opaque = opaque != 0U;
         entry.name.assign(reinterpret_cast<const char*>(name.data()), name.size());
         if (entry.name.empty() || entry.version == 0U)
         {
@@ -571,6 +611,13 @@ bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
         if (!stored.saved.valid())
         {
             error = "the world snapshot names a dead entity handle";
+            return false;
+        }
+        /* A component record costs at least its table index and byte length;
+           anything beyond that cannot be backed by the payload. */
+        if (component_count > reader.remaining() / 8U)
+        {
+            error = "the world snapshot's component payload is truncated";
             return false;
         }
         stored.components.resize(component_count);
@@ -656,7 +703,7 @@ bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
                 error = "component '" + entry.name + "' appears twice on one entity";
                 return false;
             }
-            if (entry.desc == nullptr)
+            if (entry.opaque)
             {
                 if (entry.version != 1U)
                 {
@@ -674,6 +721,15 @@ bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
                     return false;
                 }
                 continue;
+            }
+            if (entry.desc == nullptr)
+            {
+                /* The writer remapped its handles through a schema this build
+                   does not have; copying the bytes would restore handles this
+                   world never issued. */
+                error = "component '" + entry.name +
+                        "' has no schema in this build; the save cannot be restored";
+                return false;
             }
             if (!validDescriptor(*entry.desc, world.componentSize(entry.index), error))
             {
@@ -780,7 +836,7 @@ bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
         for (const StoredComponent& stored_component : stored.components)
         {
             const TableEntry& entry = table[stored_component.table];
-            if (entry.desc == nullptr)
+            if (entry.opaque)
             {
                 /* An opaque runtime component: bytes only, no handles. */
                 component_bytes.assign(stored_component.bytes.begin(),

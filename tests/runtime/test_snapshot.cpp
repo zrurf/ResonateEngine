@@ -130,6 +130,11 @@ struct Payload
         }
     }
 
+    void u8(std::uint8_t value)
+    {
+        bytes.push_back(std::byte{value});
+    }
+
     void bytesOf(const void* data, std::size_t size)
     {
         const auto* first = static_cast<const std::byte*>(data);
@@ -257,13 +262,14 @@ TEST_CASE("snapshot: an older component runs its migration", "[snapshot]")
 
     Payload payload;
     payload.bytesOf("RSWP", 4U);
-    payload.u32(1U); /* snapshot format */
+    payload.u32(2U); /* snapshot format */
     payload.u32(1U); /* one entity */
     payload.u32(0U); /* no blobs */
     payload.u32(1U); /* one component table entry */
     payload.u16(static_cast<std::uint16_t>(std::strlen("stest.Counter")));
     payload.bytesOf("stest.Counter", std::strlen("stest.Counter"));
     payload.u32(1U); /* written at schema version 1 */
+    payload.u8(0U); /* not opaque */
     payload.u32(0U); /* entity index */
     payload.u32(1U); /* generation */
     payload.u32(1U); /* one component */
@@ -321,13 +327,38 @@ TEST_CASE("snapshot: malformed payloads are refused", "[snapshot]")
     /* A truncated component table. */
     payload.bytes.clear();
     payload.bytesOf("RSWP", 4U);
-    payload.u32(1U);
+    payload.u32(2U);
     payload.u32(0U);
     payload.u32(0U);
     payload.u32(1U);
     payload.u16(5U);
     CHECK_FALSE(decodeWorld(world, kSchema, kNoMigrations,
                 Span<const std::byte>(payload.bytes.data(), payload.bytes.size()), error));
+    CHECK(error.find("truncated") != std::string::npos);
+
+    /* Header counts a payload cannot back: refused, not allocated. */
+    payload.bytes.clear();
+    payload.bytesOf("RSWP", 4U);
+    payload.u32(2U);
+    payload.u32(0U);
+    payload.u32(0U);
+    payload.u32(0xFFFFFFFFU);
+    CHECK_FALSE(decodeWorld(world, kSchema, kNoMigrations,
+                Span<const std::byte>(payload.bytes.data(), payload.bytes.size()), error));
+    CHECK(error.find("truncated") != std::string::npos);
+
+    payload.bytes.clear();
+    payload.bytesOf("RSWP", 4U);
+    payload.u32(2U);
+    payload.u32(1U); /* one entity */
+    payload.u32(0U);
+    payload.u32(0U);
+    payload.u32(0U); /* entity index */
+    payload.u32(1U); /* generation */
+    payload.u32(0xFFFFFFFFU); /* a component count no payload carries */
+    CHECK_FALSE(decodeWorld(world, kSchema, kNoMigrations,
+                Span<const std::byte>(payload.bytes.data(), payload.bytes.size()), error));
+    CHECK(error.find("truncated") != std::string::npos);
 }
 
 TEST_CASE("snapshot: an undescribed component is refused only when carried", "[snapshot]")
@@ -374,4 +405,56 @@ TEST_CASE("snapshot: an undescribed component is refused only when carried", "[s
     const Bare* restored_bare = restored.get<Bare>(restored_entities[0]);
     REQUIRE(restored_bare != nullptr);
     CHECK(restored_bare->value == 7U);
+}
+
+TEST_CASE("snapshot: a non-opaque component without a descriptor is refused on decode",
+          "[snapshot]")
+{
+    World world(resonate::systemAllocator());
+    REQUIRE(world.registerComponent<Bare>() != resonate::ecs::kInvalidComponent);
+
+    /* A registry that knows Link and Counter but not Bare: the type is
+       registered here, its schema is not. */
+    const ComponentDesc descs[] = {kLinkDesc, kCounterDesc};
+    const resonate::dom::TableComponentRegistry schema{Span<const ComponentDesc>(descs)};
+
+    const auto writeEntry = [&world](Payload& payload, const char* name, std::uint32_t version,
+                                     std::uint8_t opaque)
+    {
+        payload.bytesOf("RSWP", 4U);
+        payload.u32(2U); /* snapshot format */
+        payload.u32(1U); /* one entity */
+        payload.u32(0U); /* no blobs */
+        payload.u32(1U); /* one component table entry */
+        payload.u16(static_cast<std::uint16_t>(std::strlen(name)));
+        payload.bytesOf(name, std::strlen(name));
+        payload.u32(version);
+        payload.u8(opaque);
+        payload.u32(0U); /* entity index */
+        payload.u32(1U); /* generation */
+        payload.u32(1U); /* one component */
+        payload.u32(0U); /* table entry */
+        payload.u32(static_cast<std::uint32_t>(sizeof(std::uint32_t)));
+        payload.u32(7U); /* the value */
+    };
+
+    std::string error;
+    Payload payload;
+    writeEntry(payload, "stest.Bare", 1U, 0U);
+    CHECK_FALSE(decodeWorld(world, schema, kNoMigrations,
+                Span<const std::byte>(payload.bytes.data(), payload.bytes.size()), error));
+    CHECK(error.find("no schema in this build") != std::string::npos);
+    CHECK(world.entityCount() == 0U);
+
+    /* Declared opaque, the same bytes restore verbatim. */
+    payload.bytes.clear();
+    writeEntry(payload, "stest.Bare", 1U, 1U);
+    std::vector<Entity> restored;
+    REQUIRE(decodeWorld(world, schema, kNoMigrations,
+                        Span<const std::byte>(payload.bytes.data(), payload.bytes.size()), error,
+                        &restored));
+    REQUIRE(restored.size() == 1U);
+    const Bare* bare = world.get<Bare>(restored[0]);
+    REQUIRE(bare != nullptr);
+    CHECK(bare->value == 7U);
 }

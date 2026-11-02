@@ -20,7 +20,8 @@
  *
  *   "RSWP" | u32 format | u32 entity count | u32 blob count
  *   | u32 component count
- *   | component table: u16 name length, name bytes, u32 schema version
+ *   | component table: u16 name length, name bytes, u32 schema version,
+ *       u8 opaque (1 = the bytes carry no handles)
  *   | entities, in the order the writer listed them:
  *       u32 index | u32 generation | u32 component count
  *       | each: u32 table entry | u32 byte length | bytes
@@ -47,7 +48,7 @@ class ComponentRegistry;
 namespace resonate::save
 {
 
-inline constexpr std::uint32_t kWorldSnapshotFormat = 1U;
+inline constexpr std::uint32_t kWorldSnapshotFormat = 2U;
 
 /* The migrations a load may run, assembled by the host from the modules that
    own the components: one entry per component and source version, writing the
@@ -100,9 +101,11 @@ class MigrationRegistry
    blob contents carry handles the field descriptors cannot see. A component
    the payload names but this build does not register is an error once an
    entity carries it. An older component version runs the registry's migration
-   for that version; a version with no migration, or a newer one, is refused. A
-   component without a descriptor is copied verbatim when its byte size matches
-   the registered type (the writer only stored it as an opaque component). */
+   for that version; a version with no migration, or a newer one, is refused.
+   The payload records which components are opaque, and those alone are copied
+   verbatim when their byte size matches the registered type; a non-opaque
+   component with no descriptor in this build is an error, because its bytes
+   would restore handles this world never issued. */
 [[nodiscard]] bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
                                const MigrationRegistry& migrations,
                                Span<const std::byte> payload, std::string& error,
