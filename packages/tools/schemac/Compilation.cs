@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Xml.Schema;
 using Resonate.Tools.Schemac.Emit;
 using Resonate.Tools.Schemac.Schema;
@@ -85,6 +86,12 @@ internal static class Compilation
         int written = 0;
         if (!diagnostics.HasErrors)
         {
+            /* A build reaches several consumers at once and each fires the
+               schema hook, so two compiler processes can share one output tree.
+               The lock serializes them instead of letting one read a header the
+               other is rewriting. */
+            Directory.CreateDirectory(outDir);
+            using FileStream guard = AcquireLock(Path.Combine(outDir, ".schemac.lock"));
             foreach (ModuleUnit module in modules)
             {
                 types += module.Types.Count;
@@ -122,6 +129,25 @@ internal static class Compilation
 
         return new CompileResult(diagnostics.Items, modules.Count, types, schemas.Count, written,
                                  locks);
+    }
+
+    /* A second compiler waits for the one that holds the output tree; the
+       timeout is generous because a full compile of a content tree is fast and
+       a stuck holder is a bug, not a case to sit on. */
+    private static FileStream AcquireLock(string path)
+    {
+        for (int attempt = 0; ; ++attempt)
+        {
+            try
+            {
+                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite,
+                                      FileShare.None);
+            }
+            catch (IOException) when (attempt < 600)
+            {
+                Thread.Sleep(100);
+            }
+        }
     }
 
     /* A schema under <owner>/schemas belongs to <owner>: the module id is the
