@@ -41,6 +41,13 @@ class StringTable
     [[nodiscard]] const std::string* find(std::string_view key) const;
     [[nodiscard]] std::string_view locale() const noexcept { return locale_; }
 
+    /* Every key and text, in no particular order; tools that verify a cooked
+       table walk this instead of trusting the codec. */
+    [[nodiscard]] const std::unordered_map<std::string, std::string>& entries() const noexcept
+    {
+        return entries_;
+    }
+
   private:
     std::unordered_map<std::string, std::string> entries_;
     std::string locale_;

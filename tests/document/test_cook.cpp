@@ -127,6 +127,22 @@ TEST_CASE("cook: documents become binary, editor sources stay behind", "[cook]")
     CHECK_FALSE(std::filesystem::exists(out.path / "scene" / "plain.txt"));
 }
 
+TEST_CASE("cook: extensions compare case-insensitively", "[cook]")
+{
+    Root source("case-source");
+    Root out("case-out");
+    writeText(source.path / "art" / "Hero.PNG", "not really a png, but a copy\n");
+    writeText(source.path / "ui" / "Theme.RCSS", "Panel { }\n");
+
+    Summary summary;
+    REQUIRE(resonate::cook::run(source.path.string(), out.path.string(), summary, nullptr,
+                                nullptr));
+    CHECK(summary.copies == 2U);
+    CHECK(summary.skipped == 0U);
+    CHECK(std::filesystem::exists(out.path / "art" / "Hero.PNG"));
+    CHECK(std::filesystem::exists(out.path / "ui" / "Theme.RCSS"));
+}
+
 TEST_CASE("cook: a broken document fails the run and names the file", "[cook]")
 {
     Root source("broken-source");

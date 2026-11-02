@@ -9,6 +9,7 @@
 #include <iterator>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -107,30 +108,47 @@ void say(void* user_data, ReportFn report, const std::string& message)
     {
         out.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
     }
+    out.close();
     return out.good();
+}
+
+/* Extensions compare case-insensitively: the host filesystem does not
+   distinguish Hero.PNG from hero.png, and a miss here silently drops the
+   asset from the shipped tree. */
+[[nodiscard]] std::string loweredExtension(const std::filesystem::path& path)
+{
+    std::string extension = path.extension().string();
+    for (char& character : extension)
+    {
+        if (character >= 'A' && character <= 'Z')
+        {
+            character = static_cast<char>(character - 'A' + 'a');
+        }
+    }
+    return extension;
 }
 
 [[nodiscard]] bool isDocument(const std::filesystem::path& path)
 {
-    const std::string extension = path.extension().string();
+    const std::string extension = loweredExtension(path);
     return extension == ".rscene" || extension == ".rui";
 }
 
 [[nodiscard]] bool isClip(const std::filesystem::path& path)
 {
-    return path.extension() == ".rclip";
+    return loweredExtension(path) == ".rclip";
 }
 
 [[nodiscard]] bool isStrings(const std::filesystem::path& path)
 {
-    return path.extension() == ".rstrings";
+    return loweredExtension(path) == ".rstrings";
 }
 
 /* Editor-only sources: identity is an editor concept and declarations are the
    compiler's input, neither is read by a run. */
 [[nodiscard]] bool isEditorOnly(const std::filesystem::path& path)
 {
-    const std::string extension = path.extension().string();
+    const std::string extension = loweredExtension(path);
     return extension == ".meta" || extension == ".rschema" ||
            path.filename().string() == "schemas.lock.json";
 }
@@ -143,9 +161,63 @@ void say(void* user_data, ReportFn report, const std::string& message)
 {
     static const char* const kExtensions[] = {".ttf", ".otf", ".png", ".jpg",
                                               ".jpeg", ".ktx2", ".icons", ".rcss"};
-    const std::string extension = path.extension().string();
+    const std::string extension = loweredExtension(path);
     return std::any_of(std::begin(kExtensions), std::end(kExtensions),
                        [&extension](const char* candidate) { return extension == candidate; });
+}
+
+/* Everything the document codec carries, per node in slot order: identity,
+   classes, components, properties and the child list by slot. toXml covers
+   the root subtree; this also covers detached nodes, whose content toXml
+   never reaches. */
+[[nodiscard]] std::string documentSignature(const dom::Document& document)
+{
+    const std::vector<dom::NodeHandle> nodes = document.nodes();
+    std::unordered_map<std::uint32_t, std::size_t> slots;
+    slots.reserve(nodes.size());
+    for (std::size_t position = 0; position < nodes.size(); ++position)
+    {
+        slots.emplace(nodes[position].index, position);
+    }
+    std::string signature;
+    const auto append = [&signature](std::string_view text)
+    {
+        signature += std::to_string(text.size());
+        signature += ':';
+        signature.append(text);
+    };
+    for (const dom::NodeHandle node : nodes)
+    {
+        append(document.text(document.type(node)));
+        append(document.text(document.key(node)));
+        append(document.text(document.id(node)));
+        append(document.text(document.name(node)));
+        for (const dom::StringId class_id : document.classes(node))
+        {
+            append(document.text(class_id));
+        }
+        for (const dom::Component& component : document.components(node))
+        {
+            append(document.text(component.type));
+            for (const dom::Field& field : component.fields)
+            {
+                append(document.text(field.name));
+                append(field.value);
+            }
+        }
+        for (const dom::Field& property : document.properties(node))
+        {
+            append(document.text(property.name));
+            append(property.value);
+        }
+        append(std::to_string(document.childCount(node)));
+        for (dom::NodeHandle child = document.firstChild(node); child.valid();
+             child = document.nextSibling(child))
+        {
+            append(std::to_string(slots.at(child.index)));
+        }
+    }
+    return signature;
 }
 
 /* Parses the source, writes the cooked form and loads it back. The reload is
@@ -181,7 +253,8 @@ void say(void* user_data, ReportFn report, const std::string& message)
         dom::Document::parseBinary(Span<const std::byte>(cooked.data(), cooked.size()),
                                    reload_diagnostics);
     if (reloaded == nullptr || reloaded->nodes().size() != document->nodes().size() ||
-        reloaded->toXml() != document->toXml())
+        reloaded->toXml() != document->toXml() ||
+        documentSignature(*reloaded) != documentSignature(*document))
     {
         say(user_data, report,
             source.string() + ": the cooked form does not round trip the authored document");
@@ -236,13 +309,51 @@ void say(void* user_data, ReportFn report, const std::string& message)
     }
     const std::vector<std::byte> cooked = clip.toBinary();
     animation::Clip reloaded;
+    const auto sameVec3 = [](const animation::Vec3Track& authored,
+                             const animation::Vec3Track& read)
+    {
+        if (authored.keys.size() != read.keys.size())
+        {
+            return false;
+        }
+        for (std::size_t index = 0; index < authored.keys.size(); ++index)
+        {
+            const animation::Vec3Track::Key& written = authored.keys[index];
+            const animation::Vec3Track::Key& back = read.keys[index];
+            if (written.time != back.time || written.value.x != back.value.x ||
+                written.value.y != back.value.y || written.value.z != back.value.z)
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto sameQuat = [](const animation::QuatTrack& authored,
+                             const animation::QuatTrack& read)
+    {
+        if (authored.keys.size() != read.keys.size())
+        {
+            return false;
+        }
+        for (std::size_t index = 0; index < authored.keys.size(); ++index)
+        {
+            const animation::QuatTrack::Key& written = authored.keys[index];
+            const animation::QuatTrack::Key& back = read.keys[index];
+            if (written.time != back.time || written.value.x != back.value.x ||
+                written.value.y != back.value.y || written.value.z != back.value.z ||
+                written.value.w != back.value.w)
+            {
+                return false;
+            }
+        }
+        return true;
+    };
     if (!animation::Clip::parseBinary(Span<const std::byte>(cooked.data(), cooked.size()),
                                       reloaded, error) ||
         reloaded.duration != clip.duration ||
         reloaded.position_root_motion != clip.position_root_motion ||
-        reloaded.position.keys.size() != clip.position.keys.size() ||
-        reloaded.rotation.keys.size() != clip.rotation.keys.size() ||
-        reloaded.scale.keys.size() != clip.scale.keys.size())
+        !sameVec3(clip.position, reloaded.position) ||
+        !sameQuat(clip.rotation, reloaded.rotation) || !sameVec3(clip.scale, reloaded.scale))
     {
         say(user_data, report, source.string() + ": the cooked clip does not round trip");
         return false;
@@ -277,7 +388,8 @@ void say(void* user_data, ReportFn report, const std::string& message)
     const std::vector<std::byte> cooked = table->toBinary();
     const std::unique_ptr<ui::StringTable> reloaded =
         ui::StringTable::parseBytes(Span<const std::byte>(cooked.data(), cooked.size()), error);
-    if (reloaded == nullptr || reloaded->locale() != table->locale())
+    if (reloaded == nullptr || reloaded->locale() != table->locale() ||
+        reloaded->entries() != table->entries())
     {
         say(user_data, report, source.string() + ": the cooked string table does not round trip");
         return false;
@@ -325,11 +437,26 @@ bool run(const std::string& source, const std::string& out, Summary& summary, vo
         say(user_data, report, out + ": the output tree must be its own directory");
         return false;
     }
+    /* The replacement is recursive: an output around the working directory (a
+       build variable left unexpanded, a stray root) must not pass. */
+    std::error_code cwd_error;
+    const std::filesystem::path cwd = std::filesystem::weakly_canonical(
+        std::filesystem::current_path(cwd_error), cwd_error);
+    if (cwd_error || inside(cwd, out_abs))
+    {
+        say(user_data, report, out + ": the output tree must not contain the working directory");
+        return false;
+    }
     /* The output is a build artifact and is replaced wholesale: a file that is
        no longer an asset must not survive into a package because it sat in the
-       previous tree. */
+       previous tree. A removal that could not finish (a file a running game
+       still locks) has to fail the cook, or the stale file ships. */
     std::filesystem::remove_all(out_root, error);
-    error.clear();
+    if (error)
+    {
+        say(user_data, report, out + ": cannot replace the output tree (" + error.message() + ")");
+        return false;
+    }
     std::filesystem::create_directories(out_root, error);
     if (error)
     {
