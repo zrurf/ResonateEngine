@@ -1,6 +1,6 @@
 -- Module targets are declared from this table rather than read from the
 -- manifests: a script pulled in by includes() runs in a sandbox with no file
--- reading, so it cannot open resonate.module.toml. scripts/module_check.lua
+-- reading, so it cannot open resonate.module.toml. The builder's module check
 -- reconciles the table against the manifests, the C descriptors and the
 -- capability headers, and fails the build on any disagreement.
 --

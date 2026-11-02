@@ -71,7 +71,9 @@ internal sealed class StructLayout
     public required int Size { get; init; }
 }
 
-internal static class Program
+/* The generator's in-process entry is what the builder calls; the CLI
+   below is a thin parser around it, so the same code serves both. */
+public static class BindingGenerator
 {
     /* The closed vocabulary the generator knows how to lay out on both sides.
        A new type is added here and to the contract; nothing infers a layout
@@ -113,7 +115,12 @@ internal static class Program
             Console.Error.WriteLine("csbind: usage: csbind --input <bindings.json> --out <dir>");
             return 2;
         }
+        return Run(input, outDir);
+    }
 
+    /* Generates both sides from one contract. */
+    public static int Run(string input, string outDir)
+    {
         Contract? contract;
         try
         {

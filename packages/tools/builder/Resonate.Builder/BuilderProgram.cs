@@ -94,6 +94,10 @@ public static class BuilderProgram
         {
             case "schema":
                 return Commands.SchemaCommand.Run(context, rest);
+            case "csbind":
+                return Commands.CsBindCommand.Run(context, rest);
+            case "module-check":
+                return Commands.ModuleCheckCommand.Run(context, rest);
             default:
                 error.WriteLine($"resonate: unknown command '{command}'");
                 return Usage(error);
@@ -104,6 +108,8 @@ public static class BuilderProgram
     {
         error.WriteLine("usage: resonate <command> [options]");
         error.WriteLine("  schema   compile content .rschema declarations into generated types");
+        error.WriteLine("  csbind   generate the managed/engine binding ids from the contract");
+        error.WriteLine("  module-check  validate module manifests against descriptors and headers");
         error.WriteLine("options: --project <dir> --build <dir>");
         return 2;
     }

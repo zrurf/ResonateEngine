@@ -56,7 +56,7 @@ template <typename... Names> ModuleNameList moduleNames(Names... names)
 
 /*
  * The runtime half of a module's manifest, checked against resonate.module.json
- * on every build by scripts/module_check.lua.
+ * on every build by the builder's module check.
  */
 #define RESONATE_MODULE_DESCRIPTOR(module_id, module_name, module_version, module_abi, provides_,  \
                                    requirements_, optional_, dependencies_)                        \

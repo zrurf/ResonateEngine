@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../schemac/Resonate.Tools.Schemac.csproj" />
+    <ProjectReference Include="../../csbind/Resonate.Tools.CsBind.csproj" />
   </ItemGroup>
 
 </Project>

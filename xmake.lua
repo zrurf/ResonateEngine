@@ -156,22 +156,15 @@ rule("resonate.module-check")
             return
         end
         check_done = true
-
-        local script = path.join(os.projectdir(), "scripts", "module_check.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print(tidy_check_output(output))
-        end
+        import("builder")
+        builder.run({"module-check"})
     end)
 
 task("module-check")
     set_category("plugin")
     on_run(function ()
-        local script = path.join(os.projectdir(), "scripts", "module_check.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print(tidy_check_output(output))
-        end
+        import("builder")
+        builder.run({"module-check"})
     end)
     set_menu {
         usage = "xmake module-check",

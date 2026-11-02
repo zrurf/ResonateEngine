@@ -23,8 +23,8 @@ struct ModuleCapability
 
 /*
  * What one module declares about itself. resonate.module.toml states the same
- * thing for the build and for tooling, and scripts/module_check.lua fails the
- * build when the two disagree.
+ * thing for the build and for tooling, and the builder's module check fails
+ * the build when the two disagree.
  *
  * Capabilities are listed as typed ids, so a renamed or deleted capability fails
  * to compile.
