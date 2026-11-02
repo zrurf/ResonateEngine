@@ -10,4 +10,4 @@ target("Resonate.Runtime")
 
     add_packages("toml++")
 
-    add_deps("Resonate.Module", "Resonate.Core.Job", "Resonate.ECS")
+    add_deps("Resonate.Module", "Resonate.Core.Job", "Resonate.ECS", "Resonate.Core.Hash")
