@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 
 #if !defined(TOML_EXCEPTIONS)
 #    define TOML_EXCEPTIONS 0
@@ -109,6 +111,24 @@ bool Identity::loadProducts(std::string_view toml, std::string& error)
     {
         return true;
     }
+    /* A product path is joined onto the store root; a rooted or climbing path
+       would serve bytes from outside the store. */
+    const auto insideStore = [](const std::string& path)
+    {
+        const std::filesystem::path relative(path);
+        if (relative.is_absolute() || relative.has_root_path())
+        {
+            return false;
+        }
+        for (const std::filesystem::path& part : relative)
+        {
+            if (part == "..")
+            {
+                return false;
+            }
+        }
+        return true;
+    };
     /* Parsed aside: a manifest with one bad entry leaves the identity exactly
        as it was, so a caller that reports the failure never serves half of it. */
     std::vector<Product> parsed;
@@ -130,10 +150,20 @@ bool Identity::loadProducts(std::string_view toml, std::string& error)
             error = "a [[product]] entry needs a guid, a positive sub_id and a path";
             return false;
         }
+        if (sub_id > static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max()))
+        {
+            error = "a [[product]] sub_id must fit 32 bits";
+            return false;
+        }
         record.id.sub_id = static_cast<std::uint32_t>(sub_id);
         if (!record.id.valid())
         {
             error = "a [[product]] entry needs a guid, a positive sub_id and a path";
+            return false;
+        }
+        if (!insideStore(path))
+        {
+            error = "a [[product]] path must stay inside the store: " + path;
             return false;
         }
         const auto duplicates = [&record](const std::vector<Product>& known)

@@ -82,6 +82,19 @@ struct Store
     }
 };
 
+/* Writes the manifest into a throwaway directory and names it, for cases that
+   need custom manifest text. */
+std::string storeOfManifest(const std::string& text)
+{
+    static const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "resonate_vfs_manifest";
+    std::error_code code;
+    std::filesystem::remove_all(root, code);
+    std::filesystem::create_directories(root, code);
+    writeFile(root / "products.toml", text);
+    return (root / "products.toml").string();
+}
+
 } // namespace
 
 TEST_CASE("vfs: a directory store resolves ids to files", "[asset][vfs]")
@@ -182,6 +195,30 @@ TEST_CASE("vfs: a CAS store reads a product through its chunk manifest", "[asset
     REQUIRE(foreign != nullptr);
     CHECK_FALSE(foreign->read(id, bytes, error));
     CHECK(error.find("corrupt") != std::string::npos);
+    /* A failed read leaves the caller's bytes as they were. */
+    CHECK(textOf(bytes) == content);
 
     std::filesystem::remove_all(root, code);
+}
+
+TEST_CASE("vfs: a product path may not leave the store", "[asset][vfs]")
+{
+    const char* const escapes[] = {
+        R"(path = "C:/elsewhere/secret.bin")",
+        R"(path = "/etc/passwd")",
+        R"(path = "../secret.bin")",
+        R"(path = "nested/../../secret.bin")",
+    };
+    for (const char* const path_line : escapes)
+    {
+        const std::string manifest =
+            std::string("[[product]]\nguid = \"0197d6e4-8a2f-7c31-9b40-5d6e7f8091a2\"\n"
+                        "sub_id = 1\n") +
+            path_line + "\n";
+        std::string error;
+        const std::unique_ptr<resonate::asset::DirectoryVfs> vfs =
+            resonate::asset::DirectoryVfs::open(storeOfManifest(manifest), error);
+        CHECK(vfs == nullptr);
+        CHECK(error.find("inside the store") != std::string::npos);
+    }
 }

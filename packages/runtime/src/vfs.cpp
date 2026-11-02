@@ -118,7 +118,13 @@ bool CasVfs::read(const AssetId& id, std::vector<std::byte>& out, std::string& e
     {
         return false;
     }
-    return readBuffer(root_, key_, manifest, out, error);
+    std::vector<std::byte> bytes;
+    if (!readBuffer(root_, key_, manifest, bytes, error))
+    {
+        return false;
+    }
+    out = std::move(bytes);
+    return true;
 }
 
 std::optional<std::string> CasVfs::locate(const AssetId& id) const
