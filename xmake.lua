@@ -386,11 +386,36 @@ task("suite")
 task("android-apk")
     set_category("plugin")
     on_run(function ()
-        local script = path.join(os.projectdir(), "scripts", "android_apk.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print((output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", "")))
+        import("core.project.config")
+        import("core.project.project")
+        config.load()
+
+        local host = project.target("Resonate.Host.Android")
+        local module = project.target("Resonate.Module.resonate.audio")
+        if host == nil or module == nil then
+            raise("configure for Android first: xmake f -p android ...")
         end
+        local host_file = path.join(host:targetdir(), host:filename())
+        if not os.isfile(host_file) then
+            raise("build the host first: xmake build Resonate.Host.Android")
+        end
+        local plugins = path.absolute(module:targetdir())
+        local ndk = config.get("ndk")
+        if ndk == nil or ndk == "" then
+            ndk = os.getenv("ANDROID_NDK_HOME") or os.getenv("ANDROID_NDK_ROOT")
+        end
+        if ndk == nil or ndk == "" then
+            raise("no NDK path: pass --ndk=<dir> or set ANDROID_NDK_HOME")
+        end
+        local sdk = os.getenv("ANDROID_HOME") or os.getenv("ANDROID_SDK_ROOT")
+        if sdk == nil or sdk == "" then
+            sdk = path.directory(path.directory(ndk))
+        end
+        import("builder")
+        builder.run({"--build", path.directory(plugins), "package", "android",
+                     "--host", host_file, "--plugins", plugins, "--abi", host:arch(),
+                     "--ndk", ndk, "--sdk", sdk,
+                     "--sdk-version", tostring(config.get("ndk_sdkver") or "29")})
     end)
     set_menu {
         usage = "xmake android-apk",
