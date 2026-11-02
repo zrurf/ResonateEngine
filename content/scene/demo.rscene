@@ -51,12 +51,12 @@
         <Machine entry="bob" parameters="input_x">
           <State name="bob" clip="#bob"/>
           <State name="spin" clip="#spin"/>
-          <node type="Transition" from="bob" to="spin" fade="0.4">
+          <Transition from="bob" to="spin" fade="0.4">
             <Condition parameter="input_x" greater="0.5"/>
-          </node>
-          <node type="Transition" from="spin" to="bob" fade="0.4">
+          </Transition>
+          <Transition from="spin" to="bob" fade="0.4">
             <Condition parameter="input_x" less="0.5"/>
-          </node>
+          </Transition>
         </Machine>
         <LocalTransform position="0 0.5 2.5"/>
       </Object>

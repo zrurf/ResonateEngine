@@ -24,10 +24,10 @@ void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state
     }
     const std::size_t count = world.blobSize(styles->records) / sizeof(StateStyleRecord);
 
-    /* A widget carrying Transition animates its Background colour instead of
+    /* A widget carrying ColorTransition animates its Background colour instead of
        jumping: the target is recorded here and the tween system walks the
        colour over, starting from what is on screen. */
-    const Transition* transition = world.get<Transition>(entity);
+    const ColorTransition* transition = world.get<ColorTransition>(entity);
     const bool animates = transition != nullptr && transition->duration_ms > 0U;
     Vec4 tween_target{0.0F, 0.0F, 0.0F, 0.0F};
     bool wants_tween = false;

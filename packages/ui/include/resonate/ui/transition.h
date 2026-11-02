@@ -7,7 +7,7 @@
 namespace resonate::ui
 {
 
-/* Advances the animated state changes: a widget carrying Transition tweens its
+/* Advances the animated state changes: a widget carrying ColorTransition tweens its
    Background colour when a state style changes it, instead of jumping. One
    instance per world: bind once, advance every frame before layout. */
 class ColorTransitionSystem

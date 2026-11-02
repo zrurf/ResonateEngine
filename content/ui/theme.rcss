@@ -108,7 +108,7 @@
     <StyleRule selector=".field">
       <Background color="var(--field)" border_color="var(--border)" border_width="0"
                   radius="var(--radius-sm)"/>
-      <Transition duration_ms="100"/>
+      <ColorTransition duration_ms="100"/>
     </StyleRule>
     <StyleRule selector=".field:hover">
       <Background border_color="var(--border-strong)"/>
@@ -119,7 +119,7 @@
     <StyleRule selector=".button">
       <Background color="var(--surface)" border_color="var(--border)" border_width="1"
                   radius="var(--radius-sm)"/>
-      <Transition duration_ms="100"/>
+      <ColorTransition duration_ms="100"/>
     </StyleRule>
     <StyleRule selector=".button:hover">
       <Background color="var(--hover)"/>
@@ -130,7 +130,7 @@
     <StyleRule selector=".tool">
       <Background color="0 0 0 0" border_color="var(--border)" border_width="0"
                   radius="var(--radius-sm)"/>
-      <Transition duration_ms="100"/>
+      <ColorTransition duration_ms="100"/>
     </StyleRule>
     <StyleRule selector=".tool:hover">
       <Background color="var(--hover)"/>
@@ -140,7 +140,7 @@
     </StyleRule>
     <StyleRule selector=".row">
       <Background color="var(--panel)"/>
-      <Transition duration_ms="100"/>
+      <ColorTransition duration_ms="100"/>
     </StyleRule>
     <StyleRule selector=".row:hover">
       <Background color="var(--hover)"/>
@@ -150,7 +150,7 @@
     </StyleRule>
     <StyleRule selector=".outliner-row">
       <Background color="var(--panel)"/>
-      <Transition duration_ms="100"/>
+      <ColorTransition duration_ms="100"/>
     </StyleRule>
     <StyleRule selector=".outliner-row:hover">
       <Background color="var(--hover)"/>

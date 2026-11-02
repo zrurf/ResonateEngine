@@ -392,10 +392,10 @@
     <field name="hash" type="u64"/>
   </component>
 
-  <!-- Animates state changes: a widget carrying Transition tweens its
+  <!-- Animates state changes: a widget carrying ColorTransition tweens its
        Background colour over `duration_ms` instead of jumping. Authored through
        style rules like any other component. -->
-  <component name="Transition" version="1">
+  <component name="ColorTransition" version="1">
     <field name="duration_ms" type="u32" default="120"/>
   </component>
 

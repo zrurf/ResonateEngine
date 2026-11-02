@@ -385,7 +385,7 @@ TEST_CASE("ui style: a transition tweens the hover colour instead of jumping",
     <StyleSheet key="styles">
       <StyleRule selector=".action">
         <Background color="0.25 0.25 0.25 1"/>
-        <Transition duration_ms="100"/>
+        <ColorTransition duration_ms="100"/>
       </StyleRule>
       <StyleRule selector=".action:hover">
         <Background color="0.75 0.75 0.75 1"/>
