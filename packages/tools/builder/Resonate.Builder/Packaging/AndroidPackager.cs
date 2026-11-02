@@ -248,60 +248,17 @@ internal sealed class AndroidPackager
         }
     }
 
-    /* The asset manifest's paths reach back into the source tree; the package
-       ships the cooked products flat, so it writes its own manifest beside
-       them. The identity (guid, sub id, importer) is the source's; the
-       fingerprint is recomputed over the bytes that actually ship. */
+    /* The package ships the cooked products flat, so it writes its own
+       manifest beside them (StagedProducts); only the clips are asset
+       products today. */
     private void StageAssetManifest()
     {
-        string dev = _context.Path("build", "content", "products.toml");
-        if (!File.Exists(dev))
+        int count = StagedProducts.Write(_context, Path.Combine(_staging, "assets", "animation"),
+                                         "products.toml", null);
+        if (count != 0)
         {
-            return;
+            _context.Output.WriteLine($"android: {count} asset product(s) staged");
         }
-        string animation = Path.Combine(_staging, "assets", "animation");
-        Directory.CreateDirectory(animation);
-        HashSet<string> staged = Files(animation, "*.rclip")
-                                     .Select(file => Path.GetFileName(file))
-                                     .ToHashSet(StringComparer.Ordinal);
-        StringBuilder text = new();
-        text.Append("# Written by the packager; the runtime's asset identity reads it.\n");
-        int count = 0;
-        foreach (ProductsManifest.Product product in ProductsManifest.Read(dev).Products)
-        {
-            string name = Path.GetFileName(product.Path.Replace('\\', '/'));
-            if (!staged.Contains(name))
-            {
-                continue;
-            }
-            byte[] bytes = File.ReadAllBytes(Path.Combine(animation, name));
-            text.Append("[[product]]\n");
-            text.Append("source = \"").Append(Escape(product.Source)).Append("\"\n");
-            text.Append("guid = \"").Append(product.Guid).Append("\"\n");
-            if (product.Importer.Length != 0)
-            {
-                text.Append("importer = \"").Append(Escape(product.Importer)).Append("\"\n");
-            }
-            text.Append("fingerprint = \"")
-                .Append(Convert.ToHexStringLower(Blake3.Hash(bytes)))
-                .Append("\"\n");
-            text.Append("sub_id = ").Append(product.SubId).Append('\n');
-            text.Append("path = \"").Append(Escape(name)).Append("\"\n\n");
-            ++count;
-        }
-        if (count == 0)
-        {
-            return;
-        }
-        File.WriteAllText(Path.Combine(animation, "products.toml"), text.ToString());
-        _context.Output.WriteLine($"android: {count} asset product(s) staged");
-    }
-
-    private static string Escape(string text)
-    {
-        return text.Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("\"", "\\\"", StringComparison.Ordinal)
-            .Replace("\n", "\\n", StringComparison.Ordinal);
     }
 
     /* The Java activity owns the IME input connection (Android delivers

@@ -431,6 +431,31 @@ task("android-apk")
         description = "Package the built Android host and modules into resonate.apk.",
     }
 
+task("desktop-package")
+    set_category("plugin")
+    on_run(function ()
+        import("core.project.config")
+        import("core.project.project")
+        config.load()
+
+        local launcher = project.target("Resonate.Launcher")
+        local module = project.target("Resonate.Module.resonate.audio")
+        if launcher == nil or module == nil then
+            raise("no launcher or module targets; configure a desktop platform first")
+        end
+        local exe = launcher:targetfile()
+        if not os.isfile(exe) then
+            raise("build the launcher first: xmake build Resonate.Launcher")
+        end
+        import("builder")
+        builder.run({"package", "desktop", "--exe", exe, "--plugins",
+                     path.absolute(module:targetdir())})
+    end)
+    set_menu {
+        usage = "xmake desktop-package",
+        description = "Assemble the shipped desktop tree under build/package.",
+    }
+
 includes("packages/pal")
 includes("packages/window")
 includes("packages/core")

@@ -135,6 +135,7 @@ public static class BuilderProgram
         error.WriteLine("  csbind   generate the managed/engine binding ids from the contract");
         error.WriteLine("  module-check  validate module manifests against descriptors and headers");
         error.WriteLine("  package android  assemble and sign the APK from an Android build");
+        error.WriteLine("  package desktop  assemble a shipped desktop tree from a build");
         error.WriteLine("  selfcheck  run the builder's own checks");
         error.WriteLine("  assets   index the content sidecars into the products manifest");
         error.WriteLine("  shaders  compile Slang shaders to SPIR-V and reflection");

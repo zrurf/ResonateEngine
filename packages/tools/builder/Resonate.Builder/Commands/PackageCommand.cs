@@ -13,11 +13,39 @@ internal static class PackageCommand
 {
     internal static int Run(BuildContext context, IReadOnlyList<string> args)
     {
-        if (args.Count == 0 || args[0] != "android")
+        if (args.Count == 0)
         {
-            context.Error.WriteLine("resonate package: expected 'android'");
+            context.Error.WriteLine("resonate package: expected 'android' or 'desktop'");
             return 2;
         }
+        try
+        {
+            if (args[0] == "android")
+            {
+                return Android(context, args);
+            }
+            if (args[0] == "desktop")
+            {
+                return Desktop(context, args);
+            }
+            context.Error.WriteLine($"resonate package: expected 'android' or 'desktop', "
+                                    + $"got '{args[0]}'");
+            return 2;
+        }
+        catch (BuilderException error)
+        {
+            context.Error.WriteLine($"package: {error.Message}");
+            return 1;
+        }
+        catch (IOException error)
+        {
+            context.Error.WriteLine($"package: {error.Message}");
+            return 1;
+        }
+    }
+
+    private static int Android(BuildContext context, IReadOnlyList<string> args)
+    {
         string? host = null;
         string? plugins = null;
         string? abi = null;
@@ -57,20 +85,41 @@ internal static class PackageCommand
                                     + "are required");
             return 2;
         }
-        try
+        new AndroidPackager(context, host, plugins, abi, ndk, sdk, sdkVersion).Run();
+        return 0;
+    }
+
+    private static int Desktop(BuildContext context, IReadOnlyList<string> args)
+    {
+        string? exe = null;
+        string? plugins = null;
+        string? outDirectory = null;
+        for (int index = 1; index < args.Count; ++index)
         {
-            new AndroidPackager(context, host, plugins, abi, ndk, sdk, sdkVersion).Run();
-            return 0;
+            switch (args[index])
+            {
+                case "--exe" when index + 1 < args.Count:
+                    exe = args[++index];
+                    break;
+                case "--plugins" when index + 1 < args.Count:
+                    plugins = args[++index];
+                    break;
+                case "--out" when index + 1 < args.Count:
+                    outDirectory = args[++index];
+                    break;
+                default:
+                    context.Error.WriteLine($"resonate package: unknown argument '{args[index]}'");
+                    return 2;
+            }
         }
-        catch (BuilderException error)
+        if (exe is null || plugins is null)
         {
-            context.Error.WriteLine($"package: {error.Message}");
-            return 1;
+            context.Error.WriteLine("resonate package desktop: --exe --plugins are required; "
+                                    + "--out names the tree (default build/package)");
+            return 2;
         }
-        catch (IOException error)
-        {
-            context.Error.WriteLine($"package: {error.Message}");
-            return 1;
-        }
+        new DesktopPackager(context, exe, plugins,
+                            outDirectory ?? context.BuildPath("package")).Run();
+        return 0;
     }
 }

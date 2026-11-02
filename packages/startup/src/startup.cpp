@@ -1258,14 +1258,19 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
         &animation_player};
     /* The asset store the player resolves authored clips through. It outlives
        the run like the player; the directory backend reads the products
-       manifest the build staged. */
+       manifest the build staged. The dev tree keeps it under build/; a shipped
+       layout names it inside the content tree beside the products. */
     std::unique_ptr<asset::Vfs> asset_store;
     {
         const char* const staged_products = std::getenv("RESONATE_PRODUCTS");
-        const std::string products =
+        std::string products =
             staged_products != nullptr && *staged_products != '\0'
                 ? std::string(staged_products)
                 : findContentFile("build/content/products.toml");
+        if (products.empty())
+        {
+            products = findContentFile("content/products.toml");
+        }
         if (!products.empty())
         {
             std::string store_error;
