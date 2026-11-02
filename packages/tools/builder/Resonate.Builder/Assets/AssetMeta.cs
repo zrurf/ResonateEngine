@@ -19,6 +19,10 @@ internal sealed class AssetMeta
 
     public string SourceHash { get; set; } = string.Empty;
 
+    /* The [settings] table's key/value strings, as the engine's parser defines
+       them; empty when the sidecar carries none. */
+    public Dictionary<string, string> Settings { get; } = new(StringComparer.Ordinal);
+
     public bool ValidGuid => GuidHigh != 0UL || GuidLow != 0UL;
 
     internal static bool Read(string path, out AssetMeta meta, out string error)
@@ -40,6 +44,7 @@ internal sealed class AssetMeta
     internal static bool Parse(string text, AssetMeta meta, out string error)
     {
         Dictionary<string, string> values = new(StringComparer.Ordinal);
+        Dictionary<string, string>? settings = null;
         int line = 0;
         foreach (string rawLine in text.Split('\n'))
         {
@@ -48,6 +53,16 @@ internal sealed class AssetMeta
             if (lineText.Length == 0 || lineText[0] == '#')
             {
                 continue;
+            }
+            if (lineText == "[settings]")
+            {
+                settings = meta.Settings;
+                continue;
+            }
+            if (lineText.StartsWith('['))
+            {
+                error = $"line {line}: unknown table '{lineText}'";
+                return false;
             }
             int equals = lineText.IndexOf('=');
             if (equals <= 0)
@@ -68,7 +83,7 @@ internal sealed class AssetMeta
                 error = $"line {line}: '{key}' has an unsupported escape";
                 return false;
             }
-            values[key] = parsed;
+            (settings ?? values)[key] = parsed;
         }
 
         if (!values.TryGetValue("guid", out string? guid) || guid is null ||

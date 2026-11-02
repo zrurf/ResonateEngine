@@ -8,6 +8,7 @@
  * identity is deliberate, never handed out by a directory walk.
  */
 
+#include <map>
 #include <string>
 #include <string_view>
 
@@ -21,6 +22,9 @@ struct AssetMeta
     AssetId id{};          /* the GUID; the sub id belongs to a product, not the source */
     std::string importer;  /* empty when no importer has claimed the source */
     std::string source_hash; /* lower-case BLAKE3 hex; empty when never hashed */
+    /* The importer's own key/value state, authored under [settings]; values are
+       strings, and the canonical form writes them sorted by key. */
+    std::map<std::string, std::string> settings;
 };
 
 /* Reads a sidecar; the GUID is required and must not be the null id. Unknown

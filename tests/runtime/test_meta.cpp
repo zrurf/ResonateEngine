@@ -60,6 +60,34 @@ TEST_CASE("asset meta: importer and source hash are carried", "[asset][meta]")
           "b2f0c20ebf365c80b2f0c20ebf365c80b2f0c20ebf365c80b2f0c20ebf365c80");
 }
 
+TEST_CASE("asset meta: the settings table round trips sorted and escaped",
+          "[asset][meta]")
+{
+    resonate::asset::AssetMeta meta;
+    meta.id = resonate::asset::generateGuid();
+    /* Inserted out of order: the canonical form writes them sorted. */
+    meta.settings["zlib_level"] = "6";
+    meta.settings["alpha"] = "a \"quoted\" value";
+    meta.settings["path"] = "line one\nline two";
+    const std::string text = resonate::asset::formatMeta(meta);
+    const std::size_t settings_at = text.find("[settings]");
+    REQUIRE(settings_at != std::string::npos);
+    const std::size_t alpha_at = text.find("alpha = ");
+    const std::size_t path_at = text.find("path = ");
+    const std::size_t zlib_at = text.find("zlib_level = ");
+    CHECK(alpha_at < path_at);
+    CHECK(path_at < zlib_at);
+
+    resonate::asset::AssetMeta restored;
+    std::string error;
+    REQUIRE(resonate::asset::parseMeta(text, restored, error));
+    CHECK(restored.settings.size() == 3U);
+    CHECK(restored.settings.at("alpha") == "a \"quoted\" value");
+    CHECK(restored.settings.at("path") == "line one\nline two");
+    CHECK(restored.settings.at("zlib_level") == "6");
+    CHECK(resonate::asset::formatMeta(restored) == text);
+}
+
 TEST_CASE("asset meta: malformed sidecars are refused", "[asset][meta]")
 {
     resonate::asset::AssetMeta meta;
@@ -72,6 +100,15 @@ TEST_CASE("asset meta: malformed sidecars are refused", "[asset][meta]")
         "guid = \"15cc75a0-14ca-4c8e-b752-bf5ac010bc9a\"\nimporter = 3\n", meta, error));
     CHECK_FALSE(resonate::asset::parseMeta(
         "guid = \"15cc75a0-14ca-4c8e-b752-bf5ac010bc9a\"\nsource_hash = \"xyz\"\n", meta,
+        error));
+    /* Settings: not a table, a non-string value, a non-bare key. */
+    CHECK_FALSE(resonate::asset::parseMeta(
+        "guid = \"15cc75a0-14ca-4c8e-b752-bf5ac010bc9a\"\nsettings = 3\n", meta, error));
+    CHECK_FALSE(resonate::asset::parseMeta(
+        "guid = \"15cc75a0-14ca-4c8e-b752-bf5ac010bc9a\"\n[settings]\nquality = 3\n", meta,
+        error));
+    CHECK_FALSE(resonate::asset::parseMeta(
+        "guid = \"15cc75a0-14ca-4c8e-b752-bf5ac010bc9a\"\n[settings]\n\"a b\" = \"x\"\n", meta,
         error));
 }
 

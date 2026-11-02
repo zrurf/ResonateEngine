@@ -72,6 +72,22 @@ internal static class SelfCheckCommand
         Check(!AssetMeta.Parse("guid = \"00000000-0000-0000-0000-000000000000\"", new AssetMeta(),
                                out _), "null guid refused");
 
+        /* The engine's canonical [settings] table: values carry, escapes
+           decode, an unknown table still refuses. */
+        AssetMeta with_settings = new();
+        string settings_sidecar = "guid = \"" + kGuid + "\"\n"
+                                  + "[settings]\n"
+                                  + "quality = \"a \\\"quoted\\\" value\"\n"
+                                  + "notes = \"line one\\nline two\"\n";
+        Check(AssetMeta.Parse(settings_sidecar, with_settings, out string settingsError),
+              $"settings sidecar parses: {settingsError}");
+        Check(with_settings.Settings.Count == 2 &&
+              with_settings.Settings["quality"] == "a \"quoted\" value" &&
+              with_settings.Settings["notes"] == "line one\nline two",
+              "settings carry and decode");
+        Check(!AssetMeta.Parse("guid = \"" + kGuid + "\"\n[future]\nx = \"1\"\n",
+                               new AssetMeta(), out _), "unknown table refused");
+
         if (failures != 0)
         {
             context.Error.WriteLine($"selfcheck: {failures} check(s) failed");

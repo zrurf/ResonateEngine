@@ -129,6 +129,34 @@ bool parseMeta(std::string_view text, AssetMeta& out, std::string& error)
         }
         out.source_hash = std::move(hash);
     }
+    if (const toml::node* node = table.get("settings"); node != nullptr)
+    {
+        const toml::table* settings = node->as_table();
+        if (settings == nullptr)
+        {
+            error = "settings must be a table of strings";
+            return false;
+        }
+        for (const auto& [key, value] : *settings)
+        {
+            /* The canonical form writes bare keys, so only bare-key characters
+               may enter: a quoted key would round-trip into text the parser
+               rejects. */
+            const std::string name(key);
+            const bool bare = !name.empty() &&
+                              name.find_first_not_of(
+                                  "abcdefghijklmnopqrstuvwxyz"
+                                  "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") ==
+                                  std::string::npos;
+            const std::optional<std::string> text = value.value<std::string>();
+            if (!bare || !text)
+            {
+                error = "settings." + name + " must be a bare key naming a string";
+                return false;
+            }
+            out.settings.emplace(name, *text);
+        }
+    }
     return true;
 }
 
@@ -143,6 +171,16 @@ std::string formatMeta(const AssetMeta& meta)
     if (!meta.source_hash.empty())
     {
         text += "source_hash = \"" + meta.source_hash + "\"\n";
+    }
+    if (!meta.settings.empty())
+    {
+        /* std::map iterates sorted, so two serializations of one sidecar stay
+           byte-identical whatever order the caller filled. */
+        text += "\n[settings]\n";
+        for (const auto& [key, value] : meta.settings)
+        {
+            text += key + " = \"" + escape(value) + "\"\n";
+        }
     }
     return text;
 }
