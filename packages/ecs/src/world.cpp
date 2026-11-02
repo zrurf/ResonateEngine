@@ -186,6 +186,50 @@ std::uint32_t World::componentTypeCount() const noexcept
     return impl_->registeredCount;
 }
 
+const char* World::componentName(ComponentIndex component) const noexcept
+{
+    return impl_->registered(component) ? impl_->components[component].name : nullptr;
+}
+
+std::uint32_t World::componentSize(ComponentIndex component) const noexcept
+{
+    return impl_->registered(component) ? impl_->components[component].size : 0U;
+}
+
+void World::forEachEntity(void* user_data, EntityVisitor visit) const
+{
+    if (visit == nullptr)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(impl_->slotMutex);
+    for (std::uint32_t index = 0; index < impl_->slots.size(); ++index)
+    {
+        const detail::EntityRecord& record = impl_->slots[index];
+        if (record.chunk != nullptr)
+        {
+            visit(user_data, Entity{index, record.generation});
+        }
+    }
+}
+
+void World::forEachBlob(void* user_data, BlobVisitor visit) const
+{
+    if (visit == nullptr)
+    {
+        return;
+    }
+    for (std::uint32_t index = 0; index < impl_->blobs.size(); ++index)
+    {
+        const detail::BlobRecord& blob = impl_->blobs[index];
+        if (blob.live)
+        {
+            visit(user_data, blob.owner, BlobHandle{index, blob.generation}, blob.bytes,
+                  blob.size);
+        }
+    }
+}
+
 Entity World::create()
 {
     if (!impl_->structural())

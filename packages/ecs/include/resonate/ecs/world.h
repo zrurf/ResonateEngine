@@ -109,6 +109,21 @@ class World
     /* The number of component types this world registered. */
     [[nodiscard]] std::uint32_t componentTypeCount() const noexcept;
 
+    /* The name and byte size a registered type was registered under; null and 0
+       for a type this world did not register. The name is borrowed for the
+       world's life. */
+    [[nodiscard]] const char* componentName(ComponentIndex component) const noexcept;
+    [[nodiscard]] std::uint32_t componentSize(ComponentIndex component) const noexcept;
+
+    /* A snapshot walks the world in slot order; a visitor must not change
+       structure (record such edits in a command buffer). */
+    using EntityVisitor = void (*)(void* user_data, Entity entity);
+    void forEachEntity(void* user_data, EntityVisitor visit) const;
+
+    using BlobVisitor = void (*)(void* user_data, Entity owner, BlobHandle blob,
+                                 const void* bytes, std::size_t size);
+    void forEachBlob(void* user_data, BlobVisitor visit) const;
+
     /* --- entities (structural: the playback layer, see the header comment) --- */
 
     /* An invalid handle (generation 0) when the storage could not grow. */

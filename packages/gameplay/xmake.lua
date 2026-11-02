@@ -10,3 +10,20 @@ target("Resonate.Gameplay")
 
     add_deps("Resonate.ECS", "Resonate.Core.Memory", "Resonate.Core.Job",
              "Resonate.Window.Abi")
+
+    -- migrate.cpp implements a schema-declared migration, so the generated
+    -- component header must exist before this target compiles. The library is
+    -- usually built as somebody's dependency, where the rule's hook does not
+    -- fire, so it runs the compiler itself; the script is idempotent.
+    add_includedirs(path.join(os.projectdir(), "build", "gen"))
+    on_load(function (target)
+        os.mkdir(path.join(os.projectdir(), "build", "gen"))
+    end)
+
+    before_build(function (target)
+        local script = path.join(os.projectdir(), "scripts", "schema.lua")
+        local output = os.iorunv(os.programfile(), {"lua", script})
+        if output ~= nil then
+            print((output:gsub("%\27%[[%d;]*m", ""):gsub("%s*%{%s*%}%s*$", ""):gsub("\n+$", "")))
+        end
+    end)

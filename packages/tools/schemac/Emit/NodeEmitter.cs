@@ -156,6 +156,33 @@ internal static class NodeEmitter
 
         foreach (TypeDecl component in components)
         {
+            /* The schema declares each migration step with a typed output; the
+               thunk adapts it to the generic pointer a loader's registry
+               carries. Taking the thunk's address is what requires the owning
+               module's definition. */
+            string qualified = component.QualifiedName.Replace(".", "::");
+            string space = qualified[..qualified.LastIndexOf("::", StringComparison.Ordinal)];
+            foreach (MigrationDecl migration in component.Migrations)
+            {
+                text.Append("\ninline bool k").Append(component.Name).Append("MigrateFrom")
+                    .Append(migration.From)
+                    .Append("(const void* payload, std::size_t size, void* out)\n{\n    return ::")
+                    .Append(space).Append("::migrate").Append(component.Name).Append("From")
+                    .Append(migration.From).Append("(payload, size, *static_cast<::")
+                    .Append(qualified).Append("*>(out));\n}\n");
+            }
+            if (component.Migrations.Count > 0)
+            {
+                text.Append("\ninline constexpr dom::ComponentMigrationDesc k")
+                    .Append(component.Name).Append("Migrations[] = {\n");
+                foreach (MigrationDecl migration in component.Migrations)
+                {
+                    text.Append("    {").Append(migration.From).Append("U, ")
+                        .Append(migration.To).Append("U, &k").Append(component.Name)
+                        .Append("MigrateFrom").Append(migration.From).Append("},\n");
+                }
+                text.Append("};\n");
+            }
             if (component.Fields.Count == 0)
             {
                 continue;
@@ -224,7 +251,7 @@ internal static class NodeEmitter
                         .Append(component.Name).Append("Fields))");
                 }
                 text.Append(", static_cast<const void*>(&k").Append(component.Name)
-                    .Append("Defaults)},\n");
+                    .Append("Defaults), ").Append(component.Version).Append("U},\n");
             }
             text.Append("};\n");
             text.Append("inline constexpr std::size_t kComponentDescCount = ")

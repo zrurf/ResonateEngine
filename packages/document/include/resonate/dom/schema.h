@@ -63,6 +63,16 @@ struct ComponentFieldDesc
     std::uint32_t enum_value_count = 0;
 };
 
+/* One migration step: turns a payload written at `from` into the layout of
+   `to`. The callback writes the migrated instance into `out`; false when the
+   payload does not have the size or shape the step expects. */
+struct ComponentMigrationDesc
+{
+    std::uint32_t from = 0;
+    std::uint32_t to = 0;
+    bool (*migrate)(const void* payload, std::size_t size, void* out) = nullptr;
+};
+
 struct ComponentDesc
 {
     const char* name = nullptr;
@@ -75,6 +85,8 @@ struct ComponentDesc
        schema's defaults and not from zero bytes. Null when the generator has
        none for this component. */
     const void* defaults = nullptr;
+    /* The schema version the layout above describes. */
+    std::uint32_t version = 1;
 };
 
 class SchemaRegistry
