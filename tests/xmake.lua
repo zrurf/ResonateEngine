@@ -117,11 +117,8 @@ target("Resonate.Tests")
         os.execv("dotnet", {"publish", schemac, "-c", "Release", "-o", schemac_out,
                             "--nologo", "-v", "quiet"})
 
-        local script = path.join(os.projectdir(), "scripts", "csharp_test.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print(output)
-        end
+        import("builder")
+        builder.run({"csharp-test"})
     end)
 
     -- The plugins, order-only: their directory is what the end-to-end tests load,
@@ -178,7 +175,7 @@ target("Resonate.Bench.ECS")
 
 -- The FFI budget: the same dense pass through a C# Span and as C++, both
 -- optimized, on the same 100k entities. The managed assembly publishes in
--- Release/ReadyToRun (scripts/csharp_bench.lua) before the target compiles.
+-- Release/ReadyToRun (the builder's csharp-bench command) before the target compiles.
 target("Resonate.Bench.CSharp")
     set_kind("binary")
     set_default(false)
@@ -207,11 +204,8 @@ target("Resonate.Bench.CSharp")
     add_packages("xxhash")
 
     before_build(function (target)
-        local script = path.join(os.projectdir(), "scripts", "csharp_bench.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print(output)
-        end
+        import("builder")
+        builder.run({"csharp-bench"})
     end)
 
 -- The hot-reload acceptance: rewrite one managed file, rebuild the patch,
@@ -243,9 +237,6 @@ target("Resonate.Bench.Reload")
     add_packages("xxhash")
 
     before_build(function (target)
-        local script = path.join(os.projectdir(), "scripts", "csharp_reload.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print(output)
-        end
+        import("builder")
+        builder.run({"csharp-reload"})
     end)

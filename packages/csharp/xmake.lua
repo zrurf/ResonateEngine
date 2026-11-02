@@ -12,11 +12,8 @@ rule("resonate.csbind")
             return
         end
         csbind_done = true
-        local script = path.join(os.projectdir(), "scripts", "csbind.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print(output)
-        end
+        import("builder")
+        builder.run({"csbind"})
     end)
 
 target("Resonate.CSharp")

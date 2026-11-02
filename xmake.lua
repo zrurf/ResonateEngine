@@ -201,11 +201,8 @@ task("schema")
 task("csharp-demo")
     set_category("plugin")
     on_run(function ()
-        local script = path.join(os.projectdir(), "scripts", "csharp_demo.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print(tidy_check_output(output))
-        end
+        import("builder")
+        builder.run({"csharp-demo"})
     end)
     set_menu {
         usage = "xmake csharp-demo",
@@ -215,11 +212,8 @@ task("csharp-demo")
 task("analyzers")
     set_category("plugin")
     on_run(function ()
-        local script = path.join(os.projectdir(), "scripts", "analyzers.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print(tidy_check_output(output))
-        end
+        import("builder")
+        builder.run({"analyzers"})
     end)
     set_menu {
         usage = "xmake analyzers",
@@ -229,12 +223,8 @@ task("analyzers")
 task("slang")
     set_category("plugin")
     on_run(function ()
-        local script = path.join(os.projectdir(), "scripts", "slang.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script},
-                                 {envs = {RESONATE_VULKAN_SDK = vulkan_sdk}})
-        if output ~= nil then
-            print(tidy_check_output(output))
-        end
+        import("builder")
+        builder.run({"shaders"}, {RESONATE_VULKAN_SDK = vulkan_sdk})
     end)
     set_menu {
         usage = "xmake slang",
@@ -273,11 +263,8 @@ task("schema-lock")
 task("format")
     set_category("plugin")
     on_run(function ()
-        local script = path.join(os.projectdir(), "scripts", "format.lua")
-        local output = os.iorunv(os.programfile(), {"lua", script})
-        if output ~= nil then
-            print(tidy_check_output(output))
-        end
+        import("builder")
+        builder.run({"format"})
     end)
     set_menu {
         usage = "xmake format",

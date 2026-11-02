@@ -104,6 +104,20 @@ public static class BuilderProgram
                 return Commands.SelfCheckCommand.Run(context, rest);
             case "assets":
                 return Commands.AssetsCommand.Run(context, rest);
+            case "shaders":
+                return Commands.ShadersCommand.Run(context, rest);
+            case "format":
+                return Commands.FormatCommand.Run(context, rest);
+            case "analyzers":
+                return Commands.AnalyzersCommand.Run(context, rest);
+            case "csharp-test":
+                return Commands.CSharpTestCommand.Run(context, rest);
+            case "csharp-demo":
+                return Commands.CSharpDemoCommand.Run(context, rest);
+            case "csharp-bench":
+                return Commands.CSharpBenchCommand.Run(context, rest);
+            case "csharp-reload":
+                return Commands.CSharpReloadCommand.Run(context, rest);
             default:
                 error.WriteLine($"resonate: unknown command '{command}'");
                 return Usage(error);
@@ -119,6 +133,10 @@ public static class BuilderProgram
         error.WriteLine("  package android  assemble and sign the APK from an Android build");
         error.WriteLine("  selfcheck  run the builder's own checks");
         error.WriteLine("  assets   index the content sidecars into the products manifest");
+        error.WriteLine("  shaders  compile Slang shaders to SPIR-V and reflection");
+        error.WriteLine("  format   run clang-format over the source tree");
+        error.WriteLine("  analyzers  run the behaviour analyzers' self-checks");
+        error.WriteLine("  csharp-test|demo|bench|reload  publish the managed fixtures");
         error.WriteLine("options: --project <dir> --build <dir>");
         return 2;
     }
