@@ -82,6 +82,26 @@ struct HostExtension
 [[nodiscard]] const dom::SchemaRegistry& contentSchema();
 [[nodiscard]] const dom::ComponentRegistry& contentComponents();
 
+/* --- scene persistence --- */
+
+/* Writes the scene under `roots` to the named save slot: the entities in those
+   subtrees, their schema-described components and their blobs. Runtime state
+   the player owns (animation playback, machine clocks) travels as opaque bytes,
+   so a load answers a run composed from the same content; a host that also
+   holds entities outside the scene (the UI tree) keeps them. The slot lives in
+   the platform's application-data directory, under RESONATE_USER_DATA when a
+   host stages one. */
+[[nodiscard]] bool saveScene(const ecs::World& world, const std::vector<ecs::Entity>& roots,
+                             const std::string& name, std::string& error);
+
+/* Loads a slot into `world`. The scene currently under `roots` is only dropped
+   after the payload has decoded: a corrupt or newer save leaves the live scene
+   untouched and answers false. `out_roots` receives the restored scene roots
+   (the restored entities without a parent), in payload order. */
+[[nodiscard]] bool loadScene(ecs::World& world, const std::vector<ecs::Entity>& roots,
+                             const std::string& name, std::vector<ecs::Entity>& out_roots,
+                             std::string& error);
+
 /* The run's UI string table (content/ui/strings.rstrings), or null when the
    run loaded none. Markup resolves "#key" against it while the document is
    instantiated; a host looks up the keys it composes at runtime. Valid from

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include <resonate/dom/schema.h>
@@ -262,46 +263,88 @@ void remapHandles(const dom::ComponentDesc& desc, std::vector<std::byte>& bytes,
 } // namespace
 
 bool encodeWorld(const ecs::World& world, const dom::ComponentRegistry& schema,
-                 std::vector<std::byte>& out, std::string& error)
+                 Span<const ecs::Entity> entities,
+                 Span<const ecs::ComponentIndex> opaque_components, std::vector<std::byte>& out,
+                 std::string& error)
 {
+    std::unordered_set<ecs::ComponentIndex> opaque;
+    for (const ecs::ComponentIndex index : opaque_components)
+    {
+        if (index != ecs::kInvalidComponent)
+        {
+            opaque.insert(index);
+        }
+    }
+
     struct Registered
     {
         ecs::ComponentIndex index = ecs::kInvalidComponent;
         const dom::ComponentDesc* desc = nullptr;
+        bool opaque = false;
     };
+    std::unordered_set<std::uint64_t> included;
+    included.reserve(entities.size());
+    for (const ecs::Entity entity : entities)
+    {
+        if (!world.alive(entity))
+        {
+            error = "entity " + std::to_string(entity.index) + ":" +
+                    std::to_string(entity.generation) + " is not alive";
+            return false;
+        }
+        if (!included.insert(handleKey(entity.index, entity.generation)).second)
+        {
+            error = "entity " + std::to_string(entity.index) + " appears twice";
+            return false;
+        }
+    }
+
+    /* Only the types an entity actually carries enter the table: a registered
+       type nothing holds (a UI runtime pointer on a canvas outside the save)
+       must not make the scene unsaveable. */
+    std::vector<bool> carried(ecs::kMaxComponentTypes, false);
+    for (const ecs::Entity entity : entities)
+    {
+        for (ecs::ComponentIndex index = 0; index < ecs::kMaxComponentTypes; ++index)
+        {
+            if (!carried[index] && world.has(entity, index))
+            {
+                carried[index] = true;
+            }
+        }
+    }
+
     std::vector<Registered> registered;
     std::vector<std::string> names;
 
     for (ecs::ComponentIndex index = 0; index < ecs::kMaxComponentTypes; ++index)
     {
         const char* const name = world.componentName(index);
-        if (name == nullptr)
+        if (name == nullptr || !carried[index])
         {
             continue;
         }
         const dom::ComponentDesc* const desc = schema.find(name);
         if (desc == nullptr)
         {
-            error = std::string("component '") + name +
-                    "' is registered without a schema descriptor; the snapshot cannot tell its "
-                    "entity and blob handles from data";
-            return false;
+            if (!opaque.contains(index))
+            {
+                error = std::string("component '") + name +
+                        "' is registered without a schema descriptor; the snapshot cannot tell "
+                        "its entity and blob handles from data";
+                return false;
+            }
+            registered.push_back(Registered{index, nullptr, true});
+            names.emplace_back(name);
+            continue;
         }
         if (!validDescriptor(*desc, world.componentSize(index), error))
         {
             return false;
         }
-        registered.push_back(Registered{index, desc});
+        registered.push_back(Registered{index, desc, false});
         names.emplace_back(name);
     }
-
-    std::vector<ecs::Entity> entities;
-    world.forEachEntity(
-        &entities,
-        [](void* user_data, ecs::Entity entity)
-        {
-            static_cast<std::vector<ecs::Entity>*>(user_data)->push_back(entity);
-        });
 
     struct BlobRow
     {
@@ -310,13 +353,23 @@ bool encodeWorld(const ecs::World& world, const dom::ComponentRegistry& schema,
         const void* bytes = nullptr;
         std::size_t size = 0U;
     };
+    struct BlobCollect
+    {
+        const std::unordered_set<std::uint64_t>* included = nullptr;
+        std::vector<BlobRow>* rows = nullptr;
+    };
     std::vector<BlobRow> blobs;
+    BlobCollect collect{&included, &blobs};
     world.forEachBlob(
-        &blobs,
+        &collect,
         [](void* user_data, ecs::Entity owner, ecs::BlobHandle blob, const void* bytes,
            std::size_t size)
         {
-            static_cast<std::vector<BlobRow>*>(user_data)->push_back(BlobRow{owner, blob, bytes, size});
+            auto* state = static_cast<BlobCollect*>(user_data);
+            if (state->included->contains(handleKey(owner.index, owner.generation)))
+            {
+                state->rows->push_back(BlobRow{owner, blob, bytes, size});
+            }
         });
 
     out.clear();
@@ -335,7 +388,7 @@ bool encodeWorld(const ecs::World& world, const dom::ComponentRegistry& schema,
         }
         writer.u16(static_cast<std::uint16_t>(names[entry].size()));
         writer.text(names[entry]);
-        writer.u32(registered[entry].desc->version);
+        writer.u32(registered[entry].desc != nullptr ? registered[entry].desc->version : 1U);
     }
 
     std::vector<std::uint32_t> present;
@@ -356,6 +409,9 @@ bool encodeWorld(const ecs::World& world, const dom::ComponentRegistry& schema,
         {
             const Registered& component = registered[entry];
             const void* const data = world.get(entity, component.index);
+            const std::uint32_t size =
+                component.desc != nullptr ? component.desc->size
+                                          : world.componentSize(component.index);
             if (data == nullptr)
             {
                 error = std::string("component '") + names[entry] + "' of entity " +
@@ -363,8 +419,8 @@ bool encodeWorld(const ecs::World& world, const dom::ComponentRegistry& schema,
                 return false;
             }
             writer.u32(entry);
-            writer.u32(component.desc->size);
-            writer.bytes(data, component.desc->size);
+            writer.u32(size);
+            writer.bytes(data, size);
         }
     }
 
@@ -383,6 +439,20 @@ bool encodeWorld(const ecs::World& world, const dom::ComponentRegistry& schema,
         writer.bytes(blob.bytes, blob.size);
     }
     return true;
+}
+
+bool encodeWorld(const ecs::World& world, const dom::ComponentRegistry& schema,
+                 std::vector<std::byte>& out, std::string& error)
+{
+    std::vector<ecs::Entity> entities;
+    world.forEachEntity(
+        &entities,
+        [](void* user_data, ecs::Entity entity)
+        {
+            static_cast<std::vector<ecs::Entity>*>(user_data)->push_back(entity);
+        });
+    return encodeWorld(world, schema, Span<const ecs::Entity>(entities.data(), entities.size()),
+                       Span<const ecs::ComponentIndex>(), out, error);
 }
 
 bool MigrationRegistry::add(std::string_view component, std::uint32_t from_version,
@@ -418,7 +488,8 @@ MigrationRegistry::Function MigrationRegistry::find(std::string_view component,
 
 bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
                  const MigrationRegistry& migrations, Span<const std::byte> payload,
-                 std::string& error)
+                 std::string& error, std::vector<ecs::Entity>* restored,
+                 std::vector<std::pair<ecs::Entity, ecs::Entity>>* remap)
 {
     if (payload.size() < sizeof(kMagic) + 16U)
     {
@@ -558,58 +629,19 @@ bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
         return false;
     }
 
-    /* Every handle is created before any component is restored: a component may
-       reference an entity or blob the payload lists later. */
-    std::unordered_map<std::uint64_t, ecs::Entity> entity_map;
-    entity_map.reserve(entities.size());
+    /* Validate before touching the world: a corrupt save must fail without
+       creating entities that then have to be rolled back. */
+    std::unordered_set<std::uint64_t> saved_entities;
+    saved_entities.reserve(entities.size());
     for (const StoredEntity& stored : entities)
     {
-        const ecs::Entity created = world.create();
-        if (!created.valid())
-        {
-            error = "the world could not create the restored entities";
-            return false;
-        }
-        if (!entity_map.emplace(handleKey(stored.saved.index, stored.saved.generation), created)
-                 .second)
+        if (!saved_entities.insert(handleKey(stored.saved.index, stored.saved.generation)).second)
         {
             error = "the world snapshot names an entity handle twice";
             return false;
         }
-    }
-
-    std::unordered_map<std::uint64_t, ecs::BlobHandle> blob_map;
-    blob_map.reserve(blobs.size());
-    for (const StoredBlob& stored : blobs)
-    {
-        const auto owner = entity_map.find(handleKey(stored.owner.index, stored.owner.generation));
-        if (owner == entity_map.end())
-        {
-            error = "a blob names owner " + std::to_string(stored.owner.index) +
-                    ", which the snapshot does not restore";
-            return false;
-        }
-        const ecs::BlobHandle created =
-            world.createBlob(owner->second, stored.bytes.size(), stored.bytes.data());
-        if (!created.valid())
-        {
-            error = "the world could not restore a blob";
-            return false;
-        }
-        if (!blob_map.emplace(handleKey(stored.saved.index, stored.saved.generation), created)
-                 .second)
-        {
-            error = "the world snapshot names a blob handle twice";
-            return false;
-        }
-    }
-
-    std::vector<std::byte> component_bytes;
-    for (std::size_t entity_index = 0; entity_index < entities.size(); ++entity_index)
-    {
-        const StoredEntity& stored = entities[entity_index];
-        const ecs::Entity target =
-            entity_map.at(handleKey(stored.saved.index, stored.saved.generation));
+        std::unordered_set<std::uint32_t> seen;
+        seen.reserve(stored.components.size());
         for (const StoredComponent& stored_component : stored.components)
         {
             const TableEntry& entry = table[stored_component.table];
@@ -619,17 +651,34 @@ bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
                         "' is not registered in this build; the save cannot be restored";
                 return false;
             }
+            if (!seen.insert(stored_component.table).second)
+            {
+                error = "component '" + entry.name + "' appears twice on one entity";
+                return false;
+            }
             if (entry.desc == nullptr)
             {
-                error = "component '" + entry.name +
-                        "' has no schema descriptor; its handles cannot be restored";
-                return false;
+                if (entry.version != 1U)
+                {
+                    error = "runtime component '" + entry.name + "' is version " +
+                            std::to_string(entry.version) +
+                            " in the save, this build reads version 1";
+                    return false;
+                }
+                if (stored_component.bytes.size() != world.componentSize(entry.index))
+                {
+                    error = "runtime component '" + entry.name + "' is " +
+                            std::to_string(stored_component.bytes.size()) +
+                            " bytes in the save, " +
+                            std::to_string(world.componentSize(entry.index)) + " in this build";
+                    return false;
+                }
+                continue;
             }
             if (!validDescriptor(*entry.desc, world.componentSize(entry.index), error))
             {
                 return false;
             }
-
             if (entry.version == entry.desc->version)
             {
                 if (stored_component.bytes.size() != entry.desc->size)
@@ -639,16 +688,16 @@ bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
                             std::to_string(entry.desc->size) + " in this build";
                     return false;
                 }
-                component_bytes.assign(stored_component.bytes.begin(),
-                                       stored_component.bytes.end());
             }
             else if (entry.version < entry.desc->version)
             {
-                if (!migrateToCurrent(migrations, entry.name, *entry.desc, entry.version,
-                                      Span<const std::byte>(stored_component.bytes.data(),
-                                                            stored_component.bytes.size()),
-                                      component_bytes, error))
+                if (migrations.find(entry.name, entry.version) == nullptr)
                 {
+                    error = "component '" + entry.name + "' is version " +
+                            std::to_string(entry.version) +
+                            " in the save, this build reads version " +
+                            std::to_string(entry.desc->version) +
+                            " and no migration is registered";
                     return false;
                 }
             }
@@ -659,19 +708,113 @@ bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
                         std::to_string(entry.desc->version);
                 return false;
             }
+        }
+    }
+    std::unordered_set<std::uint64_t> saved_blobs;
+    saved_blobs.reserve(blobs.size());
+    for (const StoredBlob& stored : blobs)
+    {
+        if (!saved_blobs.insert(handleKey(stored.saved.index, stored.saved.generation)).second)
+        {
+            error = "the world snapshot names a blob handle twice";
+            return false;
+        }
+        if (!saved_entities.contains(handleKey(stored.owner.index, stored.owner.generation)))
+        {
+            error = "a blob names owner " + std::to_string(stored.owner.index) +
+                    ", which the snapshot does not restore";
+            return false;
+        }
+    }
 
-            if (world.has(target, entry.index))
+    /* Apply. Every handle is created before any component is restored: a
+       component may reference an entity or blob the payload lists later. */
+    std::vector<ecs::Entity> created;
+    created.reserve(entities.size());
+    const auto fail = [&world, &created, &error](std::string message)
+    {
+        for (const ecs::Entity entity : created)
+        {
+            world.destroy(entity);
+        }
+        error = std::move(message);
+        return false;
+    };
+
+    std::unordered_map<std::uint64_t, ecs::Entity> entity_map;
+    entity_map.reserve(entities.size());
+    for (const StoredEntity& stored : entities)
+    {
+        const ecs::Entity handle = world.create();
+        if (!handle.valid())
+        {
+            return fail("the world could not create the restored entities");
+        }
+        created.push_back(handle);
+        entity_map.emplace(handleKey(stored.saved.index, stored.saved.generation), handle);
+        if (remap != nullptr)
+        {
+            remap->push_back({stored.saved, handle});
+        }
+    }
+
+    std::unordered_map<std::uint64_t, ecs::BlobHandle> blob_map;
+    blob_map.reserve(blobs.size());
+    for (const StoredBlob& stored : blobs)
+    {
+        const auto owner = entity_map.find(handleKey(stored.owner.index, stored.owner.generation));
+        const ecs::BlobHandle handle =
+            world.createBlob(owner->second, stored.bytes.size(), stored.bytes.data());
+        if (!handle.valid())
+        {
+            return fail("the world could not restore a blob");
+        }
+        blob_map.emplace(handleKey(stored.saved.index, stored.saved.generation), handle);
+    }
+
+    std::vector<std::byte> component_bytes;
+    for (const StoredEntity& stored : entities)
+    {
+        const ecs::Entity target =
+            entity_map.at(handleKey(stored.saved.index, stored.saved.generation));
+        for (const StoredComponent& stored_component : stored.components)
+        {
+            const TableEntry& entry = table[stored_component.table];
+            if (entry.desc == nullptr)
             {
-                error = "component '" + entry.name + "' appears twice on one entity";
-                return false;
+                /* An opaque runtime component: bytes only, no handles. */
+                component_bytes.assign(stored_component.bytes.begin(),
+                                       stored_component.bytes.end());
+                if (world.add(target, entry.index, component_bytes.data()) == nullptr)
+                {
+                    return fail("the world could not restore component '" + entry.name + "'");
+                }
+                continue;
             }
+
+            if (entry.version == entry.desc->version)
+            {
+                component_bytes.assign(stored_component.bytes.begin(),
+                                       stored_component.bytes.end());
+            }
+            else if (!migrateToCurrent(migrations, entry.name, *entry.desc, entry.version,
+                                       Span<const std::byte>(stored_component.bytes.data(),
+                                                             stored_component.bytes.size()),
+                                       component_bytes, error))
+            {
+                return fail(error);
+            }
+
             remapHandles(*entry.desc, component_bytes, entity_map, blob_map);
             if (world.add(target, entry.index, component_bytes.data()) == nullptr)
             {
-                error = "the world could not restore component '" + entry.name + "'";
-                return false;
+                return fail("the world could not restore component '" + entry.name + "'");
             }
         }
+    }
+    if (restored != nullptr)
+    {
+        restored->assign(created.begin(), created.end());
     }
     return true;
 }

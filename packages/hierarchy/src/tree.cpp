@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 namespace resonate::hierarchy
@@ -364,6 +365,54 @@ Span<const ecs::Entity> children(const ecs::World& world, Entity entity) noexcep
 std::uint32_t childCount(const ecs::World& world, Entity entity) noexcept
 {
     return static_cast<std::uint32_t>(children(world, entity).size());
+}
+
+void remapChildren(World& world, Span<const Entity> entities, void* user_data, EntityMapper map)
+{
+    if (map == nullptr)
+    {
+        return;
+    }
+    std::vector<std::pair<Entity, BlobHandle>> lists;
+    lists.reserve(entities.size());
+    for (const Entity entity : entities)
+    {
+        if (!world.alive(entity))
+        {
+            continue;
+        }
+        const Children* kids = world.get<Children>(entity);
+        if (kids != nullptr && world.alive(kids->children))
+        {
+            lists.emplace_back(entity, kids->children);
+        }
+    }
+    for (const auto& [entity, blob] : lists)
+    {
+        const std::size_t count = world.blobSize(blob) / sizeof(Entity);
+        const auto* stored = static_cast<const Entity*>(world.blobData(blob));
+        std::vector<Entity> mapped;
+        mapped.reserve(count);
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const Entity fresh = map(user_data, stored[index]);
+            if (fresh.valid())
+            {
+                mapped.push_back(fresh);
+            }
+        }
+        if (mapped.empty())
+        {
+            world.destroyBlob(blob);
+            (void)world.remove<Children>(entity);
+            continue;
+        }
+        if (!world.resizeBlob(blob, mapped.size() * sizeof(Entity)))
+        {
+            continue;
+        }
+        std::memcpy(world.blobData(blob), mapped.data(), mapped.size() * sizeof(Entity));
+    }
 }
 
 bool isAncestorOf(const ecs::World& world, Entity ancestor, Entity entity) noexcept

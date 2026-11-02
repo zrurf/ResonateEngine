@@ -63,6 +63,14 @@ void destroyEntity(ecs::CommandBuffer& commands, ecs::Entity entity);
 
 [[nodiscard]] std::uint32_t childCount(const ecs::World& world, ecs::Entity entity) noexcept;
 
+/* Rewrites the entity handles stored inside the Children blobs of `entities`
+   through `map`, after a snapshot load replaced every handle. An entry the map
+   does not know is dropped, so each list stays dense and consistent with the
+   restored Parent components. */
+using EntityMapper = ecs::Entity (*)(void* user_data, ecs::Entity entity);
+void remapChildren(ecs::World& world, Span<const ecs::Entity> entities, void* user_data,
+                   EntityMapper map);
+
 /* Whether `ancestor` is `entity` itself or above it. The walk is bounded by
    kMaxDepth, so a corrupted tree answers false instead of looping. */
 [[nodiscard]] bool isAncestorOf(const ecs::World& world, ecs::Entity ancestor,

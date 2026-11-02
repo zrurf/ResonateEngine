@@ -18,6 +18,7 @@ using resonate::Span;
 using resonate::dom::ComponentDesc;
 using resonate::dom::ComponentFieldDesc;
 using resonate::ecs::BlobHandle;
+using resonate::ecs::ComponentIndex;
 using resonate::ecs::Entity;
 using resonate::ecs::World;
 using resonate::save::decodeWorld;
@@ -329,7 +330,7 @@ TEST_CASE("snapshot: malformed payloads are refused", "[snapshot]")
                 Span<const std::byte>(payload.bytes.data(), payload.bytes.size()), error));
 }
 
-TEST_CASE("snapshot: a component without a descriptor blocks the save", "[snapshot]")
+TEST_CASE("snapshot: an undescribed component is refused only when carried", "[snapshot]")
 {
     World world(resonate::systemAllocator());
     REQUIRE(world.registerComponent<Bare>() != resonate::ecs::kInvalidComponent);
@@ -345,7 +346,32 @@ TEST_CASE("snapshot: a component without a descriptor blocks the save", "[snapsh
 
     std::vector<std::byte> payload;
     std::string error;
+    /* A registered type nothing holds does not constrain the save. */
+    CHECK(encodeWorld(world, schema, payload, error));
+
+    const Entity entity = world.create();
+    REQUIRE(entity.valid());
+    Bare bare;
+    bare.value = 7U;
+    REQUIRE(world.add(entity, bare) != nullptr);
     CHECK_FALSE(encodeWorld(world, schema, payload, error));
     CHECK(error.find("stest.Bare") != std::string::npos);
     CHECK(error.find("descriptor") != std::string::npos);
+
+    /* Declared opaque, the bytes travel without a layout and come back whole. */
+    const ComponentIndex opaque[] = {world.findComponent("stest.Bare")};
+    REQUIRE(opaque[0] != resonate::ecs::kInvalidComponent);
+    REQUIRE(encodeWorld(world, schema, Span<const Entity>(&entity, 1U),
+                        Span<const ComponentIndex>(opaque, 1U), payload, error));
+
+    World restored(resonate::systemAllocator());
+    REQUIRE(restored.registerComponent<Bare>() != resonate::ecs::kInvalidComponent);
+    std::vector<Entity> restored_entities;
+    REQUIRE(decodeWorld(restored, schema, kNoMigrations,
+                        Span<const std::byte>(payload.data(), payload.size()), error,
+                        &restored_entities));
+    REQUIRE(restored_entities.size() == 1U);
+    const Bare* restored_bare = restored.get<Bare>(restored_entities[0]);
+    REQUIRE(restored_bare != nullptr);
+    CHECK(restored_bare->value == 7U);
 }

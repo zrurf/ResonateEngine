@@ -11,17 +11,20 @@
  * field descriptors tell the loader where the 8-byte handles are and it
  * rewrites them to the handles the restoring world issued. A registered
  * component with no descriptor is refused — without a layout the writer cannot
- * know which bytes are handles.
+ * know which bytes are handles — unless the writer names it opaque: the host
+ * declares the runtime components it keeps across a save (animation playback,
+ * machine clocks), and those bytes are copied verbatim. An opaque component
+ * must not contain entity or blob handles.
  *
  * Payload layout (little-endian):
  *
  *   "RSWP" | u32 format | u32 entity count | u32 blob count
  *   | u32 component count
  *   | component table: u16 name length, name bytes, u32 schema version
- *   | entities, in slot order:
+ *   | entities, in the order the writer listed them:
  *       u32 index | u32 generation | u32 component count
  *       | each: u32 table entry | u32 byte length | bytes
- *   | blobs, in slot order:
+ *   | blobs, in slot order, owned by one of those entities:
  *       u32 index | u32 generation | u32 owner index | u32 owner generation
  *       | u64 byte length | bytes
  */
@@ -30,6 +33,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <resonate/core/span.h>
@@ -71,24 +75,39 @@ class MigrationRegistry
     std::vector<Entry> entries_;
 };
 
-/* Writes the world's state. The world must not change while this runs: it
-   walks the slot and blob tables directly. */
+/* Writes `entities` and only the blobs they own. Every handle must be alive and
+   appear once. `opaque_components` names the types whose bytes are copied
+   without a schema descriptor; the caller guarantees they hold no handles. The
+   world must not change while this runs. */
+[[nodiscard]] bool encodeWorld(const ecs::World& world, const dom::ComponentRegistry& schema,
+                               Span<const ecs::Entity> entities,
+                               Span<const ecs::ComponentIndex> opaque_components,
+                               std::vector<std::byte>& out, std::string& error);
+
+/* Every alive entity in slot order, with no opaque components. */
 [[nodiscard]] bool encodeWorld(const ecs::World& world, const dom::ComponentRegistry& schema,
                                std::vector<std::byte>& out, std::string& error);
 
-/* Restores a payload into `world`, which should hold no entities: the handles a
-   save names belong to the world that wrote it, and every restored handle gets
-   the value this world issued. On failure the world may hold part of the
-   payload; callers load into a world created for the load and discard it on
-   failure, instead of loading into a live world.
+/* Restores a payload into `world`. The handles a save names belong to the world
+   that wrote it, so every restored handle gets the value this world issued.
+   Entities already in `world` are untouched: a load can happen beside the
+   scene it replaces, which is what lets a corrupt payload fail without taking
+   the live scene with it. On failure every entity this call created is
+   destroyed again, so the world is left as it was.
 
-   A component the payload names but this build does not register is an error
-   once an entity carries it. An older component version runs the registry's
-   migration for that version; a version with no migration, or a newer one, is
-   refused. */
+   `restored` receives the created handles in payload order; `remap` pairs the
+   handle the save named with the one this world issued, for a domain whose
+   blob contents carry handles the field descriptors cannot see. A component
+   the payload names but this build does not register is an error once an
+   entity carries it. An older component version runs the registry's migration
+   for that version; a version with no migration, or a newer one, is refused. A
+   component without a descriptor is copied verbatim when its byte size matches
+   the registered type (the writer only stored it as an opaque component). */
 [[nodiscard]] bool decodeWorld(ecs::World& world, const dom::ComponentRegistry& schema,
                                const MigrationRegistry& migrations,
-                               Span<const std::byte> payload, std::string& error);
+                               Span<const std::byte> payload, std::string& error,
+                               std::vector<ecs::Entity>* restored = nullptr,
+                               std::vector<std::pair<ecs::Entity, ecs::Entity>>* remap = nullptr);
 
 } // namespace resonate::save
 

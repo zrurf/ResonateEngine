@@ -64,7 +64,7 @@ target("Resonate.Tests")
     set_group("tests")
 
     add_files("main.cpp", "render/**.cpp", "core/**.cpp", "module/**.cpp", "pal/**.cpp",
-              "runtime/**.cpp", "window/**.cpp", "ecs/**.cpp", "gameplay/**.cpp",
+              "runtime/**.cpp", "window/**.cpp", "ecs/**.cpp", "gameplay/**.cpp", "startup/**.cpp",
               "hierarchy/**.cpp", "ui/**.cpp", "text/**.cpp", "document/**.cpp", "document/**.c",
               "schema/**.cpp", "animation/**.cpp", "scene/**.cpp",
               "csharp/**.cpp")

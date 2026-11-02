@@ -6,12 +6,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #ifdef RESONATE_PLATFORM_WINDOWS
@@ -225,6 +227,43 @@ struct MachineDrive
         writable->runtime.setValue(drive->parameter, value);
     }
 };
+
+/* The entity a document key was instantiated as. A load replaces the scene's
+   handles, so a host that holds one (the demo's machine drive) finds its
+   object again through the key the adapter stored beside it. */
+ecs::Entity findSceneKey(ecs::World& world, std::string_view key)
+{
+    struct Search
+    {
+        ecs::World* world = nullptr;
+        std::string_view key;
+        ecs::Entity found{};
+    };
+    Search search{&world, key, {}};
+    world.forEachEntity(
+        &search,
+        [](void* user_data, ecs::Entity entity)
+        {
+            auto* state = static_cast<Search*>(user_data);
+            if (state->found.valid())
+            {
+                return;
+            }
+            const auto* source = state->world->get<scene::SourceKey>(entity);
+            if (source == nullptr)
+            {
+                return;
+            }
+            const std::size_t size = state->world->blobSize(source->text);
+            const void* const bytes = state->world->blobData(source->text);
+            if (size == state->key.size() &&
+                std::memcmp(bytes, state->key.data(), size) == 0)
+            {
+                state->found = entity;
+            }
+        });
+    return search.found;
+}
 
 struct ActionTick
 {
@@ -1432,8 +1471,17 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
     const EngineSystemDesc actions_desc{"input.actions", RESONATE_STAGE_EARLY_UPDATE,
                                         &ActionTick::invoke, &action_tick};
     const bool actions_configured = !action_map_path.empty();
+
+    /* The scene's persistence state: the roots the document produced, the world
+       the run hooks receive, and the input the save keys read. The world only
+       exists inside Application::run, so the systems hook records its address
+       for the per-frame handling below. */
+    std::vector<ecs::Entity> scene_roots;
+    ecs::World* run_world = nullptr;
+    const ResonateInput* run_input = nullptr;
     config.systems = [&](ModuleHost& host, ecs::World& world)
     {
+        run_world = &world;
         if (!hierarchy::registerComponents(world) ||
             !animation::AnimationPlayer::registerComponents(world) ||
             !renderer::RenderSystem::registerComponents(world) || !ui::registerComponents(world))
@@ -1452,7 +1500,8 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
             void* input = resonate_capability_find(
                 host.capabilities(), detail::CapabilityTraits<ResonateInput>::id.value(),
                 detail::CapabilityTraits<ResonateInput>::version, &input_version);
-            ui_frame.input = static_cast<const ResonateInput*>(input);
+            run_input = static_cast<const ResonateInput*>(input);
+            ui_frame.input = run_input;
             /* Primary font first; the runtime walks the chain per code point. */
             std::vector<std::shared_ptr<const text::Font>> ui_fonts;
             std::vector<std::string> ui_font_paths;
@@ -1606,7 +1655,6 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
 #endif
         /* The demo scene is what the window shows until scenes load from disk;
            it is plain ECS entities, created before the frame loop starts. */
-        std::vector<ecs::Entity> scene_roots;
         machine_drive.player = &animation_player;
         composeDemoScene(world, &animation_player, scene_roots, &machine_drive);
         if (void* input = resonate_capability_find(
@@ -1614,7 +1662,8 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
                 detail::CapabilityTraits<ResonateInput>::version, nullptr);
             input != nullptr)
         {
-            machine_drive.input = static_cast<const ResonateInput*>(input);
+            run_input = static_cast<const ResonateInput*>(input);
+            machine_drive.input = run_input;
         }
         if (addEngineSystem(host, machine_drive_desc) != RESONATE_OK)
         {
@@ -1656,13 +1705,59 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
 #endif
     };
 
+    /* F5/F9: the demo's quick save and load. A host that owns the scene itself
+       (the editor) handles its own persistence; the demo is the one that keeps
+       its scene in `scene_roots`. The keys are polled after the pump, so the
+       frame that saw the press is the frame that acts on it. */
+    const bool save_keys = extension.scene == nullptr;
+    auto handleSaveKeys = [&]
+    {
+        if (!save_keys || run_input == nullptr || run_world == nullptr)
+        {
+            return;
+        }
+        if (run_input->key_pressed(run_input->self, RESONATE_KEY_F5) != 0)
+        {
+            std::string save_error;
+            if (saveScene(*run_world, scene_roots, "quicksave", save_error))
+            {
+                std::fprintf(stderr, "resonate: save: quicksave written\n");
+            }
+            else
+            {
+                std::fprintf(stderr, "resonate: save: %s\n", save_error.c_str());
+            }
+        }
+        if (run_input->key_pressed(run_input->self, RESONATE_KEY_F9) != 0)
+        {
+            std::vector<ecs::Entity> loaded;
+            std::string load_error;
+            if (loadScene(*run_world, scene_roots, "quicksave", loaded, load_error))
+            {
+                scene_roots = std::move(loaded);
+                /* The demo's machine drive holds a handle the load replaced;
+                   the box it drives is found again through its authored key. */
+                machine_drive.box = findSceneKey(*run_world, "box-center");
+                std::fprintf(stderr, "resonate: save: quicksave loaded\n");
+            }
+            else
+            {
+                std::fprintf(stderr, "resonate: save: %s\n", load_error.c_str());
+            }
+        }
+    };
+
     if (display.headless)
     {
         config.publish = [width, height](ResonateCapabilityRegistry* registry)
         { return render::publishOffscreen(registry, width, height); };
 
         /* Nothing to pump, so the run ends when it is asked to. */
-        config.tick = [] { return true; };
+        config.tick = [&]
+        {
+            handleSaveKeys();
+            return true;
+        };
     }
     else
     {
@@ -1677,7 +1772,15 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
         { return session.start(registry, window_config); };
 
         /* False once the window is gone, which is how a quit request reads. */
-        config.tick = [&session] { return session.pump(); };
+        config.tick = [&]
+        {
+            if (!session.pump())
+            {
+                return false;
+            }
+            handleSaveKeys();
+            return true;
+        };
 
         /* Presses latch until a step reads them; the loop clears them after. */
         config.clear_presses = [&session] { session.clearKeyPresses(); };
