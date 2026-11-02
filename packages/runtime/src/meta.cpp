@@ -41,6 +41,30 @@ int hexValue(char character)
     return -1;
 }
 
+/* The stored form of a source hash is the lowercased hex; both the parser and
+   the writer go through this, so a sidecar never holds what the other side
+   would reject. */
+bool normalizeSourceHash(std::string_view text, std::string& out)
+{
+    if (text.size() != 64U)
+    {
+        return false;
+    }
+    out.assign(text);
+    for (char& character : out)
+    {
+        if (hexValue(character) < 0)
+        {
+            return false;
+        }
+        if (character >= 'A' && character <= 'F')
+        {
+            character = static_cast<char>(character - 'A' + 'a');
+        }
+    }
+    return true;
+}
+
 std::string escape(std::string_view text)
 {
     std::string out;
@@ -97,23 +121,11 @@ bool parseMeta(std::string_view text, AssetMeta& out, std::string& error)
     if (const toml::node* node = table.get("source_hash"); node != nullptr)
     {
         const std::optional<std::string> value = node->value<std::string>();
-        if (!value || value->size() != 64U)
+        std::string hash;
+        if (!value || !normalizeSourceHash(*value, hash))
         {
             error = "source_hash must be 64 hexadecimal digits";
             return false;
-        }
-        std::string hash = *value;
-        for (char& character : hash)
-        {
-            if (hexValue(character) < 0)
-            {
-                error = "source_hash must be 64 hexadecimal digits";
-                return false;
-            }
-            if (character >= 'A' && character <= 'F')
-            {
-                character = static_cast<char>(character - 'A' + 'a');
-            }
         }
         out.source_hash = std::move(hash);
     }
@@ -155,6 +167,13 @@ bool readMetaFile(const std::string& path, AssetMeta& out, std::string& error)
 
 bool writeMetaFile(const std::string& path, const AssetMeta& meta, std::string& error)
 {
+    /* The parser's own rule: a sidecar this build writes, this build reads. */
+    std::string hash;
+    if (!meta.source_hash.empty() && !normalizeSourceHash(meta.source_hash, hash))
+    {
+        error = "the sidecar's source_hash must be 64 hexadecimal digits";
+        return false;
+    }
     std::error_code code;
     std::filesystem::create_directories(std::filesystem::path(path).parent_path(), code);
     if (code)
@@ -172,8 +191,11 @@ bool writeMetaFile(const std::string& path, const AssetMeta& meta, std::string& 
         }
         const std::string text = formatMeta(meta);
         out.write(text.data(), static_cast<std::streamsize>(text.size()));
-        if (!out.good())
+        out.close();
+        if (!out)
         {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
             error = "cannot write " + path;
             return false;
         }
@@ -181,7 +203,8 @@ bool writeMetaFile(const std::string& path, const AssetMeta& meta, std::string& 
     std::filesystem::rename(temporary, path, code);
     if (code)
     {
-        std::filesystem::remove(temporary, code);
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
         error = "cannot store " + path;
         return false;
     }

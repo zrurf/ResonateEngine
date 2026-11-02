@@ -117,5 +117,13 @@ TEST_CASE("asset meta: a sidecar file writes and reads", "[asset][meta]")
     CHECK(loaded.source_hash == meta.source_hash);
 
     CHECK_FALSE(resonate::asset::readMetaFile((root / "missing.meta").string(), loaded, error));
+
+    /* A hash the parser would refuse never reaches a sidecar. */
+    meta.source_hash.assign(63U, 'a');
+    CHECK_FALSE(resonate::asset::writeMetaFile(path, meta, error));
+    CHECK(error.find("source_hash") != std::string::npos);
+    meta.source_hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg";
+    CHECK_FALSE(resonate::asset::writeMetaFile(path, meta, error));
+
     std::filesystem::remove_all(root, code);
 }

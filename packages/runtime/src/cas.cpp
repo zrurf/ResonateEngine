@@ -90,8 +90,13 @@ bool writeFile(const std::string& path, Span<const std::byte> data, std::string&
             out.write(reinterpret_cast<const char*>(data.data()),
                       static_cast<std::streamsize>(data.size()));
         }
-        if (!out.good())
+        out.close();
+        if (!out)
         {
+            /* The close is what flushes; a failure here means the temporary
+               is not the bytes this call was given. */
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
             error = "cannot write the chunk " + path;
             return false;
         }
@@ -100,15 +105,30 @@ bool writeFile(const std::string& path, Span<const std::byte> data, std::string&
     if (code)
     {
         /* Another writer may have stored the same bytes between the exists
-           check and this rename; the chunk is content-addressed, so the winner
-           is just as good. */
-        std::error_code ignored;
-        if (std::filesystem::exists(path, ignored))
+           check and this rename. The chunk is content-addressed, so a full
+           winner is just as good; a truncated one, left by an interrupted
+           store, has to be replaced. */
+        std::error_code size_code;
+        const std::uintmax_t size = std::filesystem::file_size(path, size_code);
+        if (!size_code && size == data.size())
         {
+            std::error_code ignored;
             std::filesystem::remove(temporary, ignored);
             return true;
         }
-        std::filesystem::remove(temporary, code);
+        std::error_code removed;
+        std::filesystem::remove(path, removed);
+        if (!removed)
+        {
+            code.clear();
+            std::filesystem::rename(temporary, path, code);
+            if (!code)
+            {
+                return true;
+            }
+        }
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
         error = "cannot store the chunk " + path;
         return false;
     }
