@@ -9,6 +9,8 @@ target("Resonate.Tools.AssetIndex")
     add_packages("toml++")
     set_targetdir("$(builddir)/tools", {bindir = ".", libdir = "."})
 
+    add_deps("Resonate.Runtime")
+
     after_build(function (target)
         local project = os.projectdir()
         os.execv(target:targetfile(), {
