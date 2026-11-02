@@ -48,6 +48,26 @@ std::unique_ptr<Document> parseSource()
     return document;
 }
 
+/* A payload builder for shapes the writer cannot produce. */
+struct Payload
+{
+    std::vector<std::byte> bytes;
+
+    void u32(std::uint32_t value)
+    {
+        for (int byte = 0; byte < 4; ++byte)
+        {
+            bytes.push_back(std::byte{static_cast<std::uint8_t>((value >> (8 * byte)) & 0xFFU)});
+        }
+    }
+
+    void bytesOf(const void* data, std::size_t size)
+    {
+        const auto* first = static_cast<const std::byte*>(data);
+        bytes.insert(bytes.end(), first, first + size);
+    }
+};
+
 } // namespace
 
 TEST_CASE("document binary: the cooked form round trips the model", "[document][binary]")
@@ -133,5 +153,40 @@ TEST_CASE("document binary: damage is refused, not guessed at", "[document][bina
         CHECK(Document::parseBinary(Span<const std::byte>(future.data(), future.size()),
                                     diagnostics) == nullptr);
         CHECK(diagnostics.back().message.find("codec") != std::string::npos);
+    }
+    SECTION("a child two lists claim is refused")
+    {
+        /* Three anonymous nodes: two parent lists name the same child. A
+           reader that simply appended would steal the child from its first
+           parent and load a different tree than the file describes. */
+        const auto node = [](Payload& payload, std::uint32_t child_count)
+        {
+            for (int field = 0; field < 4; ++field)
+            {
+                payload.u32(0xFFFFFFFFU); /* no type, key, id or name */
+            }
+            payload.u32(0U); /* classes */
+            payload.u32(0U); /* components */
+            payload.u32(0U); /* properties */
+            payload.u32(child_count);
+        };
+        Payload payload;
+        payload.bytesOf("RDOM", 4U);
+        payload.u32(1U); /* codec */
+        payload.u32(3U); /* format */
+        payload.u32(0U); /* strings */
+        payload.u32(0U); /* schemas */
+        payload.u32(0U); /* resources */
+        payload.u32(3U); /* nodes */
+        node(payload, 1U);
+        payload.u32(2U);
+        node(payload, 1U);
+        payload.u32(2U);
+        node(payload, 0U);
+        payload.u32(0U); /* root */
+        CHECK(Document::parseBinary(
+                  Span<const std::byte>(payload.bytes.data(), payload.bytes.size()),
+                  diagnostics) == nullptr);
+        CHECK(diagnostics.back().message.find("two parents") != std::string::npos);
     }
 }

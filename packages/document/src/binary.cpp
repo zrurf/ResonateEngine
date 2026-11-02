@@ -453,6 +453,21 @@ std::unique_ptr<Document> Document::parseBinary(Span<const std::byte> bytes,
         child_lists.push_back(std::move(children));
     }
 
+    /* A node two lists claim would parse into a different tree than the file
+       describes: the second append would steal it from its first parent. */
+    std::vector<std::uint32_t> claims(node_count, 0U);
+    for (const std::vector<std::uint32_t>& list : child_lists)
+    {
+        for (const std::uint32_t child : list)
+        {
+            if (++claims[child] > 1U)
+            {
+                addDiagnostic(diagnostics, "the cooked document names a child under two parents");
+                return nullptr;
+            }
+        }
+    }
+
     /* Children are attached after every node exists: a cooked file does not
        promise that a parent's slot precedes its children's. */
     for (std::uint32_t index = 0U; index < node_count; ++index)
