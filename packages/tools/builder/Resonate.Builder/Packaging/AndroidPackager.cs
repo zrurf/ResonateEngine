@@ -175,6 +175,16 @@ internal sealed class AndroidPackager
             throw new BuilderException(
                 $"no cooked content under {cooked}; run `xmake cook` first");
         }
+        /* The cook rewrites the whole tree, so its newest file is the cook's
+           time; a source edited after that would ship stale. */
+        DateTime cookedNewest = NewestWriteTime(cooked);
+        DateTime sourceNewest = NewestWriteTime(_context.Path("content"));
+        if (sourceNewest > cookedNewest)
+        {
+            throw new BuilderException(
+                $"content changed after the last cook ({sourceNewest:HH:mm} > "
+                + $"{cookedNewest:HH:mm}); run `xmake cook` first");
+        }
         StageFiles(Path.Combine(cooked, "ui"), "*.rui", "ui");
         StageFiles(Path.Combine(cooked, "ui"), "*.rcss", "ui");
         StageFiles(Path.Combine(cooked, "ui"), "*.rstrings", "ui");
@@ -183,6 +193,24 @@ internal sealed class AndroidPackager
         StageFiles(Path.Combine(cooked, "ui"), "*.icons", "ui");
         StageFiles(Path.Combine(cooked, "scene"), "*.rscene", "scene");
         StageFiles(Path.Combine(cooked, "animation"), "*.rclip", "animation");
+    }
+
+    private static DateTime NewestWriteTime(string directory)
+    {
+        DateTime newest = DateTime.MinValue;
+        if (!Directory.Exists(directory))
+        {
+            return newest;
+        }
+        foreach (string file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+        {
+            DateTime write = File.GetLastWriteTimeUtc(file);
+            if (write > newest)
+            {
+                newest = write;
+            }
+        }
+        return newest;
     }
 
     private void StageFiles(string source, string pattern, string assetDirectory)
