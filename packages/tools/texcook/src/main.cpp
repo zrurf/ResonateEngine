@@ -17,6 +17,8 @@
 
 #include <toml++/toml.hpp>
 
+#include <resonate/asset/meta.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -24,13 +26,14 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <random>
 #include <string>
 #include <system_error>
 #include <vector>
 
 namespace
 {
+
+namespace asset = resonate::asset;
 
 constexpr const char* kCookSalt = "resonate.texcook.uastc-ktx2.v1";
 
@@ -141,61 +144,34 @@ std::string hex(std::uint64_t value)
 }
 
 /* The source's identity from its .meta sidecar, creating the sidecar when it
-   does not exist. False when a sidecar exists but carries no usable GUID. */
+   does not exist. False when a sidecar exists but does not parse: an identity
+   is never silently regenerated. */
 bool identityOf(const std::filesystem::path& source, std::string& out_guid)
 {
     const std::filesystem::path meta = source.string() + ".meta";
-    const std::string text = readFile(meta);
-    if (!text.empty())
+    asset::AssetMeta identity;
+    std::string error;
+    if (std::filesystem::exists(meta))
     {
-        toml::parse_result result = toml::parse(text);
-        if (result)
+        if (!asset::readMetaFile(meta.string(), identity, error))
         {
-            const std::string guid = result.table()["guid"].value_or(std::string{});
-            if (guid.size() == 36U)
-            {
-                out_guid = guid;
-                return true;
-            }
-        }
-        std::fprintf(stderr, "texcook: %s: the sidecar carries no usable guid\n",
-                     meta.string().c_str());
-        return false;
-    }
-
-    /* A fresh identity: random UUID v4. The sidecar is the only place one is
-       born, and it is committed, so the identity outlives every cook. */
-    std::random_device device;
-    const std::uint64_t high =
-        (static_cast<std::uint64_t>(device()) << 32U) | static_cast<std::uint64_t>(device());
-    const std::uint64_t low =
-        (static_cast<std::uint64_t>(device()) << 32U) | static_cast<std::uint64_t>(device());
-    const std::uint64_t halves[2] = {(high & 0xFFFFFFFF0FFFFFFULL) | 0x0000000040000000ULL,
-                                     (low & 0x3FFFFFFFFFFFFFFULL) | 0x8000000000000000ULL};
-    static const char* kDigits = "0123456789abcdef";
-    out_guid.clear();
-    for (int half = 0; half < 2; ++half)
-    {
-        for (int shift = 56; shift >= 0; shift -= 8)
-        {
-            const std::uint8_t byte = static_cast<std::uint8_t>((halves[half] >> shift) & 0xFFU);
-            out_guid.push_back(kDigits[byte >> 4U]);
-            out_guid.push_back(kDigits[byte & 0x0FU]);
-            const int absolute = half * 8 + (7 - shift / 8);
-            if (absolute == 3 || absolute == 5 || absolute == 7 || absolute == 9)
-            {
-                out_guid.push_back('-');
-            }
+            std::fprintf(stderr, "texcook: %s: %s\n", meta.string().c_str(), error.c_str());
+            return false;
         }
     }
-    std::ofstream out(meta, std::ios::binary);
-    if (!out.is_open())
+    else
     {
-        std::fprintf(stderr, "texcook: %s: cannot write the sidecar\n", meta.string().c_str());
-        return false;
+        /* A fresh identity. The sidecar is the only place one is born, and it
+           is committed, so the identity outlives every cook. */
+        identity.id = asset::generateGuid();
+        identity.importer = "texture.ppm";
+        if (!asset::writeMetaFile(meta.string(), identity, error))
+        {
+            std::fprintf(stderr, "texcook: %s: %s\n", meta.string().c_str(), error.c_str());
+            return false;
+        }
     }
-    out << "# Resonate asset identity; references use the GUID. Do not edit.\n";
-    out << "guid = \"" << out_guid << "\"\n";
+    out_guid = asset::formatGuid(identity.id);
     return true;
 }
 

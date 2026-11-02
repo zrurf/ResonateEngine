@@ -11,6 +11,7 @@ target("Resonate.Tools.TexCook")
     set_arch(os.arch())
     add_files("src/**.cpp")
     add_packages("basisu", "toml++")
+    add_deps("Resonate.Asset.Meta")
     set_targetdir("$(builddir)/tools", {bindir = ".", libdir = "."})
 
     after_build(function (target)
