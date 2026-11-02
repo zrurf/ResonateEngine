@@ -3,10 +3,12 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 
 #include <resonate/animation/player.h>
 #include <resonate/asset/identity.h>
+#include <resonate/asset/vfs.h>
 #include <resonate/core/allocator.h>
 #include <resonate/ecs/world.h>
 #include <resonate/hierarchy/tree.h>
@@ -138,4 +140,28 @@ TEST_CASE("animation: an unknown clip id is reported once and stays inert",
     /* No state: a warning went out once and the entity is not pretending to
        animate. */
     CHECK(world.get<AnimationState>(entity) == nullptr);
+}
+
+TEST_CASE("animation: a clip resolves through an asset store", "[animation][assets]")
+{
+    const std::filesystem::path root = stageClip();
+    std::string error;
+    const std::unique_ptr<resonate::asset::DirectoryVfs> store =
+        resonate::asset::DirectoryVfs::open((root / "products.toml").string(), error);
+    REQUIRE(store != nullptr);
+
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(AnimationPlayer::registerComponents(world));
+
+    AnimationPlayer player;
+    player.setAssetStore(store.get());
+    resonate::asset::AssetId id;
+    REQUIRE(resonate::asset::parseGuid(kGuid, id));
+    id.sub_id = 1U;
+
+    std::uint32_t index = 0U;
+    REQUIRE(player.clipFor(id, index, error));
+    REQUIRE(player.clip(index) != nullptr);
+    CHECK(player.clip(index)->duration == 1.0F);
 }

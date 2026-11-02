@@ -20,6 +20,11 @@
 #include <resonate/ecs/component.h>
 #include <resonate/ecs/world.h>
 
+namespace resonate::asset
+{
+class Vfs;
+}
+
 namespace resonate::animation
 {
 
@@ -83,6 +88,11 @@ class AnimationPlayer
        bytes. */
     bool loadManifest(const std::string& path, std::string& error);
 
+    /* Resolve authored clips through a store instead of the manifest's file
+       paths. The store is borrowed and must outlive the player; setting one
+       makes loadManifest unnecessary. */
+    void setAssetStore(const asset::Vfs* store) noexcept;
+
     /* The index of the authored clip's sample data, loading and caching the
        clip on first use. False when the manifest does not know the id or the
        document does not parse; the player reports a repeated failure once. */
@@ -105,6 +115,7 @@ class AnimationPlayer
     std::vector<Clip> clips_;
     std::vector<StateMachine> machines_;
     asset::Identity identity_;
+    const asset::Vfs* asset_store_ = nullptr;
     std::string manifest_directory_;
     std::map<std::string, std::uint32_t> authored_;
     std::set<std::string> failed_;

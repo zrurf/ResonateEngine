@@ -4,7 +4,10 @@
 #include <cmath>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
+
+#include <resonate/asset/vfs.h>
 
 #include "resonate.animation/components.gen.h"
 
@@ -163,6 +166,11 @@ bool AnimationPlayer::loadManifest(const std::string& path, std::string& error)
     return true;
 }
 
+void AnimationPlayer::setAssetStore(const asset::Vfs* store) noexcept
+{
+    asset_store_ = store;
+}
+
 bool AnimationPlayer::clipFor(const asset::AssetId& id, std::uint32_t& out_index,
                               std::string& error)
 {
@@ -172,6 +180,25 @@ bool AnimationPlayer::clipFor(const asset::AssetId& id, std::uint32_t& out_index
     if (cached != authored_.end())
     {
         out_index = cached->second;
+        return true;
+    }
+    if (asset_store_ != nullptr)
+    {
+        std::vector<std::byte> bytes;
+        if (!asset_store_->read(id, bytes, error))
+        {
+            return false;
+        }
+        Clip clip;
+        if (!Clip::parse(std::string_view(reinterpret_cast<const char*>(bytes.data()),
+                                          bytes.size()),
+                         clip, error))
+        {
+            return false;
+        }
+        const std::uint32_t index = addClip(std::move(clip));
+        authored_.emplace(key, index);
+        out_index = index;
         return true;
     }
     const std::optional<std::string> located = identity_.locate(id);

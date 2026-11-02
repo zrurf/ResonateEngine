@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -28,6 +29,7 @@
 #include <resonate/application/systems.h>
 #include <resonate/ecs/world.h>
 #include <resonate/animation/player.h>
+#include <resonate/asset/vfs.h>
 #include <resonate/hierarchy/system.h>
 #include <resonate/hierarchy/tree.h>
 #include <resonate/module/host.hpp>
@@ -1201,6 +1203,27 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
         [](void* context, ecs::World& world, ecs::CommandBuffer&, float delta)
         { static_cast<animation::AnimationPlayer*>(context)->invoke(world, delta); },
         &animation_player};
+    /* The asset store the player resolves authored clips through. It outlives
+       the run like the player; the directory backend reads the products
+       manifest the build staged. */
+    std::unique_ptr<asset::Vfs> asset_store;
+    {
+        const char* const staged_products = std::getenv("RESONATE_PRODUCTS");
+        const std::string products =
+            staged_products != nullptr && *staged_products != '\0'
+                ? std::string(staged_products)
+                : findContentFile("build/content/products.toml");
+        if (!products.empty())
+        {
+            std::string store_error;
+            asset_store = asset::DirectoryVfs::open(products, store_error);
+            if (asset_store == nullptr)
+            {
+                std::fprintf(stderr, "resonate: assets: %s\n", store_error.c_str());
+            }
+        }
+    }
+    animation_player.setAssetStore(asset_store.get());
     /* The demo scene's driver: both the context and its descriptor outlive the
        run, because the host keeps the descriptor's address for every frame. */
     MachineDrive machine_drive;
