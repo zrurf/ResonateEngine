@@ -51,7 +51,7 @@ internal static class ShaderCompiler
         foreach (string source in sources)
         {
             ++shaders;
-            string name = Path.GetFileName(source);
+            string name = Path.GetFileNameWithoutExtension(source);
             DateTime sourceTime = File.GetLastWriteTimeUtc(source);
             List<(string Stage, string Name)> points = EntryPoints(File.ReadAllText(source));
             if (points.Count == 0)
