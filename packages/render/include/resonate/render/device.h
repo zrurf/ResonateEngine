@@ -175,9 +175,13 @@ typedef struct ResonateRenderImageDesc
     uint32_t height;
     uint32_t usage; /* RESONATE_RENDER_IMAGE_* bits */
     /* 1: the resource table samples this image nearest-neighbour (crisp
-       texels, the usual choice for albedo); 0 — also when struct_size stops
-       short — samples it linearly. */
+       texels); 0 — also when struct_size stops short — samples it linearly. */
     uint32_t nearest;
+    /* Tail: 1 asks the device to build the full mip chain at upload, so a
+       minified sample (a texture receding into the distance) reads a filtered
+       level instead of aliasing on level zero. 0 — also when struct_size
+       stops short — keeps the single level. Sampled images only. */
+    uint32_t generate_mips;
 } ResonateRenderImageDesc;
 
 typedef struct ResonateRenderSamplerDesc

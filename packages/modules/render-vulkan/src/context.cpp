@@ -1215,7 +1215,11 @@ ResonateStatus Context::ensureDevice()
        albedo texels the image asks to keep crisp. */
     VkSamplerCreateInfo table_sampler{};
     table_sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    table_sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    /* Linear transitions between levels: an uploaded texture carries a mip
+       chain (R8-class minification quality) and a level-zero-only image simply
+       clamps to its single level. */
+    table_sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    table_sampler.maxLod = VK_LOD_CLAMP_NONE;
     table_sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     table_sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     table_sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;

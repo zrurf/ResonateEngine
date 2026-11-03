@@ -227,6 +227,7 @@ class Context
         uint32_t width = 0;
         uint32_t height = 0;
         uint32_t table_slot = 0;
+        uint32_t mip_levels = 1;
         bool in_table = false;
         bool depth = false;
         uint32_t generation = 1;

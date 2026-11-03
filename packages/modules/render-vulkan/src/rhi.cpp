@@ -249,12 +249,29 @@ ResonateStatus Context::createImage(const ResonateRenderImageDesc& desc, Resonat
     slot->height = desc.height;
     slot->depth = (desc.usage & RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT) != 0U;
 
+    /* The mip chain a sampled image asked for: one level per halving down to
+       1x1. The tail field is a later addition; an older writer's struct stops
+       short of it and means one level. */
+    uint32_t mip_levels = 1U;
+    if (!slot->depth && (desc.usage & RESONATE_RENDER_IMAGE_SAMPLED) != 0U &&
+        desc.struct_size >=
+            offsetof(ResonateRenderImageDesc, generate_mips) + sizeof(desc.generate_mips) &&
+        desc.generate_mips != 0U)
+    {
+        for (uint32_t extent = desc.width > desc.height ? desc.width : desc.height; extent > 1U;
+             extent >>= 1U)
+        {
+            ++mip_levels;
+        }
+    }
+    slot->mip_levels = mip_levels;
+
     VkImageCreateInfo image{};
     image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image.imageType = VK_IMAGE_TYPE_2D;
     image.format = slot->format;
     image.extent = VkExtent3D{desc.width, desc.height, 1U};
-    image.mipLevels = 1;
+    image.mipLevels = mip_levels;
     image.arrayLayers = 1;
     image.samples = VK_SAMPLE_COUNT_1_BIT;
     image.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -284,7 +301,8 @@ ResonateStatus Context::createImage(const ResonateRenderImageDesc& desc, Resonat
     view.format = slot->format;
     view.subresourceRange.aspectMask =
         slot->depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-    view.subresourceRange.levelCount = 1;
+    /* The whole chain: the sampler reads any level through this one view. */
+    view.subresourceRange.levelCount = mip_levels;
     view.subresourceRange.layerCount = 1;
     if (vkCreateImageView(device_, &view, nullptr, &slot->view) != VK_SUCCESS)
     {
@@ -826,18 +844,89 @@ ResonateStatus Context::uploadImage(ResonateRenderImage handle, const void* data
     vkCmdCopyBufferToImage(aux_command_, staging_buffer, slot->image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 
-    /* Ready for whatever the usage declared: sampled images wait in shader
-       read-only, attachments in their attachment layout. */
-    const VkImageLayout ready = (slot->depth) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-                                              : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkImageMemoryBarrier to_ready = to_transfer;
-    to_ready.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    to_ready.newLayout = ready;
-    to_ready.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    to_ready.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(aux_command_, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                         &to_ready);
+    if (slot->mip_levels > 1U)
+    {
+        /* The chain: each level is a linear blit of the one above it, so a
+           minified sample reads a filtered level instead of aliasing on level
+           zero. Every level ends in transfer-src; one final barrier takes the
+           whole range to its ready layout. */
+        VkImageMemoryBarrier to_src = to_transfer;
+        to_src.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        to_src.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(aux_command_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                             &to_src);
+
+        int32_t source_width = static_cast<int32_t>(slot->width);
+        int32_t source_height = static_cast<int32_t>(slot->height);
+        for (uint32_t level = 1U; level < slot->mip_levels; ++level)
+        {
+            VkImageMemoryBarrier to_dst = to_transfer;
+            to_dst.subresourceRange.baseMipLevel = level;
+            to_dst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            to_dst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            to_dst.srcAccessMask = 0;
+            to_dst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(aux_command_, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                                 &to_dst);
+
+            const int32_t target_width = source_width > 1 ? source_width / 2 : 1;
+            const int32_t target_height = source_height > 1 ? source_height / 2 : 1;
+            VkImageBlit blit{};
+            blit.srcSubresource.aspectMask = to_transfer.subresourceRange.aspectMask;
+            blit.srcSubresource.mipLevel = level - 1U;
+            blit.srcSubresource.layerCount = 1;
+            blit.srcOffsets[1] = VkOffset3D{source_width, source_height, 1};
+            blit.dstSubresource.aspectMask = blit.srcSubresource.aspectMask;
+            blit.dstSubresource.mipLevel = level;
+            blit.dstSubresource.layerCount = 1;
+            blit.dstOffsets[1] = VkOffset3D{target_width, target_height, 1};
+            vkCmdBlitImage(aux_command_, slot->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           slot->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                           VK_FILTER_LINEAR);
+
+            VkImageMemoryBarrier consumed = to_dst;
+            consumed.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            consumed.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            consumed.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            consumed.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(aux_command_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                                 &consumed);
+
+            source_width = target_width;
+            source_height = target_height;
+        }
+
+        VkImageMemoryBarrier to_ready = to_transfer;
+        to_ready.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        to_ready.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        to_ready.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        to_ready.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        to_ready.subresourceRange.levelCount = slot->mip_levels;
+        vkCmdPipelineBarrier(aux_command_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                             &to_ready);
+    }
+    else
+    {
+        /* Ready for whatever the usage declared: sampled images wait in shader
+           read-only, attachments in their attachment layout. */
+        const VkImageLayout ready = (slot->depth)
+                                        ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                                        : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkImageMemoryBarrier to_ready = to_transfer;
+        to_ready.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        to_ready.newLayout = ready;
+        to_ready.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        to_ready.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(aux_command_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                             &to_ready);
+    }
 
     vkEndCommandBuffer(aux_command_);
     const ResonateStatus status = submitAndRun(aux_command_);

@@ -321,10 +321,14 @@ std::string assetKey(const asset::AssetId& id)
     return asset::formatGuid(id) + ":" + std::to_string(id.sub_id);
 }
 
-/* A tightly packed RGBA8 texture in the sampled-image table. */
+/* A tightly packed RGBA8 texture in the sampled-image table. `nearest` keeps
+   texels crisp (glyph atlases, debug patterns); a mesh texture wants linear
+   sampling with a mip chain, so a surface receding into the distance reads a
+   filtered level instead of aliasing. */
 bool createSampledTexture(ResonateRenderDevice& device, std::uint32_t width, std::uint32_t height,
                           ResonateRenderFormat format, const std::vector<std::uint8_t>& pixels,
-                          ResonateRenderImage& out_texture, bool nearest = true)
+                          ResonateRenderImage& out_texture, bool nearest = true,
+                          bool mips = false)
 {
     ResonateRenderImageDesc desc{};
     desc.struct_size = sizeof(desc);
@@ -333,6 +337,7 @@ bool createSampledTexture(ResonateRenderDevice& device, std::uint32_t width, std
     desc.height = height;
     desc.usage = RESONATE_RENDER_IMAGE_SAMPLED;
     desc.nearest = nearest ? 1U : 0U;
+    desc.generate_mips = mips ? 1U : 0U;
     if (device.create_image(device.self, &desc, &out_texture) != RESONATE_OK)
     {
         return false;
@@ -2032,7 +2037,7 @@ bool RenderSystem::Impl::createAlbedoTextures(const FrameSnapshot& snapshot)
                                                     ? RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM
                                                     : RESONATE_RENDER_FORMAT_R8G8B8A8_SRGB;
     if (!createSampledTexture(*device, checker_width, checker_height, checker_format,
-                              checker_pixels, checker_texture) ||
+                              checker_pixels, checker_texture, false, true) ||
         !createSampledTexture(*device, 1U, 1U, RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, white_pixels,
                               white_texture))
     {
@@ -2163,7 +2168,8 @@ bool RenderSystem::Impl::loadTextureProduct(const asset::AssetId& id, std::strin
     const ResonateRenderFormat format =
         image.srgb ? RESONATE_RENDER_FORMAT_R8G8B8A8_SRGB : RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
     ResonateRenderImage texture{};
-    if (!createSampledTexture(*device, image.width, image.height, format, image.rgba, texture))
+    if (!createSampledTexture(*device, image.width, image.height, format, image.rgba, texture,
+                              false, true))
     {
         error = "upload failed";
         return false;
