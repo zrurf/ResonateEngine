@@ -99,9 +99,14 @@ void reportProfile()
 
 } // namespace
 
-GraphExecutor::GraphExecutor(ResonateRenderDevice& device, const GraphPlan& plan, ResourceId canvas)
-    : device_(device), plan_(plan), canvas_(canvas)
+GraphExecutor::GraphExecutor(ResonateRenderDevice& device, const GraphPlan& plan, ResourceId canvas,
+                             bool coalesce_barriers)
+    : device_(device), plan_(plan), canvas_(canvas), coalesce_barriers_(coalesce_barriers)
 {
+    batch_supported_ =
+        device_.header.struct_size >=
+            offsetof(ResonateRenderDevice, barrier_batch) + sizeof(device_.barrier_batch) &&
+        device_.barrier_batch != nullptr;
 }
 
 GraphExecutor::~GraphExecutor()
@@ -185,7 +190,7 @@ bool GraphExecutor::materialize(std::string& out_error)
     return true;
 }
 
-bool GraphExecutor::apply(const Barrier& barrier)
+ResonateRenderBarrierDesc GraphExecutor::describe(const Barrier& barrier) const
 {
     ResonateRenderBarrierDesc desc{};
     desc.struct_size = sizeof(desc);
@@ -203,7 +208,83 @@ bool GraphExecutor::apply(const Barrier& barrier)
     desc.after_access = barrier.after_access;
     desc.before_layout = barrier.before_layout;
     desc.after_layout = barrier.after_layout;
+    return desc;
+}
+
+bool GraphExecutor::apply(const Barrier& barrier)
+{
+    const ResonateRenderBarrierDesc desc = describe(barrier);
     return device_.barrier(device_.self, &desc) == RESONATE_OK;
+}
+
+bool GraphExecutor::applyAll(const std::vector<Barrier>& barriers, const char* failure,
+                             std::string& out_error)
+{
+    if (!coalesce_barriers_ || !batch_supported_)
+    {
+        for (const Barrier& barrier : barriers)
+        {
+            if (barrier.resource == canvas_)
+            {
+                continue; /* the device owns the canvas's layout flow */
+            }
+            if (!apply(barrier))
+            {
+                out_error = failure;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /* The compat tier: consecutive same-direction barriers share one device
+       call. The canvas keeps its own path, and a direction flip flushes the
+       run so a read-after-write never merges with the write it depends
+       on. */
+    constexpr std::uint32_t kWrites =
+        RESONATE_RENDER_ACCESS_SHADER_WRITE | RESONATE_RENDER_ACCESS_COLOR_WRITE |
+        RESONATE_RENDER_ACCESS_DEPTH_WRITE | RESONATE_RENDER_ACCESS_TRANSFER_WRITE;
+    std::vector<ResonateRenderBarrierDesc> batch;
+    batch.reserve(barriers.size());
+    const auto flush = [&]() -> bool
+    {
+        if (batch.empty())
+        {
+            return true;
+        }
+        const bool ok =
+            device_.barrier_batch(device_.self, batch.data(),
+                                  static_cast<std::uint32_t>(batch.size())) == RESONATE_OK;
+        batch.clear();
+        return ok;
+    };
+    bool writing = false;
+    bool have_run = false;
+    for (const Barrier& barrier : barriers)
+    {
+        if (barrier.resource == canvas_)
+        {
+            continue;
+        }
+        const bool barrier_writes = (barrier.after_access & kWrites) != 0U;
+        if (have_run && barrier_writes != writing)
+        {
+            if (!flush())
+            {
+                out_error = failure;
+                return false;
+            }
+        }
+        writing = barrier_writes;
+        have_run = true;
+        batch.push_back(describe(barrier));
+    }
+    if (!flush())
+    {
+        out_error = failure;
+        return false;
+    }
+    return true;
 }
 
 bool GraphExecutor::execute(std::string& out_error, PrepareFn prepare, void* prepare_context)
@@ -240,18 +321,10 @@ bool GraphExecutor::execute(std::string& out_error, PrepareFn prepare, void* pre
     }
     for (const PlanStep& step : plan_.steps)
     {
-        for (const Barrier& barrier : step.barriers)
+        if (!applyAll(step.barriers, "a barrier was refused", out_error))
         {
-            if (barrier.resource == canvas_)
-            {
-                continue; /* the device owns the canvas's layout flow */
-            }
-            if (!apply(barrier))
-            {
-                out_error = "a barrier was refused";
-                device_.present(device_.self);
-                return false;
-            }
+            device_.present(device_.self);
+            return false;
         }
         const PlanPass& pass = plan_.passes[step.pass];
         if (pass.execute != nullptr && !skipPasses() && !skipPassNamed(pass.name))
@@ -260,18 +333,10 @@ bool GraphExecutor::execute(std::string& out_error, PrepareFn prepare, void* pre
         }
     }
 
-    for (const Barrier& barrier : plan_.final_barriers)
+    if (!applyAll(plan_.final_barriers, "a final barrier was refused", out_error))
     {
-        if (barrier.resource == canvas_)
-        {
-            continue; /* the device takes the canvas into present itself */
-        }
-        if (!apply(barrier))
-        {
-            out_error = "a final barrier was refused";
-            device_.present(device_.self);
-            return false;
-        }
+        device_.present(device_.self);
+        return false;
     }
 
     if (profileEnabled())

@@ -1107,7 +1107,13 @@ bool RenderSystem::Impl::initialize()
         complain(error.c_str());
         return false;
     }
-    executor = std::make_unique<resonate::render::GraphExecutor>(*device, plan, canvas_resource);
+    /* The compat tier batches barriers (R2); the desktop tier keeps the
+       fine-grained calls. RESONATE_COALESCE_BARRIERS forces the batched path
+       on any tier, so the merge logic is exercised by the desktop tests. */
+    const bool coalesce_barriers =
+        compat_tier || std::getenv("RESONATE_COALESCE_BARRIERS") != nullptr;
+    executor = std::make_unique<resonate::render::GraphExecutor>(*device, plan, canvas_resource,
+                                                                 coalesce_barriers);
     return true;
 }
 

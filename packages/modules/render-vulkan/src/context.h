@@ -187,6 +187,10 @@ class Context
     ResonateStatus beginPass(const ResonateRenderPassDesc& desc);
     ResonateStatus endPass();
     ResonateStatus barrier(const ResonateRenderBarrierDesc* desc);
+    /* Several dependencies in one call: consecutive descriptors moving in the
+       same direction merge into one submission with the union of their stage
+       and access masks. */
+    ResonateStatus barrierBatch(const ResonateRenderBarrierDesc* descs, uint32_t count);
     ResonateStatus bindPipeline(ResonateRenderPipeline handle);
     ResonateStatus bindVertexBuffer(ResonateRenderBuffer handle, uint64_t offset);
     ResonateStatus bindIndexBuffer(ResonateRenderBuffer handle, uint64_t offset);
@@ -288,6 +292,10 @@ class Context
     ResonateStatus ensureDevice();
     ResonateStatus createSwapchain(uint32_t width, uint32_t height);
     ResonateStatus createOffscreen(uint32_t width, uint32_t height);
+    /* Scratch for barrierBatch, sized once: the batch runs on the frame
+       thread and keeps the frame's allocation-free property. */
+    std::vector<VkImageMemoryBarrier> batch_image_barriers_;
+    std::vector<VkBufferMemoryBarrier> batch_buffer_barriers_;
     VkBuffer resolveBuffer(ResonateRenderBuffer handle) const;
     void destroySwapchainObjects();
     bool recreateSwapchain();

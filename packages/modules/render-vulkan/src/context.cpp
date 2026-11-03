@@ -2939,6 +2939,99 @@ ResonateStatus Context::barrier(const ResonateRenderBarrierDesc* desc)
     return RESONATE_E_INVALID;
 }
 
+ResonateStatus Context::barrierBatch(const ResonateRenderBarrierDesc* descs, uint32_t count)
+{
+    if (!frame_open_)
+    {
+        return RESONATE_E_STATE;
+    }
+    if (descs == nullptr || count == 0U)
+    {
+        return RESONATE_E_INVALID;
+    }
+    VkCommandBuffer command = frames_[frame_ % kFramesInFlight].command;
+
+    /* Consecutive descriptors moving in the same direction share one
+       submission; a direction flip flushes the run, so a read-after-write
+       never merges with the write it depends on. Each entry keeps its own
+       access masks; only the stage scopes are the run's union, because Vulkan
+       carries them per call. */
+    constexpr uint32_t kWrites =
+        RESONATE_RENDER_ACCESS_SHADER_WRITE | RESONATE_RENDER_ACCESS_COLOR_WRITE |
+        RESONATE_RENDER_ACCESS_DEPTH_WRITE | RESONATE_RENDER_ACCESS_TRANSFER_WRITE;
+    uint32_t index = 0U;
+    while (index < count)
+    {
+        const bool writing = (descs[index].after_access & kWrites) != 0U;
+        VkPipelineStageFlags before_stages = 0;
+        VkPipelineStageFlags after_stages = 0;
+        batch_image_barriers_.clear();
+        batch_buffer_barriers_.clear();
+        uint32_t end = index;
+        for (; end < count; ++end)
+        {
+            const ResonateRenderBarrierDesc& desc = descs[end];
+            if (((desc.after_access & kWrites) != 0U) != writing)
+            {
+                break;
+            }
+            const VkPipelineStageFlags before = stagesToVulkan(desc.before_stages);
+            const VkPipelineStageFlags after = stagesToVulkan(desc.after_stages);
+            before_stages |= before != 0 ? before : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            after_stages |= after != 0 ? after : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+            const VkAccessFlags src = accessToVulkan(desc.before_access);
+            const VkAccessFlags dst = accessToVulkan(desc.after_access);
+            if (desc.image.value != 0)
+            {
+                const ImageSlot* slot =
+                    images_.live(handleIndex(desc.image.value),
+                                 handleGeneration(desc.image.value));
+                if (slot == nullptr)
+                {
+                    return RESONATE_E_INVALID;
+                }
+                VkImageMemoryBarrier image_barrier{};
+                image_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                image_barrier.srcAccessMask = src;
+                image_barrier.dstAccessMask = dst;
+                image_barrier.oldLayout = layoutToVulkan(desc.before_layout);
+                image_barrier.newLayout = layoutToVulkan(desc.after_layout);
+                image_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                image_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                image_barrier.image = slot->image;
+                image_barrier.subresourceRange.aspectMask =
+                    slot->depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+                image_barrier.subresourceRange.levelCount = 1;
+                image_barrier.subresourceRange.layerCount = 1;
+                batch_image_barriers_.push_back(image_barrier);
+            }
+            else if (desc.buffer.value != 0)
+            {
+                VkBufferMemoryBarrier buffer_barrier{};
+                buffer_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+                buffer_barrier.srcAccessMask = src;
+                buffer_barrier.dstAccessMask = dst;
+                buffer_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                buffer_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                buffer_barrier.buffer = resolveBuffer(desc.buffer);
+                buffer_barrier.size = VK_WHOLE_SIZE;
+                batch_buffer_barriers_.push_back(buffer_barrier);
+            }
+            else
+            {
+                return RESONATE_E_INVALID;
+            }
+        }
+        vkCmdPipelineBarrier(command, before_stages, after_stages, 0, 0, nullptr,
+                             static_cast<uint32_t>(batch_buffer_barriers_.size()),
+                             batch_buffer_barriers_.data(),
+                             static_cast<uint32_t>(batch_image_barriers_.size()),
+                             batch_image_barriers_.data());
+        index = end;
+    }
+    return RESONATE_OK;
+}
+
 ResonateStatus Context::waitIdle()
 {
     if (device_ == VK_NULL_HANDLE || frame_open_)

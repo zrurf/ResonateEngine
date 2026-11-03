@@ -83,8 +83,13 @@ class GraphExecutor
 {
   public:
     /* The plan is borrowed and must outlive the executor; `canvas` names the
-       imported resource the device presents through. */
-    GraphExecutor(ResonateRenderDevice& device, const GraphPlan& plan, ResourceId canvas);
+       imported resource the device presents through. `coalesce_barriers`
+       batches each step's consecutive same-direction barriers into one device
+       call when the device offers barrier_batch — the tile-based compat tier
+       prefers it; a desktop tier keeps the fine-grained per-barrier calls
+       (IGL/Daxa R2). */
+    GraphExecutor(ResonateRenderDevice& device, const GraphPlan& plan, ResourceId canvas,
+                  bool coalesce_barriers = false);
     ~GraphExecutor();
 
     GraphExecutor(const GraphExecutor&) = delete;
@@ -101,11 +106,19 @@ class GraphExecutor
 
   private:
     bool materialize(std::string& out_error);
+    [[nodiscard]] ResonateRenderBarrierDesc describe(const Barrier& barrier) const;
     bool apply(const Barrier& barrier);
+    /* One step's (or the final list's) barriers in order: the per-barrier
+       path, or consecutive same-direction runs through barrier_batch.
+       `failure` labels the error. */
+    bool applyAll(const std::vector<Barrier>& barriers, const char* failure,
+                  std::string& out_error);
 
     ResonateRenderDevice& device_;
     const GraphPlan& plan_;
     ResourceId canvas_;
+    bool coalesce_barriers_ = false;
+    bool batch_supported_ = false;
     std::vector<ResonateRenderImage> images_;
     std::vector<ResonateRenderBuffer> buffers_;
     bool materialized_ = false;

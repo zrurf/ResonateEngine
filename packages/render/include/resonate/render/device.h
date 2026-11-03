@@ -458,6 +458,17 @@ typedef struct ResonateRenderDevice
        older writer stops before this and the configuration's vsync bool
        decides. */
     ResonateStatus (*set_present_mode)(void* self, uint32_t mode);
+
+    /* Tail: several memory dependencies in one call. The backend may merge
+       consecutive descriptors that move in the same direction into one
+       submission with the union of their masks, which a driver that charges
+       per call prefers; the entries are unordered between themselves and the
+       whole set is ordered before the next command, exactly like a sequence
+       of barrier() calls. RESONATE_E_INVALID for a descriptor that names
+       neither a buffer nor an image. An older writer stops before this and
+       the caller falls back to barrier(). */
+    ResonateStatus (*barrier_batch)(void* self, const ResonateRenderBarrierDesc* descs,
+                                    uint32_t count);
 } ResonateRenderDevice;
 
 /* The resource table is partially bound and sampled-image indices may differ

@@ -188,6 +188,14 @@ ResonateStatus barrier(void* self, const ResonateRenderBarrierDesc* desc)
                                                          : RESONATE_E_STATE;
 }
 
+ResonateStatus barrierBatch(void* self, const ResonateRenderBarrierDesc* descs, uint32_t count)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr
+               ? state->context->barrierBatch(descs, count)
+               : RESONATE_E_STATE;
+}
+
 ResonateStatus bindPipeline(void* self, ResonateRenderPipeline pipeline)
 {
     auto* state = static_cast<State*>(self);
@@ -389,6 +397,7 @@ ResonateRenderDevice g_device = {
     &nativeImage,
     &surfaceFormat,
     &setPresentMode,
+    &barrierBatch,
 };
 
 } // namespace
