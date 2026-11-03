@@ -1,5 +1,7 @@
 #include <resonate/renderer/renderer.h>
 
+#include <resonate/renderer/adaptive.h>
+
 #include <resonate/renderer/texture.h>
 
 #include <algorithm>
@@ -3573,19 +3575,9 @@ void RenderSystem::Impl::renderLoop()
             if (window >= 0.5 && sample_frames >= 10U)
             {
                 const double average = sample_ms / static_cast<double>(sample_frames);
-                /* Frame time is roughly linear in pixels, so the square root of
-                   the budget ratio is the scale that would hit the budget; the
-                   step is bounded so one noisy window cannot swing resolution. */
                 const float current_scale = render_scale.load(std::memory_order_relaxed);
-                float wanted = current_scale;
-                if (average > static_cast<double>(frame_budget) * 1.15 ||
-                    average < static_cast<double>(frame_budget) * 0.85)
-                {
-                    const float ratio = frame_budget / static_cast<float>(average);
-                    wanted = std::clamp(current_scale * std::sqrt(ratio),
-                                        current_scale - 0.15F, current_scale + 0.1F);
-                    wanted = std::clamp(wanted, kMinRenderScale, 1.0F);
-                }
+                const float wanted = adaptiveScaleStep(current_scale, average, frame_budget,
+                                                       kMinRenderScale);
                 if (wanted != current_scale)
                 {
                     render_scale.store(wanted, std::memory_order_relaxed);
