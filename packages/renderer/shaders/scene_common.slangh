@@ -55,7 +55,7 @@ struct Push
 [[vk::binding(1, 0)]] StructuredBuffer<Light> light_table[7];
 [[vk::binding(2, 0)]] StructuredBuffer<uint> light_indices[7];
 [[vk::binding(3, 0)]] StructuredBuffer<ClusterLights> cluster_lights[7];
-[[vk::binding(5, 0)]] Sampler2D image_table[64];
+#include "sampling.slangh"
 
 [[vk::push_constant]] Push push;
 
@@ -176,7 +176,8 @@ float3 shade(float3 albedo, float3 normal, float3 view_direction, float3 light_d
 float4 shadeScene(VertexOutput input, FrameData frame, float shadow, bool flat)
 {
     float3 albedo = input.color * push.tint.rgb *
-                    image_table[push.texture_slot].Sample(input.uv).rgb;
+                    texture_table[push.texture_slot].Sample(sampler_table[SAMPLER_LINEAR],
+                                                            input.uv).rgb;
     float3 normal = normalize(input.normal);
     float3 view_direction = normalize(frame.camera_and_near.xyz - input.world_position);
 

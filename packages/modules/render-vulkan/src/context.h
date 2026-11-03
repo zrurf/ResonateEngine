@@ -475,13 +475,18 @@ class Context
        they are not read through the image table. */
     static constexpr uint32_t kShadowTableBinding = 7;
     static constexpr uint32_t kShadowTableSize = 3;
-    static constexpr uint32_t kTableBindingCount = kShadowTableBinding + 1;
+    /* The sampler palette the shaders pick from at the sampling site (R13):
+       0 linear clamp, 1 nearest clamp, 2-3 reserved for a later repeat pair. */
+    static constexpr uint32_t kSamplerTableBinding = 8;
+    static constexpr uint32_t kSamplerTableSize = 4;
+    static constexpr uint32_t kTableBindingCount = kSamplerTableBinding + 1;
     /* The table is written while earlier frames may still read it; with
        UPDATE_AFTER_BIND devices that is legal, without it the write waits for
        idle first (table writes are rare: creation, destruction, rebinding). */
     void updateTable(const VkWriteDescriptorSet* writes, uint32_t count);
     void writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size);
     void writeImageSlot(uint32_t slot, VkImageView view, bool nearest);
+    void writeSamplerSlot(uint32_t slot, VkSampler sampler);
     bool acquireTableSlot(std::vector<uint32_t>& free_slots, uint32_t& out_slot);
     void releaseTableSlot(std::vector<uint32_t>& free_slots, uint32_t slot);
     std::vector<uint32_t> free_storage_slots_;
@@ -512,6 +517,7 @@ class Context
     VmaAllocation_T* shadow_dummy_allocation_ = nullptr;
     VkImageView shadow_dummy_view_ = VK_NULL_HANDLE;
     ResonateStatus createShadowDummy();
+    ResonateStatus createSamplerTable();
     void writeShadowSlot(uint32_t slot, VkImageView view);
 
     /* The open frame and pass, and the state their commands use. One command

@@ -239,6 +239,18 @@ void say(void* user_data, ReportFn report, const std::string& message)
     std::vector<dom::Diagnostic> diagnostics;
     std::unique_ptr<dom::Document> document =
         dom::Document::parse(text, &contentSchema(), diagnostics);
+    if (std::getenv("RESONATE_COOK_TRACE") != nullptr)
+    {
+        std::fprintf(stderr, "cook: %s -> %s (%zu diagnostics)\n", source.string().c_str(),
+                     target.string().c_str(), diagnostics.size());
+        for (const dom::Diagnostic& diagnostic : diagnostics)
+        {
+            std::fprintf(stderr, "cook:   %u:%u %s\n",
+                         static_cast<unsigned>(diagnostic.line),
+                         static_cast<unsigned>(diagnostic.column),
+                         diagnostic.message.c_str());
+        }
+    }
     if (document == nullptr)
     {
         for (const dom::Diagnostic& diagnostic : diagnostics)

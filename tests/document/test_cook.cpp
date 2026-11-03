@@ -84,15 +84,20 @@ TEST_CASE("cook: documents become binary, editor sources stay behind", "[cook]")
               "<key t=\"0\" value=\"0 0 0\"/></track></clip>");
     writeText(source.path / "ui" / "strings.rstrings",
               "<strings locale=\"en\"><entry key=\"k\">text</entry></strings>");
-    writeText(source.path / "ui" / "theme.rcss", "Panel { }\n");
+    writeText(source.path / "ui" / "theme.rcss",
+              "<document schemas=\"resonate.ui\"><StyleSheet key=\"theme\">"
+              "<StyleRule selector=\"Panel\"><Background color=\"1 1 1 1\"/>"
+              "</StyleRule></StyleSheet></document>");
 
     Summary summary;
     REQUIRE(resonate::cook::run(source.path.string(), out.path.string(), summary, nullptr,
                                 nullptr));
-    CHECK(summary.documents == 1U);
+    /* The stylesheet is a document too: it cooks into the binary form (R13's
+       sibling change — a shipped build carries no text manifest or text sheet). */
+    CHECK(summary.documents == 2U);
     CHECK(summary.clips == 1U);
     CHECK(summary.strings == 1U);
-    CHECK(summary.copies == 1U);
+    CHECK(summary.copies == 0U);
     CHECK(summary.skipped == 2U);
     CHECK(summary.failed == 0U);
 
@@ -122,6 +127,13 @@ TEST_CASE("cook: documents become binary, editor sources stay behind", "[cook]")
        package. */
     CHECK_FALSE(std::filesystem::exists(out.path / "stale.txt"));
 
+    /* The cooked stylesheet is the binary document form. */
+    const std::string stylesheet = readText(out.path / "ui" / "theme.rcss");
+    REQUIRE(stylesheet.size() > 8U);
+    CHECK(resonate::dom::Document::isBinary(
+        Span<const std::byte>(reinterpret_cast<const std::byte*>(stylesheet.data()),
+                              stylesheet.size())));
+
     /* Editor-only and non-runtime files stay behind. */
     CHECK_FALSE(std::filesystem::exists(out.path / "scene" / "demo.rscene.meta"));
     CHECK_FALSE(std::filesystem::exists(out.path / "scene" / "plain.txt"));
@@ -132,12 +144,15 @@ TEST_CASE("cook: extensions compare case-insensitively", "[cook]")
     Root source("case-source");
     Root out("case-out");
     writeText(source.path / "art" / "Hero.PNG", "not really a png, but a copy\n");
-    writeText(source.path / "ui" / "Theme.RCSS", "Panel { }\n");
+    writeText(source.path / "ui" / "Theme.RCSS",
+              "<document schemas=\"resonate.ui\"><StyleSheet key=\"theme\"></StyleSheet>"
+              "</document>");
 
     Summary summary;
     REQUIRE(resonate::cook::run(source.path.string(), out.path.string(), summary, nullptr,
                                 nullptr));
-    CHECK(summary.copies == 2U);
+    CHECK(summary.copies == 1U);
+    CHECK(summary.documents == 1U);
     CHECK(summary.skipped == 0U);
     CHECK(std::filesystem::exists(out.path / "art" / "Hero.PNG"));
     CHECK(std::filesystem::exists(out.path / "ui" / "Theme.RCSS"));

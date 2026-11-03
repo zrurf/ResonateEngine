@@ -7,6 +7,8 @@
 // tonemapFragment, fxaaFragment, upscaleFragment, magnifyFragment,
 // blendFragment.
 
+#include "sampling.slangh"
+
 struct PostPush
 {
     uint4 slots;   // x: input image, y: second input (the bloom image for the
@@ -17,7 +19,6 @@ struct PostPush
                    // in x/y and the RCAS sharpness in z
 };
 
-[[vk::binding(5, 0)]] Sampler2D image_table[64];
 
 [[vk::push_constant]] PostPush push;
 
@@ -49,7 +50,7 @@ float4 brightFragment(VertexOutput input) : SV_Target
 {
     // The threshold is in HDR units: what exceeds it contributes by its excess.
     float2 uv = input.uv * push.params.yw;
-    float3 color = image_table[push.slots.x].Sample(uv).rgb;
+    float3 color = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv).rgb;
     float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
     float contribution = max(luma - push.params.x, 0.0);
     return float4(color * contribution, 1.0);
@@ -62,10 +63,10 @@ float4 bloomDownFragment(VertexOutput input) : SV_Target
     // exact 2x reduction they land on the four source texel centers, so this
     // is the box filter the chain's mip would apply.
     float2 t = push.params.xy;
-    float3 sum = image_table[push.slots.x].Sample(input.uv + float2(-0.5, -0.5) * t).rgb;
-    sum += image_table[push.slots.x].Sample(input.uv + float2(0.5, -0.5) * t).rgb;
-    sum += image_table[push.slots.x].Sample(input.uv + float2(-0.5, 0.5) * t).rgb;
-    sum += image_table[push.slots.x].Sample(input.uv + float2(0.5, 0.5) * t).rgb;
+    float3 sum = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(-0.5, -0.5) * t).rgb;
+    sum += texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(0.5, -0.5) * t).rgb;
+    sum += texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(-0.5, 0.5) * t).rgb;
+    sum += texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(0.5, 0.5) * t).rgb;
     return float4(sum * 0.25, 1.0);
 }
 
@@ -76,18 +77,18 @@ float4 bloomUpFragment(VertexOutput input) : SV_Target
     // image: the chain ends with every scale summed into the base, which is
     // what widens the halo without a separate blur per radius.
     float2 t = push.params.xy;
-    float3 lifted = image_table[push.slots.x].Sample(input.uv).rgb * 4.0;
-    lifted += (image_table[push.slots.x].Sample(input.uv + float2(-1.0, 0.0) * t).rgb +
-               image_table[push.slots.x].Sample(input.uv + float2(1.0, 0.0) * t).rgb +
-               image_table[push.slots.x].Sample(input.uv + float2(0.0, -1.0) * t).rgb +
-               image_table[push.slots.x].Sample(input.uv + float2(0.0, 1.0) * t).rgb) *
+    float3 lifted = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv).rgb * 4.0;
+    lifted += (texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(-1.0, 0.0) * t).rgb +
+               texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(1.0, 0.0) * t).rgb +
+               texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(0.0, -1.0) * t).rgb +
+               texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(0.0, 1.0) * t).rgb) *
               2.0;
-    lifted += image_table[push.slots.x].Sample(input.uv + float2(-1.0, -1.0) * t).rgb +
-              image_table[push.slots.x].Sample(input.uv + float2(1.0, -1.0) * t).rgb +
-              image_table[push.slots.x].Sample(input.uv + float2(-1.0, 1.0) * t).rgb +
-              image_table[push.slots.x].Sample(input.uv + float2(1.0, 1.0) * t).rgb;
+    lifted += texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(-1.0, -1.0) * t).rgb +
+              texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(1.0, -1.0) * t).rgb +
+              texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(-1.0, 1.0) * t).rgb +
+              texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv + float2(1.0, 1.0) * t).rgb;
     lifted *= 1.0 / 16.0;
-    float3 own = image_table[push.slots.y].Sample(input.uv).rgb;
+    float3 own = texture_table[push.slots.y].Sample(sampler_table[SAMPLER_LINEAR], input.uv).rgb;
     return float4(own + lifted, 1.0);
 }
 
@@ -122,12 +123,12 @@ float4 tonemapFragment(VertexOutput input) : SV_Target
     // The scene may have been rendered into a sub-rectangle of its target
     // (dynamic resolution): y/w carry the uv window the tonemap reads.
     float2 uv = input.uv * push.params.yw;
-    float3 hdr = image_table[push.slots.x].Sample(uv).rgb;
+    float3 hdr = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv).rgb;
     // z: 1 when the stack has bloom, so the second slot is sampled only when
     // the feature exists.
     // The bloom chain covers the whole target, so it is sampled unscaled.
     float3 bloom = push.params.z > 0.5
-                       ? image_table[push.slots.y].Sample(input.uv).rgb
+                       ? texture_table[push.slots.y].Sample(sampler_table[SAMPLER_LINEAR], input.uv).rgb
                        : float3(0.0, 0.0, 0.0);
     float3 ldr = tonemap(hdr + bloom * 0.35);
     // x: 1 when the surface presents linear and this pass owns the encode.
@@ -148,11 +149,11 @@ float4 fxaaFragment(VertexOutput input) : SV_Target
     float2 texel = push.params.xy;
     // z/w carry the uv window the scene was rendered into (dynamic resolution).
     float2 uv = input.uv * push.params.zw;
-    float3 rgb_m = image_table[push.slots.x].Sample(uv).rgb;
-    float3 rgb_n = image_table[push.slots.x].Sample(uv + float2(0.0, -texel.y)).rgb;
-    float3 rgb_s = image_table[push.slots.x].Sample(uv + float2(0.0, texel.y)).rgb;
-    float3 rgb_e = image_table[push.slots.x].Sample(uv + float2(texel.x, 0.0)).rgb;
-    float3 rgb_w = image_table[push.slots.x].Sample(uv + float2(-texel.x, 0.0)).rgb;
+    float3 rgb_m = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv).rgb;
+    float3 rgb_n = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv + float2(0.0, -texel.y)).rgb;
+    float3 rgb_s = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv + float2(0.0, texel.y)).rgb;
+    float3 rgb_e = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv + float2(texel.x, 0.0)).rgb;
+    float3 rgb_w = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv + float2(-texel.x, 0.0)).rgb;
 
     float luma_m = dot(rgb_m, float3(0.299, 0.587, 0.114));
     float luma_n = dot(rgb_n, float3(0.299, 0.587, 0.114));
@@ -172,8 +173,8 @@ float4 fxaaFragment(VertexOutput input) : SV_Target
     blend_direction = normalize(
         float2(-blend_direction.y, blend_direction.x) *
         min(texel.x, texel.y));
-    float3 blended = 0.5 * (image_table[push.slots.x].Sample(uv + blend_direction).rgb +
-                            image_table[push.slots.x].Sample(input.uv - blend_direction).rgb);
+    float3 blended = 0.5 * (texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv + blend_direction).rgb +
+                            texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv - blend_direction).rgb);
     return float4(blended, 1.0);
 }
 
@@ -231,7 +232,7 @@ void fsrEasuSet(inout float2 dir, inout float len, float w,
 
 float3 easuTexel(float2 texel, float2 inv_target)
 {
-    return image_table[push.slots.x].Sample((texel + 0.5) * inv_target).rgb;
+    return texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], (texel + 0.5) * inv_target).rgb;
 }
 
 // EASU: an edge-directed 12-tap reconstruction, stretched along the local
@@ -323,7 +324,7 @@ float4 magnifyFragment(VertexOutput input) : SV_Target
 {
     // The plain magnify for a device that cannot afford EASU: x/y carry the
     // uv window the scene occupies in its target.
-    return float4(image_table[push.slots.x].Sample(input.uv * push.params.xy).rgb, 1.0);
+    return float4(texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv * push.params.xy).rgb, 1.0);
 }
 
 // RCAS: a contrast-adaptive sharpen of the upscaled scene. The lobe grows where
@@ -331,11 +332,11 @@ float4 magnifyFragment(VertexOutput input) : SV_Target
 // clamped to the neighbourhood, so detail returns without haloes.
 float3 fsrRcas(float2 uv, float2 inv_target, float sharpness)
 {
-    float3 b = image_table[push.slots.x].Sample(uv + float2(0.0, -1.0) * inv_target).rgb;
-    float3 d = image_table[push.slots.x].Sample(uv + float2(-1.0, 0.0) * inv_target).rgb;
-    float3 e = image_table[push.slots.x].Sample(uv).rgb;
-    float3 f = image_table[push.slots.x].Sample(uv + float2(1.0, 0.0) * inv_target).rgb;
-    float3 h = image_table[push.slots.x].Sample(uv + float2(0.0, 1.0) * inv_target).rgb;
+    float3 b = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv + float2(0.0, -1.0) * inv_target).rgb;
+    float3 d = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv + float2(-1.0, 0.0) * inv_target).rgb;
+    float3 e = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv).rgb;
+    float3 f = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv + float2(1.0, 0.0) * inv_target).rgb;
+    float3 h = texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], uv + float2(0.0, 1.0) * inv_target).rgb;
 
     float3 mn4 = min(min(b, d), min(f, h));
     float3 mx4 = max(max(b, d), max(f, h));
@@ -361,12 +362,12 @@ float4 blendFragment(VertexOutput input) : SV_Target
     // the sharpener.
     float3 scene = push.params.z > 0.0
                        ? fsrRcas(input.uv, push.params.xy, push.params.z)
-                       : image_table[push.slots.x].Sample(input.uv).rgb;
+                       : texture_table[push.slots.x].Sample(sampler_table[SAMPLER_LINEAR], input.uv).rgb;
     // The canvas quantizes to eight bits, so the dither belongs at output
     // resolution: dithering the scaled scene first would let the upscale and
     // the sharpen turn the noise into visible blocks. Only the scene is
     // dithered, so an opaque UI pixel keeps its exact color.
     scene += (ditherValue(input.position.xy) - 0.5) * (1.0 / 255.0);
-    float4 ui = image_table[push.slots.z].Sample(input.uv);
+    float4 ui = texture_table[push.slots.z].Sample(sampler_table[SAMPLER_LINEAR], input.uv);
     return float4(scene * (1.0 - ui.a) + ui.rgb, 1.0);
 }

@@ -19,6 +19,8 @@ struct ShaderContract
     std::uint32_t frame_binding = 0U;
     std::uint32_t shadow_table_binding = 0U;
     std::uint32_t shadow_table_size = 0U;
+    std::uint32_t sampler_table_binding = 0U;
+    std::uint32_t sampler_table_size = 0U;
     std::uint32_t max_push_constants = 0U;
 };
 

@@ -1021,13 +1021,15 @@ ResonateStatus Context::ensureDevice()
     vkGetPhysicalDeviceFormatProperties(physical_, VK_FORMAT_D16_UNORM, &d16_props);
     std::fprintf(stderr,
                  "render-vulkan: %s, Vulkan %u.%u, %s table=%u, samplers/stage=%u, "
-                 "storage/stage=%u, resources/stage=%u, rgba16f color=%u, d32 depth=%u, "
-                 "b10g11r11 color=%u, d16 depth=%u\n",
+                 "storage/stage=%u, resources/stage=%u, set samplers=%u set images=%u, "
+                 "rgba16f color=%u, d32 depth=%u, b10g11r11 color=%u, d16 depth=%u\n",
                  properties.deviceName, VK_VERSION_MAJOR(properties.apiVersion),
                  VK_VERSION_MINOR(properties.apiVersion), bindless_ ? "bindless" : "compat",
                  kImageTableSize, properties.limits.maxPerStageDescriptorSamplers,
                  properties.limits.maxPerStageDescriptorStorageBuffers,
                  properties.limits.maxPerStageResources,
+                 properties.limits.maxDescriptorSetSamplers,
+                 properties.limits.maxDescriptorSetSampledImages,
                  (color_props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0U,
                  (depth_props.optimalTilingFeatures &
                   VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0U,
@@ -1111,8 +1113,10 @@ ResonateStatus Context::ensureDevice()
             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
         table_bindings[binding].pImmutableSamplers = nullptr;
     }
+    /* R13: the image table carries images only — the sampler is the shader's
+       pick from the palette at binding 8, not a property of the slot. */
     table_bindings[kSampledTableBinding].binding = kSampledTableBinding;
-    table_bindings[kSampledTableBinding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    table_bindings[kSampledTableBinding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     table_bindings[kSampledTableBinding].descriptorCount = kImageTableSize;
     table_bindings[kSampledTableBinding].stageFlags =
         VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
@@ -1122,6 +1126,12 @@ ResonateStatus Context::ensureDevice()
         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     table_bindings[kShadowTableBinding].descriptorCount = kShadowTableSize;
     table_bindings[kShadowTableBinding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    table_bindings[kSamplerTableBinding].binding = kSamplerTableBinding;
+    table_bindings[kSamplerTableBinding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    table_bindings[kSamplerTableBinding].descriptorCount = kSamplerTableSize;
+    table_bindings[kSamplerTableBinding].stageFlags =
+        VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
     /* The frame block, outside the table so the vertex stage does not depend
        on a storage-array read. */
@@ -1164,19 +1174,23 @@ ResonateStatus Context::ensureDevice()
         return RESONATE_E_INTERNAL;
     }
 
-    VkDescriptorPoolSize table_pool_sizes[3] = {};
+    VkDescriptorPoolSize table_pool_sizes[5] = {};
     table_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     table_pool_sizes[0].descriptorCount = kStorageTableBindings * kStorageTableSize;
     table_pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    table_pool_sizes[1].descriptorCount = kImageTableSize + kShadowTableSize;
-    table_pool_sizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    table_pool_sizes[2].descriptorCount = 1;
+    table_pool_sizes[1].descriptorCount = kShadowTableSize;
+    table_pool_sizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    table_pool_sizes[2].descriptorCount = kImageTableSize;
+    table_pool_sizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+    table_pool_sizes[3].descriptorCount = kSamplerTableSize;
+    table_pool_sizes[4].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    table_pool_sizes[4].descriptorCount = 1;
     VkDescriptorPoolCreateInfo table_pool{};
     table_pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     table_pool.flags =
         update_after_bind_ ? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT : 0U;
     table_pool.maxSets = 1;
-    table_pool.poolSizeCount = 3;
+    table_pool.poolSizeCount = 5;
     table_pool.pPoolSizes = table_pool_sizes;
     if (vkCreateDescriptorPool(device_, &table_pool, nullptr, &table_pool_) != VK_SUCCESS)
     {
@@ -1333,6 +1347,10 @@ ResonateStatus Context::ensureDevice()
     {
         return status;
     }
+    if (ResonateStatus status = createSamplerTable(); status != RESONATE_OK)
+    {
+        return status;
+    }
     return RESONATE_OK;
 }
 
@@ -1438,6 +1456,17 @@ ResonateStatus Context::createTableImageDummy()
     for (uint32_t slot = 0; slot < kImageTableSize; ++slot)
     {
         writeImageSlot(slot, table_dummy_view_, false);
+    }
+    return RESONATE_OK;
+}
+
+/* The sampler palette is written once at setup: it is a fixed set, and the
+   shaders pick an entry at the sampling site (R13). */
+ResonateStatus Context::createSamplerTable()
+{
+    for (uint32_t slot = 0; slot < kSamplerTableSize; ++slot)
+    {
+        writeSamplerSlot(slot, slot == 1U ? table_sampler_nearest_ : table_sampler_linear_);
     }
     return RESONATE_OK;
 }
@@ -2331,8 +2360,10 @@ void Context::writeBufferSlot(uint32_t slot, VkBuffer buffer, VkDeviceSize size)
 
 void Context::writeImageSlot(uint32_t slot, VkImageView view, bool nearest)
 {
+    /* R13 moved the sampler choice into the shaders, so the slot carries an
+       image only; `nearest` is accepted and ignored for ABI stability. */
+    (void)nearest;
     VkDescriptorImageInfo image_info{};
-    image_info.sampler = nearest ? table_sampler_nearest_ : table_sampler_linear_;
     image_info.imageView = view;
     image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkWriteDescriptorSet write{};
@@ -2341,7 +2372,22 @@ void Context::writeImageSlot(uint32_t slot, VkImageView view, bool nearest)
     write.dstBinding = kSampledTableBinding;
     write.dstArrayElement = slot;
     write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    write.pImageInfo = &image_info;
+    updateTable(&write, 1);
+}
+
+void Context::writeSamplerSlot(uint32_t slot, VkSampler sampler)
+{
+    VkDescriptorImageInfo image_info{};
+    image_info.sampler = sampler;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = table_set_;
+    write.dstBinding = kSamplerTableBinding;
+    write.dstArrayElement = slot;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     write.pImageInfo = &image_info;
     updateTable(&write, 1);
 }

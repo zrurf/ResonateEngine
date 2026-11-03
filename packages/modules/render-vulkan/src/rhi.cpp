@@ -459,6 +459,8 @@ ResonateStatus Context::createShader(ResonateRenderShaderStage stage, const void
     contract.frame_binding = kFrameBinding;
     contract.shadow_table_binding = kShadowTableBinding;
     contract.shadow_table_size = kShadowTableSize;
+    contract.sampler_table_binding = kSamplerTableBinding;
+    contract.sampler_table_size = kSamplerTableSize;
     contract.max_push_constants = kMaxConstants;
     const ShaderStageKind kind = stage == RESONATE_RENDER_SHADER_VERTEX  ? ShaderStageKind::Vertex
                                  : stage == RESONATE_RENDER_SHADER_COMPUTE

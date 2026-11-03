@@ -31,9 +31,10 @@ struct FrameData
     uint uniform_light_pad2;
 };
 
+#include "sampling.slangh"
+
 [[vk::push_constant]] Push push;
 [[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[7];
-[[vk::binding(5, 0)]] Sampler2D image_table[64];
 
 struct VertexOutput
 {
@@ -54,7 +55,7 @@ VertexOutput probeVertex(uint vertex : SV_VertexID)
 [shader("fragment")]
 float4 probeFragment(VertexOutput input) : SV_Target
 {
-    float3 tex = image_table[push.texture_slot].Sample(float2(0.5, 0.5)).rgb;
+    float3 tex = texture_table[push.texture_slot].Sample(sampler_table[SAMPLER_LINEAR], float2(0.5, 0.5)).rgb;
     float4 sun = frame_table[push.slots.x][0].directional_color_intensity;
     return float4(tex * sun.rgb * sun.a, 1.0);
 }
@@ -64,7 +65,7 @@ float4 probeFragment(VertexOutput input) : SV_Target
 [shader("fragment")]
 float4 probeCopy(VertexOutput input) : SV_Target
 {
-    return float4(image_table[1].Sample(float2(0.5, 0.5)).rgb, 1.0);
+    return float4(texture_table[1].Sample(sampler_table[SAMPLER_LINEAR], float2(0.5, 0.5)).rgb, 1.0);
 }
 
 [[vk::binding(0, 0)]] RWStructuredBuffer<uint4> probe_storage[7];

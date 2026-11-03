@@ -1,0 +1,10 @@
+// The sampled-image table and the samplers that read it, split (R13): the
+// images are per-slot resources, the samplers are a fixed palette the shaders
+// pick from at the sampling site — an image no longer carries its sampler, and
+// one image can be read two ways without rewriting a slot.
+
+[[vk::binding(5, 0)]] Texture2D texture_table[64];
+[[vk::binding(8, 0)]] SamplerState sampler_table[4];
+
+#define SAMPLER_LINEAR 0
+#define SAMPLER_NEAREST 1

@@ -4,6 +4,8 @@
 // layer one fullscreen premultiplied quad.
 // Entries: uiVertex, uiFragment.
 
+#include "sampling.slangh"
+
 struct UiPush
 {
     float2 viewport;
@@ -16,7 +18,6 @@ struct UiPush
 
 [[vk::push_constant]] UiPush push;
 
-[[vk::binding(5, 0)]] Sampler2D image_table[64];
 
 struct VertexInput
 {
@@ -87,7 +88,12 @@ float4 uiFragment(VertexOutput input) : SV_Target
     {
         return float4(input.color.rgb, input.color.a * quadCoverage(input.uv, input.shape));
     }
-    float4 sampled = image_table[push.texture_slot].Sample(input.uv);
+    /* The font atlas is a signed distance field read nearest (R13 moved the
+       choice here from the image's creation); everything else filters. */
+    const uint sampler_index =
+        push.texture_slot == push.font_slot ? SAMPLER_NEAREST : SAMPLER_LINEAR;
+    float4 sampled =
+        texture_table[push.texture_slot].Sample(sampler_table[sampler_index], input.uv);
     if (push.texture_slot == push.overlay_slot)
     {
         // tgfx writes premultiplied color; the UI target accumulates straight
@@ -97,7 +103,7 @@ float4 uiFragment(VertexOutput input) : SV_Target
     }
     if (push.texture_slot == push.font_slot)
     {
-        // The font atlas is a signed distance field; rebuild the edge from it.
+        // Rebuild the edge from the distance field.
         float w = max(fwidth(sampled.a), 0.001);
         float coverage = smoothstep(0.5 - w, 0.5 + w, sampled.a);
         return float4(input.color.rgb, input.color.a * coverage);

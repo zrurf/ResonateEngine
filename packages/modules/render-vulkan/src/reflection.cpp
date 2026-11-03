@@ -18,6 +18,7 @@ enum Opcode : std::uint32_t
     kOpTypeVector = 23,
     kOpTypeMatrix = 24,
     kOpTypeImage = 25,
+    kOpTypeSampler = 26,
     kOpTypeSampledImage = 27,
     kOpTypeArray = 28,
     kOpTypeStruct = 30,
@@ -63,6 +64,7 @@ struct Type
         RuntimeArray,
         Struct,
         Image,
+        Sampler,
         SampledImage,
         Pointer,
     } kind = Other;
@@ -310,6 +312,14 @@ bool reflectShader(const std::uint32_t* words, std::uint64_t word_count, ShaderS
                 }
                 break;
             }
+            case kOpTypeSampler:
+            {
+                if (operand_count >= 1U)
+                {
+                    module.types[operands[0]].kind = Type::Sampler;
+                }
+                break;
+            }
             case kOpTypeSampledImage:
             {
                 if (operand_count >= 2U)
@@ -495,11 +505,23 @@ bool reflectShader(const std::uint32_t* words, std::uint64_t word_count, ShaderS
             }
             else if (slot == contract.sampled_table_binding)
             {
-                if (kind != Type::SampledImage || elements != contract.sampled_table_size)
+                /* R13 split the table: it carries images, and the sampler comes
+                   from the palette at the sampling site. */
+                if (kind != Type::Image || elements != contract.sampled_table_size)
                 {
-                    error = "shader sampled table binding " + std::to_string(slot) + quoted +
+                    error = "shader image table binding " + std::to_string(slot) + quoted +
                             declared + "; the table holds " +
                             std::to_string(contract.sampled_table_size);
+                    return false;
+                }
+            }
+            else if (slot == contract.sampler_table_binding)
+            {
+                if (kind != Type::Sampler || elements != contract.sampler_table_size)
+                {
+                    error = "shader sampler table binding " + std::to_string(slot) + quoted +
+                            declared + "; the palette holds " +
+                            std::to_string(contract.sampler_table_size);
                     return false;
                 }
             }
