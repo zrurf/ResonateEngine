@@ -1,14 +1,17 @@
-// The post chain's stages: bright extraction, separable blur, tonemap, FXAA
-// over the scene only, and the UI blend. All draw a full-screen triangle from
-// the vertex id and read their inputs through the sampled-image table.
-// Entries: postVertex, brightFragment, blurFragment, tonemapFragment,
-// fxaaFragment, blendFragment.
+// The post chain's stages: bright extraction, the bloom pyramid's downsample
+// and upsample steps, tonemap, FXAA over the scene only, and the UI blend. All
+// draw a full-screen triangle from the vertex id and read their inputs through
+// the sampled-image table.
+// Entries: postVertex, brightFragment, bloomDownFragment, bloomUpFragment,
+// tonemapFragment, fxaaFragment, blendFragment.
 
 struct PostPush
 {
-    uint4 slots;   // x: input image, y: second input (bloom for the composite)
-    float4 params; // bright: threshold in x; blur: texel step in x/y;
-                   // composite: x is 1 when the pass applies the sRGB encode
+    uint4 slots;   // x: input image, y: second input (the bloom image for the
+                   // tonemap, this level's own image for the bloom upsample)
+    float4 params; // bright: threshold in x, uv window in y/w; bloom down/up:
+                   // source texel size in x/y; tonemap: x is 1 when the pass
+                   // applies the sRGB encode
 };
 
 [[vk::binding(5, 0)]] Sampler2D image_table[64];
@@ -50,17 +53,39 @@ float4 brightFragment(VertexOutput input) : SV_Target
 }
 
 [shader("fragment")]
-float4 blurFragment(VertexOutput input) : SV_Target
+float4 bloomDownFragment(VertexOutput input) : SV_Target
 {
-    // Nine-tap gaussian along the direction push.params carries in xy (texel
-    // steps), offset by one texel between taps.
-    float3 sum = image_table[push.slots.x].Sample(input.uv).rgb * 0.227;
-    float3 s1 = image_table[push.slots.x].Sample(input.uv + push.params.xy * 1.3846).rgb;
-    float3 s2 = image_table[push.slots.x].Sample(input.uv - push.params.xy * 1.3846).rgb;
-    float3 s3 = image_table[push.slots.x].Sample(input.uv + push.params.xy * 3.2308).rgb;
-    float3 s4 = image_table[push.slots.x].Sample(input.uv - push.params.xy * 3.2308).rgb;
-    sum += (s1 + s2) * 0.316 + (s3 + s4) * 0.070;
-    return float4(sum, 1.0);
+    // Four bilinear fetches on the corners of the destination texel: for an
+    // exact 2x reduction they land on the four source texel centers, so this
+    // is the box filter the chain's mip would apply.
+    float2 t = push.params.xy;
+    float3 sum = image_table[push.slots.x].Sample(input.uv + float2(-0.5, -0.5) * t).rgb;
+    sum += image_table[push.slots.x].Sample(input.uv + float2(0.5, -0.5) * t).rgb;
+    sum += image_table[push.slots.x].Sample(input.uv + float2(-0.5, 0.5) * t).rgb;
+    sum += image_table[push.slots.x].Sample(input.uv + float2(0.5, 0.5) * t).rgb;
+    return float4(sum * 0.25, 1.0);
+}
+
+[shader("fragment")]
+float4 bloomUpFragment(VertexOutput input) : SV_Target
+{
+    // The smaller level lifted by a 3x3 tent and added to this level's own
+    // image: the chain ends with every scale summed into the base, which is
+    // what widens the halo without a separate blur per radius.
+    float2 t = push.params.xy;
+    float3 lifted = image_table[push.slots.x].Sample(input.uv).rgb * 4.0;
+    lifted += (image_table[push.slots.x].Sample(input.uv + float2(-1.0, 0.0) * t).rgb +
+               image_table[push.slots.x].Sample(input.uv + float2(1.0, 0.0) * t).rgb +
+               image_table[push.slots.x].Sample(input.uv + float2(0.0, -1.0) * t).rgb +
+               image_table[push.slots.x].Sample(input.uv + float2(0.0, 1.0) * t).rgb) *
+              2.0;
+    lifted += image_table[push.slots.x].Sample(input.uv + float2(-1.0, -1.0) * t).rgb +
+              image_table[push.slots.x].Sample(input.uv + float2(1.0, -1.0) * t).rgb +
+              image_table[push.slots.x].Sample(input.uv + float2(-1.0, 1.0) * t).rgb +
+              image_table[push.slots.x].Sample(input.uv + float2(1.0, 1.0) * t).rgb;
+    lifted *= 1.0 / 16.0;
+    float3 own = image_table[push.slots.y].Sample(input.uv).rgb;
+    return float4(own + lifted, 1.0);
 }
 
 // ACES approximation (Krzysztof Narkowicz's fit).

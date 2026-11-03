@@ -120,9 +120,12 @@ constexpr std::uint32_t kClustersZ = 24;
 constexpr std::uint32_t kClusterCount = kClustersX * kClustersY * kClustersZ;
 constexpr std::uint32_t kMaxLightsPerCluster = 128;
 
-/* The bloom targets run at a quarter of the scene target's extent per axis:
-   enough for the blur's wide kernel, cheap enough to be free. */
-constexpr std::uint32_t kBloomDivisor = 4U;
+/* Bloom runs on a fixed-height pyramid, independent of the canvas and the
+   render scale: a dynamic-resolution change must not change the size of the
+   halo. The base level is 384 lines tall (Filament's mobile default), each
+   level halves, and six levels cover the glow up to a full-frame radius. */
+constexpr std::uint32_t kBloomLevels = 6U;
+constexpr std::uint32_t kBloomBaseHeight = 384U;
 
 /* The push-constant block the scene/cluster shaders read: 124 bytes. The
    cluster and shadow shaders read only their 112-byte prefix. */
@@ -457,9 +460,12 @@ struct RenderSystem::Impl
     ResourceId ui_resource = 0;
     ResourceId ldr_resource = 0;
     ResourceId ldr_aa_resource = 0;
-    ResourceId bright_resource = 0;
-    ResourceId blur_a_resource = 0;
-    ResourceId blur_b_resource = 0;
+    /* The bloom pyramid: `bloom_level` holds the downsample chain (level 0 is
+       the bright pass's target) and `bloom_combine[Level]` the level's own
+       image plus every smaller scale lifted back into it. The last combine
+       image, index 0, is what the tonemap adds. */
+    ResourceId bloom_level[kBloomLevels] = {};
+    ResourceId bloom_combine[kBloomLevels - 1] = {};
     ResourceId shadow_resource[3] = {0, 0, 0};
     ResourceId boxes_resource = 0;
     ResourceId grid_resource = 0;
@@ -470,8 +476,10 @@ struct RenderSystem::Impl
        the plan and its executor. */
     std::uint32_t target_width = 0U;
     std::uint32_t target_height = 0U;
-    std::uint32_t bloom_width = 1U;
-    std::uint32_t bloom_height = 1U;
+    /* The pyramid's per-level extents; derived from the canvas aspect once per
+       rebuild and never from the render scale. */
+    std::uint32_t bloom_width[kBloomLevels] = {};
+    std::uint32_t bloom_height[kBloomLevels] = {};
     /* 3D and post targets are always allocated at the target extent; the scale
        only picks the sub-viewport the scene renders into and the UV window the
        tonemap and bloom read, so changing it never rebuilds the graph. The UI
@@ -529,7 +537,8 @@ struct RenderSystem::Impl
     ResonateRenderPipeline build_pipeline{};
     ResonateRenderPipeline cull_pipeline{};
     ResonateRenderPipeline bright_pipeline{};
-    ResonateRenderPipeline blur_pipeline{};
+    ResonateRenderPipeline bloom_down_pipeline{};
+    ResonateRenderPipeline bloom_up_pipeline{};
     ResonateRenderPipeline composite_pipeline{};
     ResonateRenderPipeline fxaa_pipeline{};
     ResonateRenderPipeline blend_pipeline{};
@@ -695,7 +704,7 @@ struct RenderSystem::Impl
     void drawUi(GraphExecuteContext& commands);
     void runPost(GraphExecuteContext& commands, ResourceId target, ResonateRenderPipeline pipeline,
                  std::uint32_t input_slot, std::uint32_t bloom_slot, std::uint32_t ui_slot,
-                 const Vec4& params);
+                 const Vec4& params, bool full_viewport = false);
     static void prepareEntry(void* context, GraphExecuteContext& commands);
     static void clusterBuildEntry(void* context, GraphExecuteContext& commands);
     static void clusterCullEntry(void* context, GraphExecuteContext& commands);
@@ -705,8 +714,10 @@ struct RenderSystem::Impl
     static void drawSceneEntry(void* context, GraphExecuteContext& commands);
     static void uiEntry(void* context, GraphExecuteContext& commands);
     static void brightEntry(void* context, GraphExecuteContext& commands);
-    static void blurHEntry(void* context, GraphExecuteContext& commands);
-    static void blurVEntry(void* context, GraphExecuteContext& commands);
+    template <std::uint32_t Level>
+    static void bloomDownEntry(void* context, GraphExecuteContext& commands);
+    template <std::uint32_t Level>
+    static void bloomUpEntry(void* context, GraphExecuteContext& commands);
     static void compositeEntry(void* context, GraphExecuteContext& commands);
     static void fxaaEntry(void* context, GraphExecuteContext& commands);
     static void blendEntry(void* context, GraphExecuteContext& commands);
@@ -806,9 +817,14 @@ bool RenderSystem::Impl::initialize()
        the executor does not create them. */
     ldr_resource = resonate::render::kInvalidResource;
     ldr_aa_resource = resonate::render::kInvalidResource;
-    bright_resource = resonate::render::kInvalidResource;
-    blur_a_resource = resonate::render::kInvalidResource;
-    blur_b_resource = resonate::render::kInvalidResource;
+    for (std::uint32_t level = 0; level < kBloomLevels; ++level)
+    {
+        bloom_level[level] = resonate::render::kInvalidResource;
+        if (level + 1U < kBloomLevels)
+        {
+            bloom_combine[level] = resonate::render::kInvalidResource;
+        }
+    }
     /* The LDR scene exists in both modes: the tonemap always writes it, and the
        blend pass reads it back when it composites the UI. */
     ldr_resource = graph.declareImage(
@@ -823,15 +839,24 @@ bool RenderSystem::Impl::initialize()
     }
     if (bloom)
     {
-        bright_resource = graph.declareImage(
-            "bright", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, bloom_width, bloom_height,
-            RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
-        blur_a_resource = graph.declareImage(
-            "blur_a", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, bloom_width, bloom_height,
-            RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
-        blur_b_resource = graph.declareImage(
-            "blur_b", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, bloom_width, bloom_height,
-            RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
+        /* R11G11B10F: the pack is a third of RGBA16F and its precision covers a
+           glow that is about to be tonemapped anyway. */
+        for (std::uint32_t level = 0; level < kBloomLevels; ++level)
+        {
+            const std::string name = "bloom_" + std::to_string(level);
+            bloom_level[level] = graph.declareImage(
+                name.c_str(), RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT, bloom_width[level],
+                bloom_height[level],
+                RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
+            if (level + 1U < kBloomLevels)
+            {
+                const std::string combine = "bloom_up_" + std::to_string(level);
+                bloom_combine[level] = graph.declareImage(
+                    combine.c_str(), RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT,
+                    bloom_width[level], bloom_height[level],
+                    RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
+            }
+        }
     }
     const std::uint32_t shadow_count = compat_tier ? 1U : kCascades;
     for (std::uint32_t cascade = 0; cascade < shadow_count; ++cascade)
@@ -963,7 +988,7 @@ bool RenderSystem::Impl::initialize()
         hdr_read.access = resonate::render::kAccessShaderRead;
         hdr_read.layout = kLayoutShaderReadOnly;
         Use bright_write{};
-        bright_write.resource = bright_resource;
+        bright_write.resource = bloom_level[0];
         bright_write.stages = resonate::render::kStageColorOutput;
         bright_write.access = resonate::render::kAccessColorWrite;
         bright_write.layout = kLayoutColorAttachment;
@@ -977,45 +1002,75 @@ bool RenderSystem::Impl::initialize()
         bright.execute = &Impl::brightEntry;
         graph.addPass(bright);
 
-        Use bright_read{};
-        bright_read.resource = bright_resource;
-        bright_read.stages = resonate::render::kStageFragment;
-        bright_read.access = resonate::render::kAccessShaderRead;
-        bright_read.layout = kLayoutShaderReadOnly;
-        Use blur_a_write{};
-        blur_a_write.resource = blur_a_resource;
-        blur_a_write.stages = resonate::render::kStageColorOutput;
-        blur_a_write.access = resonate::render::kAccessColorWrite;
-        blur_a_write.layout = kLayoutColorAttachment;
-        resonate::render::PassDesc blur_h{};
-        blur_h.name = "blur-h";
-        blur_h.reads = &bright_read;
-        blur_h.read_count = 1U;
-        blur_h.writes = &blur_a_write;
-        blur_h.write_count = 1U;
-        blur_h.context = this;
-        blur_h.execute = &Impl::blurHEntry;
-        graph.addPass(blur_h);
+        /* One entry per level so each pass carries its own (read, write);
+           `kBloomDownEntries` and `kBloomUpEntries` name them in level order. */
+        using PostEntry = void (*)(void*, GraphExecuteContext&);
+        static const PostEntry down_entries[kBloomLevels] = {
+            nullptr, &Impl::bloomDownEntry<1U>, &Impl::bloomDownEntry<2U>,
+            &Impl::bloomDownEntry<3U>, &Impl::bloomDownEntry<4U>,
+            &Impl::bloomDownEntry<5U>};
+        static const PostEntry up_entries[kBloomLevels - 1] = {
+            &Impl::bloomUpEntry<0U>, &Impl::bloomUpEntry<1U>, &Impl::bloomUpEntry<2U>,
+            &Impl::bloomUpEntry<3U>, &Impl::bloomUpEntry<4U>};
 
-        Use blur_a_read{};
-        blur_a_read.resource = blur_a_resource;
-        blur_a_read.stages = resonate::render::kStageFragment;
-        blur_a_read.access = resonate::render::kAccessShaderRead;
-        blur_a_read.layout = kLayoutShaderReadOnly;
-        Use blur_b_write{};
-        blur_b_write.resource = blur_b_resource;
-        blur_b_write.stages = resonate::render::kStageColorOutput;
-        blur_b_write.access = resonate::render::kAccessColorWrite;
-        blur_b_write.layout = kLayoutColorAttachment;
-        resonate::render::PassDesc blur_v{};
-        blur_v.name = "blur-v";
-        blur_v.reads = &blur_a_read;
-        blur_v.read_count = 1U;
-        blur_v.writes = &blur_b_write;
-        blur_v.write_count = 1U;
-        blur_v.context = this;
-        blur_v.execute = &Impl::blurVEntry;
-        graph.addPass(blur_v);
+        for (std::uint32_t level = 1; level < kBloomLevels; ++level)
+        {
+            Use source_read{};
+            source_read.resource = bloom_level[level - 1U];
+            source_read.stages = resonate::render::kStageFragment;
+            source_read.access = resonate::render::kAccessShaderRead;
+            source_read.layout = kLayoutShaderReadOnly;
+            Use level_write{};
+            level_write.resource = bloom_level[level];
+            level_write.stages = resonate::render::kStageColorOutput;
+            level_write.access = resonate::render::kAccessColorWrite;
+            level_write.layout = kLayoutColorAttachment;
+            resonate::render::PassDesc down{};
+            down.name = "bloom-down";
+            down.reads = &source_read;
+            down.read_count = 1U;
+            down.writes = &level_write;
+            down.write_count = 1U;
+            down.context = this;
+            down.execute = down_entries[level];
+            graph.addPass(down);
+        }
+
+        /* Smallest to largest: level 5 is the source of the first lift, and
+           each pass folds its own level into the accumulated image. */
+        for (std::uint32_t level = kBloomLevels - 2U;; --level)
+        {
+            Use lifted_read{};
+            lifted_read.resource =
+                level + 2U == kBloomLevels ? bloom_level[kBloomLevels - 1U] : bloom_combine[level + 1U];
+            lifted_read.stages = resonate::render::kStageFragment;
+            lifted_read.access = resonate::render::kAccessShaderRead;
+            lifted_read.layout = kLayoutShaderReadOnly;
+            Use own_read{};
+            own_read.resource = bloom_level[level];
+            own_read.stages = resonate::render::kStageFragment;
+            own_read.access = resonate::render::kAccessShaderRead;
+            own_read.layout = kLayoutShaderReadOnly;
+            Use combine_write{};
+            combine_write.resource = bloom_combine[level];
+            combine_write.stages = resonate::render::kStageColorOutput;
+            combine_write.access = resonate::render::kAccessColorWrite;
+            combine_write.layout = kLayoutColorAttachment;
+            Use up_reads[2] = {lifted_read, own_read};
+            resonate::render::PassDesc up{};
+            up.name = "bloom-up";
+            up.reads = up_reads;
+            up.read_count = 2U;
+            up.writes = &combine_write;
+            up.write_count = 1U;
+            up.context = this;
+            up.execute = up_entries[level];
+            graph.addPass(up);
+            if (level == 0U)
+            {
+                break;
+            }
+        }
     }
 
     /* The tonemap pass writes the LDR scene; bloom's output feeds it when the
@@ -1028,7 +1083,7 @@ bool RenderSystem::Impl::initialize()
     std::uint32_t composite_read_count = 1U;
     if (bloom)
     {
-        composite_reads[composite_read_count].resource = blur_b_resource;
+        composite_reads[composite_read_count].resource = bloom_combine[0];
         composite_reads[composite_read_count].stages = resonate::render::kStageFragment;
         composite_reads[composite_read_count].access = resonate::render::kAccessShaderRead;
         composite_reads[composite_read_count].layout = kLayoutShaderReadOnly;
@@ -1678,8 +1733,10 @@ bool RenderSystem::Impl::ensurePipelines()
         readFile(std::filesystem::path(directory) / "post.postVertex.spv");
     const std::vector<char> bright_spirv =
         readFile(std::filesystem::path(directory) / "post.brightFragment.spv");
-    const std::vector<char> blur_spirv =
-        readFile(std::filesystem::path(directory) / "post.blurFragment.spv");
+    const std::vector<char> bloom_down_spirv =
+        readFile(std::filesystem::path(directory) / "post.bloomDownFragment.spv");
+    const std::vector<char> bloom_up_spirv =
+        readFile(std::filesystem::path(directory) / "post.bloomUpFragment.spv");
     const std::vector<char> composite_spirv =
         readFile(std::filesystem::path(directory) / "post.tonemapFragment.spv");
     const std::vector<char> fxaa_spirv =
@@ -1692,9 +1749,9 @@ bool RenderSystem::Impl::ensurePipelines()
         readFile(std::filesystem::path(directory) / "ui.uiFragment.spv");
     if (vertex_spirv.empty() || fragment_spirv.empty() || shadow_vertex_spirv.empty() ||
         shadow_fragment_spirv.empty() || build_spirv.empty() || cull_spirv.empty() ||
-        post_vertex_spirv.empty() || bright_spirv.empty() || blur_spirv.empty() ||
-        composite_spirv.empty() || fxaa_spirv.empty() || blend_spirv.empty() ||
-        ui_vertex_spirv.empty() || ui_fragment_spirv.empty())
+        post_vertex_spirv.empty() || bright_spirv.empty() || bloom_down_spirv.empty() ||
+        bloom_up_spirv.empty() || composite_spirv.empty() || fxaa_spirv.empty() ||
+        blend_spirv.empty() || ui_vertex_spirv.empty() || ui_fragment_spirv.empty())
     {
         complain("shader files missing; run `xmake slang`");
         pipelines_failed = true;
@@ -1709,7 +1766,8 @@ bool RenderSystem::Impl::ensurePipelines()
     ResonateRenderShader cull{};
     ResonateRenderShader post_vertex{};
     ResonateRenderShader bright{};
-    ResonateRenderShader blur{};
+    ResonateRenderShader bloom_down{};
+    ResonateRenderShader bloom_up{};
     ResonateRenderShader composite{};
     ResonateRenderShader fxaa{};
     ResonateRenderShader blend{};
@@ -1733,8 +1791,10 @@ bool RenderSystem::Impl::ensurePipelines()
                               post_vertex_spirv.size(), &post_vertex) != RESONATE_OK ||
         device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, bright_spirv.data(),
                               bright_spirv.size(), &bright) != RESONATE_OK ||
-        device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, blur_spirv.data(),
-                              blur_spirv.size(), &blur) != RESONATE_OK ||
+        device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, bloom_down_spirv.data(),
+                              bloom_down_spirv.size(), &bloom_down) != RESONATE_OK ||
+        device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, bloom_up_spirv.data(),
+                              bloom_up_spirv.size(), &bloom_up) != RESONATE_OK ||
         device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, composite_spirv.data(),
                               composite_spirv.size(), &composite) != RESONATE_OK ||
         device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, fxaa_spirv.data(),
@@ -1829,19 +1889,21 @@ bool RenderSystem::Impl::ensurePipelines()
         return false;
     }
 
-    /* The tonemap and FXAA passes write LDR targets; the bright and blur passes
-       write the bloom chain's own half-float targets, whatever format the scene
-       HDR target uses. Only the final blend owns the canvas, so its pipeline
-       names the swapchain format. */
-    const ResonateRenderFormat post_targets[5] = {RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
-                                                  RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+    /* The tonemap and FXAA passes write LDR targets; the bloom passes write the
+       pyramid's own R11G11B10F images, whatever format the scene HDR target
+       uses. Only the final blend owns the canvas, so its pipeline names the
+       swapchain format. */
+    const ResonateRenderFormat post_targets[6] = {RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT,
+                                                  RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT,
+                                                  RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT,
                                                   RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
                                                   RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
                                                   RESONATE_RENDER_FORMAT_UNKNOWN};
-    ResonateRenderShader* post_fragments[5] = {&bright, &blur, &composite, &fxaa, &blend};
-    ResonateRenderPipeline* post_pipelines[5] = {&bright_pipeline, &blur_pipeline,
-                                                 &composite_pipeline, &fxaa_pipeline,
-                                                 &blend_pipeline};
+    ResonateRenderShader* post_fragments[6] = {&bright, &bloom_down, &bloom_up,  &composite,
+                                               &fxaa,   &blend};
+    ResonateRenderPipeline* post_pipelines[6] = {&bright_pipeline,     &bloom_down_pipeline,
+                                                 &bloom_up_pipeline,   &composite_pipeline,
+                                                 &fxaa_pipeline,       &blend_pipeline};
 
     /* The fullscreen triangle carries its positions and UVs in a vertex buffer,
        so the vertex stage needs no base-vertex builtin (shaderDrawParameters is
@@ -1882,7 +1944,7 @@ bool RenderSystem::Impl::ensurePipelines()
     post_stream.attribute_count = 2U;
     post_stream.attributes = post_attributes;
 
-    for (std::uint32_t i = 0; i < 5U; ++i)
+    for (std::uint32_t i = 0; i < 6U; ++i)
     {
         ResonateRenderGraphicsPipelineDesc post_desc{};
         post_desc.struct_size = sizeof(post_desc);
@@ -2854,7 +2916,7 @@ void RenderSystem::Impl::drawUi(GraphExecuteContext& commands)
 void RenderSystem::Impl::runPost(GraphExecuteContext& commands, ResourceId target,
                                  ResonateRenderPipeline pipeline, std::uint32_t input_slot,
                                  std::uint32_t bloom_slot, std::uint32_t ui_slot,
-                                 const Vec4& params)
+                                 const Vec4& params, bool full_viewport)
 {
     ResonateRenderDevice& device = *commands.device;
 
@@ -2862,9 +2924,10 @@ void RenderSystem::Impl::runPost(GraphExecuteContext& commands, ResourceId targe
     pass.struct_size = sizeof(pass);
     pass.color = target == canvas_resource ? ResonateRenderImage{} : commands.image(target);
     pass.clear_color = kClearColor;
-    /* Every pass but the final blend renders into the scaled sub-rectangle; the
-       blend is what magnifies it to the output. */
-    if (target != canvas_resource)
+    /* The scene-scaled passes render into the scaled sub-rectangle and the blend
+       magnifies it to the output; the bloom pyramid owns its whole target at a
+       fixed size and must not follow the scale. */
+    if (target != canvas_resource && !full_viewport)
     {
         pass.viewport_width = render_width;
         pass.viewport_height = render_height;
@@ -2973,27 +3036,42 @@ void RenderSystem::Impl::prepareEntry(void* context, GraphExecuteContext& comman
 void RenderSystem::Impl::brightEntry(void* context, GraphExecuteContext& commands)
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
+    /* The scene occupies the scaled sub-rectangle of the HDR target; the bright
+       pass reads that window and writes the pyramid's base level in full. */
     const float uv_x = static_cast<float>(self->render_width) / static_cast<float>(self->target_width);
     const float uv_y = static_cast<float>(self->render_height) / static_cast<float>(self->target_height);
-    self->runPost(commands, self->bright_resource, self->bright_pipeline,
+    self->runPost(commands, self->bloom_level[0], self->bright_pipeline,
                   commands.imageSlot(self->hdr_resource), 0U, 0U,
-                  Vec4{self->features.bloom_threshold, uv_x, 0.0F, uv_y});
+                  Vec4{self->features.bloom_threshold, uv_x, 0.0F, uv_y}, true);
 }
 
-void RenderSystem::Impl::blurHEntry(void* context, GraphExecuteContext& commands)
+template <std::uint32_t Level>
+void RenderSystem::Impl::bloomDownEntry(void* context, GraphExecuteContext& commands)
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
-    self->runPost(commands, self->blur_a_resource, self->blur_pipeline,
-                  commands.imageSlot(self->bright_resource), 0U, 0U,
-                  Vec4{1.0F / static_cast<float>(self->bloom_width), 0.0F, 0.0F, 0.0F});
+    self->runPost(
+        commands, self->bloom_level[Level], self->bloom_down_pipeline,
+        commands.imageSlot(self->bloom_level[Level - 1U]), 0U, 0U,
+        Vec4{1.0F / static_cast<float>(self->bloom_width[Level - 1U]),
+             1.0F / static_cast<float>(self->bloom_height[Level - 1U]), 0.0F, 0.0F},
+        true);
 }
 
-void RenderSystem::Impl::blurVEntry(void* context, GraphExecuteContext& commands)
+template <std::uint32_t Level>
+void RenderSystem::Impl::bloomUpEntry(void* context, GraphExecuteContext& commands)
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
-    self->runPost(commands, self->blur_b_resource, self->blur_pipeline,
-                  commands.imageSlot(self->blur_a_resource), 0U, 0U,
-                  Vec4{0.0F, 1.0F / static_cast<float>(self->bloom_height), 0.0F, 0.0F});
+    /* The smallest level is lifted first; from there the accumulated image of
+       the level below is what each pass folds in. Either way the source is the
+       size of level Level+1. */
+    const ResourceId lifted = Level + 2U == kBloomLevels
+                                  ? self->bloom_level[kBloomLevels - 1U]
+                                  : self->bloom_combine[Level + 1U];
+    self->runPost(commands, self->bloom_combine[Level], self->bloom_up_pipeline,
+                  commands.imageSlot(lifted), commands.imageSlot(self->bloom_level[Level]), 0U,
+                  Vec4{1.0F / static_cast<float>(self->bloom_width[Level + 1U]),
+                       1.0F / static_cast<float>(self->bloom_height[Level + 1U]), 0.0F, 0.0F},
+                  true);
 }
 
 namespace
@@ -3036,7 +3114,7 @@ void RenderSystem::Impl::compositeEntry(void* context, GraphExecuteContext& comm
     const float encode = surfaceEncodes(*commands.device) ? 0.0F : 1.0F;
     self->runPost(commands, self->ldr_resource, self->composite_pipeline,
                   commands.imageSlot(self->hdr_resource),
-                  bloom ? commands.imageSlot(self->blur_b_resource) : 0U, 0U,
+                  bloom ? commands.imageSlot(self->bloom_combine[0]) : 0U, 0U,
                   Vec4{encode, uv_x, bloom ? 1.0F : 0.0F, uv_y});
 }
 
@@ -3747,8 +3825,21 @@ bool RenderSystem::Impl::prepareTargets(uint32_t width, uint32_t height)
         }
         target_width = width;
         target_height = height;
-        bloom_width = std::max(1U, width / kBloomDivisor);
-        bloom_height = std::max(1U, height / kBloomDivisor);
+        /* The pyramid's base follows the canvas aspect, not its extent: a
+           384-line bloom on a 1080-line canvas is 853 wide at 16:9, and a
+           canvas shorter than the base borrows its own height so the pyramid
+           never oversamples the frame. Each level then halves. */
+        const std::uint32_t base_height =
+            std::min(kBloomBaseHeight, std::max(1U, height));
+        bloom_width[0] = std::max(
+            1U, static_cast<std::uint32_t>(static_cast<std::uint64_t>(base_height) * width / height +
+                                           0.5));
+        bloom_height[0] = base_height;
+        for (std::uint32_t level = 1U; level < kBloomLevels; ++level)
+        {
+            bloom_width[level] = std::max(1U, bloom_width[level - 1U] / 2U);
+            bloom_height[level] = std::max(1U, bloom_height[level - 1U] / 2U);
+        }
         if (trace_rebuild)
         {
             std::fprintf(stderr, "renderer: rebuild reset, initializing\n");

@@ -312,10 +312,92 @@ TEST_CASE("offscreen: live render settings apply between frames", "[render][offs
     CHECK(height == 96U);
 }
 
+/* The bloom pyramid has to add light and keep the frame valid at a canvas far
+   smaller than its base level: the chain samples every level and the tonemap
+   composites the top of it. */
+TEST_CASE("offscreen: bloom adds light to a lit scene", "[render][offscreen]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    REQUIRE(resonate::render::publishOffscreen(host->capabilities(), 128U, 96U) == RESONATE_OK);
+    REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+    REQUIRE(host->resolve() == RESONATE_OK);
+    REQUIRE(host->attachAll() == RESONATE_OK);
+
+    auto* device = static_cast<ResonateRenderDevice*>(resonate_capability_find(
+        host->capabilities(), resonate::detail::CapabilityTraits<ResonateRenderDevice>::id.value(),
+        1U, nullptr));
+    REQUIRE(device != nullptr);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(world));
+
+    const auto camera = world.create();
+    world.add(camera, resonate::hierarchy::WorldTransform{translation(0.0F, 2.5F, -7.0F)});
+    world.add(camera, resonate::render::Camera{});
+    const auto cube = world.create();
+    world.add(cube, resonate::hierarchy::WorldTransform{translation(0.0F, 2.5F, 0.0F)});
+    world.add(cube, resonate::render::MeshInstance{1U, Vec3{1.0F, 1.0F, 1.0F}});
+    world.add(cube, resonate::render::Material{0U, Vec3{1.0F, 1.0F, 1.0F}});
+    const auto sun = world.create();
+    world.add(sun, resonate::render::DirectionalLight{Vec3{0.0F, 0.0F, 1.0F},
+                                                      Vec3{4.0F, 4.0F, 4.0F}, 2.0F});
+
+    resonate::renderer::RenderSystem render_system;
+    render_system.setRegistry(host->capabilities());
+    std::string error;
+    resonate::renderer::FeatureStack stack;
+    REQUIRE(resonate::renderer::parseFeatureStack("tonemap", "none", stack, error));
+    render_system.setFeatures(stack);
+    render_system.warmup();
+
+    std::vector<std::uint8_t> pixels(128U * 96U * 4U);
+    const auto luma = [&]() -> std::uint64_t
+    {
+        std::uint32_t read_width = 0;
+        std::uint32_t read_height = 0;
+        REQUIRE(device->readback_canvas(device->self, pixels.data(),
+                                        static_cast<std::uint64_t>(pixels.size()), &read_width,
+                                        &read_height) == RESONATE_OK);
+        REQUIRE(read_width == 128U);
+        std::uint64_t total = 0U;
+        for (std::size_t index = 0U; index + 2U < pixels.size(); index += 4U)
+        {
+            total += pixels[index] + pixels[index + 1U] + pixels[index + 2U];
+        }
+        return total;
+    };
+    const auto draw = [&](int frames)
+    {
+        for (int frame = 0; frame < frames; ++frame)
+        {
+            render_system.run(world);
+            render_system.waitIdle();
+        }
+    };
+
+    draw(2);
+    const std::uint64_t plain = luma();
+
+    REQUIRE(resonate::renderer::parseFeatureStack("bloom, tonemap", "none", stack, error));
+    render_system.setFeatures(stack);
+    draw(2);
+    const std::uint64_t bloomed = luma();
+    render_system.release();
+    host->detachAll();
+    CAPTURE(plain, bloomed);
+    CHECK(bloomed > plain + plain / 50U);
+}
+
 /* The pass identity's action half (R5): what an attachment loads and stores is
    the caller's choice per pass, and a pipeline built for the defaults runs in
    every such pass. The readback proves the load really kept the frame the
    pass before it left. */
+
 TEST_CASE("offscreen: a loading pass keeps what the frame before it left",
           "[render][offscreen]")
 {
