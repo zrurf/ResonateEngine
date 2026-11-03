@@ -109,6 +109,12 @@ class RenderSystem
        unknown name. The graph rebuilds on the next frame. */
     [[nodiscard]] bool setHdrFormat(const std::string& name, std::string& out_error);
 
+    /* How a scene rendered below the output extent is magnified: "easu" runs
+       FSR's edge-directed upscale and RCAS sharpen, "bilinear" keeps the plain
+       magnify for a GPU that cannot afford the extra taps. Answers false with
+       the reason for an unknown name. The graph rebuilds on the next frame. */
+    [[nodiscard]] bool setUpscale(const std::string& name, std::string& out_error);
+
     /* The shadow map's extent in texels, square; zero keeps the tier's choice
        (1024 on a mobile GPU, 2048 otherwise). The graph rebuilds on the next
        frame. */

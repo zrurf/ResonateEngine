@@ -393,6 +393,115 @@ TEST_CASE("offscreen: bloom adds light to a lit scene", "[render][offscreen]")
     CHECK(bloomed > plain + plain / 50U);
 }
 
+/* The upscale path's acceptance: at the same render scale, EASU and RCAS leave
+   more edge energy in the frame than the bilinear magnify they replace. */
+TEST_CASE("offscreen: the EASU upscale is sharper than a bilinear magnify",
+          "[render][offscreen]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    REQUIRE(resonate::render::publishOffscreen(host->capabilities(), 256U, 192U) == RESONATE_OK);
+    REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+    REQUIRE(host->resolve() == RESONATE_OK);
+    REQUIRE(host->attachAll() == RESONATE_OK);
+
+    auto* device = static_cast<ResonateRenderDevice*>(resonate_capability_find(
+        host->capabilities(), resonate::detail::CapabilityTraits<ResonateRenderDevice>::id.value(),
+        1U, nullptr));
+    REQUIRE(device != nullptr);
+
+    resonate::ecs::World world(resonate::systemAllocator());
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::renderer::RenderSystem::registerComponents(world));
+
+    const auto camera = world.create();
+    world.add(camera, resonate::hierarchy::WorldTransform{translation(0.0F, 2.5F, -7.0F)});
+    world.add(camera, resonate::render::Camera{});
+    const auto cube = world.create();
+    world.add(cube, resonate::hierarchy::WorldTransform{translation(0.0F, 2.5F, 0.0F)});
+    world.add(cube, resonate::render::MeshInstance{1U, Vec3{1.0F, 1.0F, 1.0F}});
+    world.add(cube, resonate::render::Material{0U, Vec3{1.0F, 1.0F, 1.0F}});
+    const auto sun = world.create();
+    world.add(sun, resonate::render::DirectionalLight{Vec3{0.0F, 0.0F, 1.0F},
+                                                      Vec3{2.0F, 2.0F, 2.0F}, 2.0F});
+
+    resonate::renderer::FeatureStack stack;
+    std::string error;
+    REQUIRE(resonate::renderer::parseFeatureStack("tonemap", "none", stack, error));
+
+    resonate::renderer::RenderSystem render_system;
+    render_system.setRegistry(host->capabilities());
+    render_system.setFeatures(stack);
+    /* Half scale makes the magnify's reconstruction the only difference between
+       the two frames. */
+    render_system.setRenderScale(0.5F);
+    render_system.warmup();
+
+    std::vector<std::uint8_t> pixels(256U * 192U * 4U);
+    /* Sum of the horizontal and vertical neighbour differences: a sharper frame
+       concentrates the same scene into steeper transitions. */
+    const auto edgeEnergy = [&]() -> std::uint64_t
+    {
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        REQUIRE(device->readback_canvas(device->self, pixels.data(),
+                                        static_cast<std::uint64_t>(pixels.size()), &width,
+                                        &height) == RESONATE_OK);
+        REQUIRE(width == 256U);
+        REQUIRE(height == 192U);
+        std::uint64_t total = 0U;
+        const auto at = [&](std::uint32_t x, std::uint32_t y, std::uint32_t channel)
+        { return static_cast<std::uint32_t>(pixels[(static_cast<std::size_t>(y) * width + x) * 4U +
+                                                   channel]); };
+        for (std::uint32_t y = 0U; y < height; ++y)
+        {
+            for (std::uint32_t x = 0U; x < width; ++x)
+            {
+                for (std::uint32_t channel = 0U; channel < 3U; ++channel)
+                {
+                    if (x + 1U < width)
+                    {
+                        total += at(x + 1U, y, channel) > at(x, y, channel)
+                                     ? at(x + 1U, y, channel) - at(x, y, channel)
+                                     : at(x, y, channel) - at(x + 1U, y, channel);
+                    }
+                    if (y + 1U < height)
+                    {
+                        total += at(x, y + 1U, channel) > at(x, y, channel)
+                                     ? at(x, y + 1U, channel) - at(x, y, channel)
+                                     : at(x, y, channel) - at(x, y + 1U, channel);
+                    }
+                }
+            }
+        }
+        return total;
+    };
+    const auto draw = [&](int frames)
+    {
+        for (int frame = 0; frame < frames; ++frame)
+        {
+            render_system.run(world);
+            render_system.waitIdle();
+        }
+    };
+
+    REQUIRE(render_system.setUpscale("bilinear", error));
+    draw(3);
+    const std::uint64_t bilinear = edgeEnergy();
+
+    REQUIRE(render_system.setUpscale("easu", error));
+    draw(3);
+    const std::uint64_t easu = edgeEnergy();
+
+    render_system.release();
+    host->detachAll();
+    CAPTURE(bilinear, easu);
+    CHECK(easu > bilinear + bilinear / 100U);
+}
+
 /* The pass identity's action half (R5): what an attachment loads and stores is
    the caller's choice per pass, and a pipeline built for the defaults runs in
    every such pass. The readback proves the load really kept the frame the
