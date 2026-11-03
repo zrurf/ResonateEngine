@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -482,7 +483,15 @@ struct RenderSystem::Impl
     std::uint32_t target_width = 0U;
     std::uint32_t target_height = 0U;
     /* The pyramid's per-level extents; derived from the canvas aspect once per
-       rebuild and never from the render scale. */
+       rebuild and never from the render scale. The count and base follow the
+       tier: a mobile GPU pays for every level twice (down and up). */
+    std::uint32_t bloom_level_count = kBloomLevels;
+    std::uint32_t bloom_base_height = kBloomBaseHeight;
+    /* Tuning overrides for the pyramid's shape; zero keeps the tier's. The
+       off switch is the A/B reference for the pass's cost. */
+    std::uint32_t bloom_base_override = 0U;
+    std::uint32_t bloom_levels_override = 0U;
+    bool bloom_off = false;
     std::uint32_t bloom_width[kBloomLevels] = {};
     std::uint32_t bloom_height[kBloomLevels] = {};
     /* 3D and post targets are always allocated at the target extent; the scale
@@ -517,9 +526,10 @@ struct RenderSystem::Impl
     bool present_dirty = false;
     /* "easu" magnifies with FSR's EASU and sharpens with RCAS; "bilinear"
        keeps the plain magnify (the low-end fallback, and the A/B reference). */
-    std::string upscale_mode = "easu";
-    std::string requested_upscale = "easu";
+    std::string upscale_mode = "auto";
+    std::string requested_upscale = "auto";
     bool upscale_dirty = false;
+    bool upscale_easu = false;
     /* Diagnostic: when positive, force a graph rebuild every Nth frame, which
        retires every graph image and exercises the framebuffer cache. */
     std::uint32_t rebuild_stress = 0U;
@@ -769,6 +779,19 @@ void RenderSystem::Impl::readRenderScaleOverrides()
     {
         upscale_mode = upscale;
     }
+    if (const char* base = std::getenv("RESONATE_BLOOM_BASE"))
+    {
+        bloom_base_override = static_cast<std::uint32_t>(std::max(0, std::atoi(base)));
+    }
+    if (const char* bloom = std::getenv("RESONATE_BLOOM"))
+    {
+        bloom_off = std::strcmp(bloom, "off") == 0;
+    }
+    if (const char* levels = std::getenv("RESONATE_BLOOM_LEVELS"))
+    {
+        bloom_levels_override = static_cast<std::uint32_t>(
+            std::clamp(std::atoi(levels), 2, static_cast<int>(kBloomLevels)));
+    }
 }
 
 ResonateRenderFormat RenderSystem::Impl::hdrFormat() const
@@ -806,11 +829,48 @@ bool RenderSystem::Impl::initialize()
        stack: bloom adds its extraction and blur passes, the tonemap writes the
        LDR scene, and FXAA — when enabled — antialiases that scene before any
        UI exists. The blend pass composites the UI over it into the canvas. */
-    const bool bloom = features.has("bloom");
+    const bool bloom = features.has("bloom") && !bloom_off;
     const bool fxaa = features.antialiases();
+    /* The fixed-size pyramid must also fit the device: on the Mali-G51 every
+       pass costs close to a millisecond, so the mobile tier keeps the old
+       three-pass shape at a fixed 192 lines, and the desktop one runs the full
+       six-level chain. */
+    bloom_base_height = compat_tier ? 192U : kBloomBaseHeight;
+    bloom_level_count = compat_tier ? 2U : kBloomLevels;
+    if (bloom_base_override != 0U)
+    {
+        bloom_base_height = bloom_base_override;
+    }
+    if (bloom_levels_override != 0U)
+    {
+        bloom_level_count = bloom_levels_override;
+    }
+    /* The pyramid's base follows the canvas aspect, not its extent: a 384-line
+       bloom on a 1080-line canvas is 853 wide at 16:9, and a canvas shorter
+       than the base borrows its own height so the pyramid never oversamples
+       the frame. Each level then halves. */
+    {
+        const std::uint32_t base_height =
+            std::min(bloom_base_height, std::max(1U, target_height));
+        bloom_width[0] = std::max(
+            1U,
+            static_cast<std::uint32_t>(static_cast<std::uint64_t>(base_height) * target_width /
+                                           std::max(1U, target_height) +
+                                       0.5));
+        bloom_height[0] = base_height;
+        for (std::uint32_t level = 1U; level < bloom_level_count; ++level)
+        {
+            bloom_width[level] = std::max(1U, bloom_width[level - 1U] / 2U);
+            bloom_height[level] = std::max(1U, bloom_height[level - 1U] / 2U);
+        }
+    }
+    /* EASU and RCAS cost a dozen full-resolution taps per output pixel, which a
+       mobile GPU cannot afford next to its scene: "auto" keeps the bilinear
+       magnify there and uses the reconstruction on desktop. */
+    upscale_easu = upscale_mode == "easu" || (upscale_mode == "auto" && !compat_tier);
     /* The upscale pass is part of the graph only on the EASU path; the
        bilinear fallback magnifies in the blend itself. */
-    const bool easu = upscale_mode != "bilinear";
+    const bool easu = upscale_easu;
 
     resonate::render::RenderGraph graph;
     canvas_resource = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
@@ -869,14 +929,14 @@ bool RenderSystem::Impl::initialize()
     {
         /* R11G11B10F: the pack is a third of RGBA16F and its precision covers a
            glow that is about to be tonemapped anyway. */
-        for (std::uint32_t level = 0; level < kBloomLevels; ++level)
+        for (std::uint32_t level = 0; level < bloom_level_count; ++level)
         {
             const std::string name = "bloom_" + std::to_string(level);
             bloom_level[level] = graph.declareImage(
                 name.c_str(), RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT, bloom_width[level],
                 bloom_height[level],
                 RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
-            if (level + 1U < kBloomLevels)
+            if (level + 1U < bloom_level_count)
             {
                 const std::string combine = "bloom_up_" + std::to_string(level);
                 bloom_combine[level] = graph.declareImage(
@@ -1041,7 +1101,7 @@ bool RenderSystem::Impl::initialize()
             &Impl::bloomUpEntry<0U>, &Impl::bloomUpEntry<1U>, &Impl::bloomUpEntry<2U>,
             &Impl::bloomUpEntry<3U>, &Impl::bloomUpEntry<4U>};
 
-        for (std::uint32_t level = 1; level < kBloomLevels; ++level)
+        for (std::uint32_t level = 1; level < bloom_level_count; ++level)
         {
             Use source_read{};
             source_read.resource = bloom_level[level - 1U];
@@ -1066,11 +1126,12 @@ bool RenderSystem::Impl::initialize()
 
         /* Smallest to largest: level 5 is the source of the first lift, and
            each pass folds its own level into the accumulated image. */
-        for (std::uint32_t level = kBloomLevels - 2U;; --level)
+        for (std::uint32_t level = bloom_level_count - 2U;; --level)
         {
             Use lifted_read{};
-            lifted_read.resource =
-                level + 2U == kBloomLevels ? bloom_level[kBloomLevels - 1U] : bloom_combine[level + 1U];
+            lifted_read.resource = level + 2U == bloom_level_count
+                                       ? bloom_level[bloom_level_count - 1U]
+                                       : bloom_combine[level + 1U];
             lifted_read.stages = resonate::render::kStageFragment;
             lifted_read.access = resonate::render::kAccessShaderRead;
             lifted_read.layout = kLayoutShaderReadOnly;
@@ -3127,8 +3188,8 @@ void RenderSystem::Impl::bloomUpEntry(void* context, GraphExecuteContext& comman
     /* The smallest level is lifted first; from there the accumulated image of
        the level below is what each pass folds in. Either way the source is the
        size of level Level+1. */
-    const ResourceId lifted = Level + 2U == kBloomLevels
-                                  ? self->bloom_level[kBloomLevels - 1U]
+    const ResourceId lifted = Level + 2U == self->bloom_level_count
+                                  ? self->bloom_level[self->bloom_level_count - 1U]
                                   : self->bloom_combine[Level + 1U];
     self->runPost(commands, self->bloom_combine[Level], self->bloom_up_pipeline,
                   commands.imageSlot(lifted), commands.imageSlot(self->bloom_level[Level]), 0U,
@@ -3238,7 +3299,7 @@ void RenderSystem::Impl::blendEntry(void* context, GraphExecuteContext& commands
     /* The upscale pass already magnified the scene; this pass sharpens that
        image and puts the UI over it. The bilinear fallback magnifies here
        instead, so z/w then carry the uv window the scene occupies. */
-    const bool upscaled = self->scene_up_resource != resonate::render::kInvalidResource;
+    const bool upscaled = self->upscale_easu;
     const ResourceId scene =
         upscaled ? self->scene_up_resource
                  : (self->features.antialiases() ? self->ldr_aa_resource : self->ldr_resource);
@@ -3353,9 +3414,9 @@ void RenderSystem::setTargetFrameMs(float milliseconds)
 
 bool RenderSystem::setUpscale(const std::string& name, std::string& out_error)
 {
-    if (name != "easu" && name != "bilinear")
+    if (name != "auto" && name != "easu" && name != "bilinear")
     {
-        out_error = "unknown upscale '" + name + "' (easu or bilinear)";
+        out_error = "unknown upscale '" + name + "' (auto, easu or bilinear)";
         return false;
     }
     std::lock_guard<std::mutex> lock(impl_->settings_mutex);
@@ -3940,21 +4001,6 @@ bool RenderSystem::Impl::prepareTargets(uint32_t width, uint32_t height)
         }
         target_width = width;
         target_height = height;
-        /* The pyramid's base follows the canvas aspect, not its extent: a
-           384-line bloom on a 1080-line canvas is 853 wide at 16:9, and a
-           canvas shorter than the base borrows its own height so the pyramid
-           never oversamples the frame. Each level then halves. */
-        const std::uint32_t base_height =
-            std::min(kBloomBaseHeight, std::max(1U, height));
-        bloom_width[0] = std::max(
-            1U, static_cast<std::uint32_t>(static_cast<std::uint64_t>(base_height) * width / height +
-                                           0.5));
-        bloom_height[0] = base_height;
-        for (std::uint32_t level = 1U; level < kBloomLevels; ++level)
-        {
-            bloom_width[level] = std::max(1U, bloom_width[level - 1U] / 2U);
-            bloom_height[level] = std::max(1U, bloom_height[level - 1U] / 2U);
-        }
         if (trace_rebuild)
         {
             std::fprintf(stderr, "renderer: rebuild reset, initializing\n");

@@ -283,6 +283,10 @@ void applyDebugProperties()
         {"debug.resonate.tgfx_disable", "RESONATE_TGFX_DISABLE"},
         {"debug.resonate.tgfx_sync", "RESONATE_TGFX_SYNC"},
         {"debug.resonate.msaa", "RESONATE_MSAA", true},
+        {"debug.resonate.upscale", "RESONATE_UPSCALE", true},
+        {"debug.resonate.bloom", "RESONATE_BLOOM", true},
+        {"debug.resonate.bloom_base", "RESONATE_BLOOM_BASE", true},
+        {"debug.resonate.bloom_levels", "RESONATE_BLOOM_LEVELS", true},
         {"debug.resonate.rebuild_stress", "RESONATE_REBUILD_STRESS", true},
     };
     for (const Property& entry : kProperties)
