@@ -196,6 +196,14 @@ ResonateStatus barrierBatch(void* self, const ResonateRenderBarrierDesc* descs, 
                : RESONATE_E_STATE;
 }
 
+ResonateStatus setShadowTable(void* self, const ResonateRenderImage* images, uint32_t count)
+{
+    auto* state = static_cast<State*>(self);
+    return state != nullptr && state->context != nullptr
+               ? state->context->setShadowTable(images, count)
+               : RESONATE_E_STATE;
+}
+
 ResonateStatus bindPipeline(void* self, ResonateRenderPipeline pipeline)
 {
     auto* state = static_cast<State*>(self);
@@ -398,6 +406,7 @@ ResonateRenderDevice g_device = {
     &surfaceFormat,
     &setPresentMode,
     &barrierBatch,
+    &setShadowTable,
 };
 
 } // namespace

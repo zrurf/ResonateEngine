@@ -191,6 +191,7 @@ class Context
        same direction merge into one submission with the union of their stage
        and access masks. */
     ResonateStatus barrierBatch(const ResonateRenderBarrierDesc* descs, uint32_t count);
+    ResonateStatus setShadowTable(const ResonateRenderImage* images, uint32_t count);
     ResonateStatus bindPipeline(ResonateRenderPipeline handle);
     ResonateStatus bindVertexBuffer(ResonateRenderBuffer handle, uint64_t offset);
     ResonateStatus bindIndexBuffer(ResonateRenderBuffer handle, uint64_t offset);
@@ -469,7 +470,12 @@ class Context
        a storage-buffer array read through the table, and the vertex stage
        cannot run without the view projection. */
     static constexpr uint32_t kFrameBinding = 6;
-    static constexpr uint32_t kTableBindingCount = kFrameBinding + 1;
+    /* The shadow maps as hardware comparison samplers, in cascade order. They
+       are depth images: one filtered compare tap is a 2x2 PCF, which is why
+       they are not read through the image table. */
+    static constexpr uint32_t kShadowTableBinding = 7;
+    static constexpr uint32_t kShadowTableSize = 3;
+    static constexpr uint32_t kTableBindingCount = kShadowTableBinding + 1;
     /* The table is written while earlier frames may still read it; with
        UPDATE_AFTER_BIND devices that is legal, without it the write waits for
        idle first (table writes are rare: creation, destruction, rebinding). */
@@ -490,6 +496,7 @@ class Context
     VmaAllocation_T* table_dummy_allocation_ = nullptr;
     VkSampler table_sampler_linear_ = VK_NULL_HANDLE;
     VkSampler table_sampler_nearest_ = VK_NULL_HANDLE;
+    VkSampler shadow_sampler_ = VK_NULL_HANDLE;
 
     /* A device without descriptor indexing has no partially bound table, so
        every image slot starts on a 1x1 dummy and destroyed images go back to
@@ -499,6 +506,13 @@ class Context
     VmaAllocation_T* table_dummy_image_allocation_ = nullptr;
     VkImageView table_dummy_view_ = VK_NULL_HANDLE;
     ResonateStatus createTableImageDummy();
+    /* A depth dummy backs the shadow table's unwritten entries: a 1.0 depth
+       reads as lit, so a cascade nobody bound never darkens the frame. */
+    VkImage shadow_dummy_image_ = VK_NULL_HANDLE;
+    VmaAllocation_T* shadow_dummy_allocation_ = nullptr;
+    VkImageView shadow_dummy_view_ = VK_NULL_HANDLE;
+    ResonateStatus createShadowDummy();
+    void writeShadowSlot(uint32_t slot, VkImageView view);
 
     /* The open frame and pass, and the state their commands use. One command
        buffer per frame: begin_frame opens it, present closes and submits it. */

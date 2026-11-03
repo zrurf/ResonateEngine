@@ -473,6 +473,13 @@ typedef struct ResonateRenderDevice
        the caller falls back to barrier(). */
     ResonateStatus (*barrier_batch)(void* self, const ResonateRenderBarrierDesc* descs,
                                     uint32_t count);
+
+    /* Tail: the shadow maps as hardware comparison samplers. `images` holds up
+       to three depth maps in cascade order; the shaders read them through a
+       dedicated shadow table, where one filtered compare tap is a 2x2 PCF.
+       An older writer stops before this and the shaders' manual taps stay. */
+    ResonateStatus (*set_shadow_table)(void* self, const ResonateRenderImage* images,
+                                       uint32_t count);
 } ResonateRenderDevice;
 
 /* The resource table is partially bound and sampled-image indices may differ

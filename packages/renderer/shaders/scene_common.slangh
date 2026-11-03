@@ -109,11 +109,14 @@ uint cascadeOf(float view_depth, FrameData frame)
     return 2;
 }
 
-// Four-tap PCF against one cascade's shadow map; the map was rendered from the
-// light's view, so the shadow coordinates come from the same matrix. The tap
-// spacing is the pixel's own footprint in the map, which keeps the kernel right
-// at any map resolution.
-float pcfOf(uint slot, float2 uv, float receiver)
+[[vk::binding(7, 0)]] Sampler2DShadow shadow_table[3];
+
+// Four hardware comparison taps against one cascade's map. The map was rendered
+// from the light's view, so the shadow coordinates come from the same matrix;
+// the tap spacing is the pixel's own footprint in the map. Each tap is a 2x2
+// depth compare interpolated by the sampler, so the kernel is a smooth 4x4 PCF
+// for the cost of four fetches.
+float pcfOf(uint cascade, float2 uv, float receiver)
 {
     float sum = 0.0;
     float2 texel = max(abs(ddx(uv)), abs(ddy(uv)));
@@ -121,8 +124,7 @@ float pcfOf(uint slot, float2 uv, float receiver)
                             float2(0.5, 0.5)};
     for (uint tap = 0; tap < 4; ++tap)
     {
-        float depth = image_table[slot].Sample(uv + TAPS[tap] * texel).r;
-        sum += receiver - 0.003 > depth ? 0.0 : 1.0;
+        sum += shadow_table[cascade].SampleCmpLevelZero(uv + TAPS[tap] * texel, receiver - 0.003);
     }
     return sum * 0.25;
 }

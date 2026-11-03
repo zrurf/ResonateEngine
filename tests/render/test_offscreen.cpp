@@ -502,6 +502,56 @@ TEST_CASE("offscreen: the EASU upscale is sharper than a bilinear magnify",
     CHECK(easu > bilinear + bilinear / 100U);
 }
 
+/* The shadow table takes depth maps only, at most one per cascade, and an
+   older device without the entry point stays usable. */
+TEST_CASE("offscreen: the shadow table binds depth maps", "[render][offscreen]")
+{
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    REQUIRE(resonate::render::publishOffscreen(host->capabilities(), 64U, 64U) == RESONATE_OK);
+    REQUIRE(host->discover(plugin_directory) == RESONATE_OK);
+    REQUIRE(host->resolve() == RESONATE_OK);
+    REQUIRE(host->attachAll() == RESONATE_OK);
+
+    auto* device = static_cast<ResonateRenderDevice*>(resonate_capability_find(
+        host->capabilities(), resonate::detail::CapabilityTraits<ResonateRenderDevice>::id.value(),
+        1U, nullptr));
+    REQUIRE(device != nullptr);
+    REQUIRE(device->header.struct_size >= offsetof(ResonateRenderDevice, set_shadow_table) +
+                                             sizeof(device->set_shadow_table));
+    REQUIRE(device->set_shadow_table != nullptr);
+    REQUIRE(device->attach_offscreen(device->self, 64U, 64U) == RESONATE_OK);
+
+    ResonateRenderImageDesc color_desc{};
+    color_desc.struct_size = sizeof(color_desc);
+    color_desc.format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
+    color_desc.width = 8U;
+    color_desc.height = 8U;
+    color_desc.usage = RESONATE_RENDER_IMAGE_SAMPLED;
+    ResonateRenderImage color{};
+    REQUIRE(device->create_image(device->self, &color_desc, &color) == RESONATE_OK);
+    CHECK(device->set_shadow_table(device->self, &color, 1U) == RESONATE_E_INVALID);
+
+    ResonateRenderImageDesc depth_desc{};
+    depth_desc.struct_size = sizeof(depth_desc);
+    depth_desc.format = RESONATE_RENDER_FORMAT_D32_SFLOAT;
+    depth_desc.width = 8U;
+    depth_desc.height = 8U;
+    depth_desc.usage = RESONATE_RENDER_IMAGE_DEPTH_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED;
+    ResonateRenderImage depth{};
+    REQUIRE(device->create_image(device->self, &depth_desc, &depth) == RESONATE_OK);
+    CHECK(device->set_shadow_table(device->self, &depth, 1U) == RESONATE_OK);
+    CHECK(device->set_shadow_table(device->self, nullptr, 1U) == RESONATE_E_INVALID);
+    CHECK(device->set_shadow_table(device->self, &depth, 0U) == RESONATE_E_INVALID);
+
+    device->destroy_image(device->self, depth);
+    device->destroy_image(device->self, color);
+    host->detachAll();
+}
+
 /* The pass identity's action half (R5): what an attachment loads and stores is
    the caller's choice per pass, and a pipeline built for the defaults runs in
    every such pass. The readback proves the load really kept the frame the

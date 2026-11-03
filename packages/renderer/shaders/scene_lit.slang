@@ -4,8 +4,8 @@
 // compat fragment and the Mali-class driver never loads it.
 #include "scene_common.slangh"
 
-// The per-pixel cascade slot is marked non-uniform at the access site.
-float pcfOfNonUniform(uint slot, float2 uv, float receiver)
+// The per-pixel cascade index is marked non-uniform at the access site.
+float pcfOfNonUniform(uint cascade, float2 uv, float receiver)
 {
     float sum = 0.0;
     float2 texel = max(abs(ddx(uv)), abs(ddy(uv)));
@@ -13,8 +13,8 @@ float pcfOfNonUniform(uint slot, float2 uv, float receiver)
                             float2(0.5, 0.5)};
     for (uint tap = 0; tap < 4; ++tap)
     {
-        float depth = image_table[NonUniformResourceIndex(slot)].Sample(uv + TAPS[tap] * texel).r;
-        sum += receiver - 0.003 > depth ? 0.0 : 1.0;
+        sum += shadow_table[NonUniformResourceIndex(cascade)].SampleCmpLevelZero(
+            uv + TAPS[tap] * texel, receiver - 0.003);
     }
     return sum * 0.25;
 }
@@ -31,7 +31,7 @@ float shadowFactor(float3 world_position, float view_depth, FrameData frame)
     }
     float2 uv = float2(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * 0.5 + 0.5);
     float receiver = shadow_ndc.z;
-    return pcfOfNonUniform(push.slots2[cascade + 1], uv, receiver);
+    return pcfOfNonUniform(cascade, uv, receiver);
 }
 
 [shader("fragment")]

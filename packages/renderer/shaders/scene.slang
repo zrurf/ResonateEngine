@@ -42,7 +42,7 @@ float shadowFactorCompat(float3 world_position, float view_depth, FrameData fram
     }
     float2 uv = float2(shadow_ndc.x * 0.5 + 0.5, shadow_ndc.y * 0.5 + 0.5);
     float receiver = shadow_ndc.z;
-    return pcfOf(push.slots2[1], uv, receiver);
+    return pcfOf(0, uv, receiver);
 }
 
 [shader("fragment")]

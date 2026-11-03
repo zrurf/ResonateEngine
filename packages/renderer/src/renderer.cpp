@@ -473,6 +473,11 @@ struct RenderSystem::Impl
     ResourceId bloom_level[kBloomLevels] = {};
     ResourceId bloom_combine[kBloomLevels - 1] = {};
     ResourceId shadow_resource[3] = {0, 0, 0};
+    /* The handles last handed to the device's shadow table; a graph rebuild
+       changes them, and the comparison table is rewritten only then. */
+    ResonateRenderImage shadow_binding[3] = {};
+    std::uint32_t shadow_binding_count = 0U;
+    bool shadow_table_supported = false;
     ResourceId boxes_resource = 0;
     ResourceId grid_resource = 0;
     ResourceId indices_resource = 0;
@@ -2418,6 +2423,11 @@ void RenderSystem::Impl::resolveCapabilities()
     if (instance != nullptr)
     {
         device = static_cast<ResonateRenderDevice*>(instance);
+        shadow_table_supported =
+            device->header.struct_size >=
+                offsetof(ResonateRenderDevice, set_shadow_table) +
+                    sizeof(device->set_shadow_table) &&
+            device->set_shadow_table != nullptr;
     }
     instance = resonate_capability_find(
         registry, resonate::detail::CapabilityTraits<ResonateRenderCanvas>::id.value(), 1U,
@@ -2900,6 +2910,32 @@ void RenderSystem::Impl::runShadows(GraphExecuteContext& commands, std::uint32_t
 void RenderSystem::Impl::drawScene(GraphExecuteContext& commands)
 {
     ResonateRenderDevice& device = *commands.device;
+
+    /* The comparison table holds this frame's shadow maps. The handles change
+       only with a graph rebuild, so the (possibly idle-waiting) write happens
+       once per rebuild rather than per frame. */
+    if (shadow_table_supported)
+    {
+        ResonateRenderImage images[3] = {};
+        const std::uint32_t count = compat_tier ? 1U : kCascades;
+        bool changed = count != shadow_binding_count;
+        for (std::uint32_t cascade = 0; cascade < count; ++cascade)
+        {
+            images[cascade] = commands.image(shadow_resource[cascade]);
+            changed = changed || images[cascade].value != shadow_binding[cascade].value;
+        }
+        if (changed)
+        {
+            if (device.set_shadow_table(device.self, images, count) == RESONATE_OK)
+            {
+                for (std::uint32_t cascade = 0; cascade < count; ++cascade)
+                {
+                    shadow_binding[cascade] = images[cascade];
+                }
+                shadow_binding_count = count;
+            }
+        }
+    }
 
     ResonateRenderPassDesc pass{};
     pass.struct_size = sizeof(pass);

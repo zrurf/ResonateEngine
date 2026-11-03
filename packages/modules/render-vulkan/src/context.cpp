@@ -295,6 +295,18 @@ Context::~Context()
         {
             vkDestroySampler(device_, table_sampler_linear_, nullptr);
         }
+        if (shadow_sampler_ != VK_NULL_HANDLE)
+        {
+            vkDestroySampler(device_, shadow_sampler_, nullptr);
+        }
+        if (shadow_dummy_view_ != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(device_, shadow_dummy_view_, nullptr);
+        }
+        if (shadow_dummy_image_ != VK_NULL_HANDLE)
+        {
+            vmaDestroyImage(allocator_, shadow_dummy_image_, shadow_dummy_allocation_);
+        }
         if (table_sampler_nearest_ != VK_NULL_HANDLE)
         {
             vkDestroySampler(device_, table_sampler_nearest_, nullptr);
@@ -1105,6 +1117,12 @@ ResonateStatus Context::ensureDevice()
     table_bindings[kSampledTableBinding].stageFlags =
         VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
+    table_bindings[kShadowTableBinding].binding = kShadowTableBinding;
+    table_bindings[kShadowTableBinding].descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    table_bindings[kShadowTableBinding].descriptorCount = kShadowTableSize;
+    table_bindings[kShadowTableBinding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     /* The frame block, outside the table so the vertex stage does not depend
        on a storage-array read. */
     table_bindings[kFrameBinding].binding = kFrameBinding;
@@ -1150,7 +1168,7 @@ ResonateStatus Context::ensureDevice()
     table_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     table_pool_sizes[0].descriptorCount = kStorageTableBindings * kStorageTableSize;
     table_pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    table_pool_sizes[1].descriptorCount = kImageTableSize;
+    table_pool_sizes[1].descriptorCount = kImageTableSize + kShadowTableSize;
     table_pool_sizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     table_pool_sizes[2].descriptorCount = 1;
     VkDescriptorPoolCreateInfo table_pool{};
@@ -1237,6 +1255,18 @@ ResonateStatus Context::ensureDevice()
         note(device_failed_, "table sampler creation failed");
         return RESONATE_E_INTERNAL;
     }
+    /* The shadow sampler compares on read: a filtered tap is four comparisons
+       (2x2), and LESS_OR_EQUAL is "receiver no farther than the stored
+       depth", which returns 1 (lit) for a visible surface. */
+    table_sampler.minFilter = VK_FILTER_LINEAR;
+    table_sampler.magFilter = VK_FILTER_LINEAR;
+    table_sampler.compareEnable = VK_TRUE;
+    table_sampler.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    if (vkCreateSampler(device_, &table_sampler, nullptr, &shadow_sampler_) != VK_SUCCESS)
+    {
+        note(device_failed_, "shadow sampler creation failed");
+        return RESONATE_E_INTERNAL;
+    }
 
     VkCommandPoolCreateInfo pool{};
     pool.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -1298,6 +1328,10 @@ ResonateStatus Context::ensureDevice()
         {
             return status;
         }
+    }
+    if (ResonateStatus status = createShadowDummy(); status != RESONATE_OK)
+    {
+        return status;
     }
     return RESONATE_OK;
 }
@@ -2310,6 +2344,158 @@ void Context::writeImageSlot(uint32_t slot, VkImageView view, bool nearest)
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &image_info;
     updateTable(&write, 1);
+}
+
+void Context::writeShadowSlot(uint32_t slot, VkImageView view)
+{
+    VkDescriptorImageInfo image_info{};
+    image_info.sampler = shadow_sampler_;
+    image_info.imageView = view;
+    image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = table_set_;
+    write.dstBinding = kShadowTableBinding;
+    write.dstArrayElement = slot;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &image_info;
+    updateTable(&write, 1);
+}
+
+ResonateStatus Context::setShadowTable(const ResonateRenderImage* images, uint32_t count)
+{
+    if (device_ == VK_NULL_HANDLE || table_set_ == VK_NULL_HANDLE)
+    {
+        return RESONATE_E_STATE;
+    }
+    if (images == nullptr || count == 0U || count > kShadowTableSize)
+    {
+        return RESONATE_E_INVALID;
+    }
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        const ImageSlot* image = images[index].value != 0
+                                     ? images_.live(handleIndex(images[index].value),
+                                                    handleGeneration(images[index].value))
+                                     : nullptr;
+        if (image == nullptr || !image->depth)
+        {
+            return RESONATE_E_INVALID;
+        }
+    }
+    for (uint32_t index = count; index < kShadowTableSize; ++index)
+    {
+        writeShadowSlot(index, shadow_dummy_view_);
+    }
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        const ImageSlot* image = images_.live(handleIndex(images[index].value),
+                                              handleGeneration(images[index].value));
+        writeShadowSlot(index, image->view);
+    }
+    return RESONATE_OK;
+}
+
+ResonateStatus Context::createShadowDummy()
+{
+    VkImageCreateInfo image{};
+    image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image.imageType = VK_IMAGE_TYPE_2D;
+    image.format = VK_FORMAT_D32_SFLOAT;
+    image.extent = VkExtent3D{1U, 1U, 1U};
+    image.mipLevels = 1;
+    image.arrayLayers = 1;
+    image.samples = VK_SAMPLE_COUNT_1_BIT;
+    image.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VmaAllocationCreateInfo allocation{};
+    allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+    if (vmaCreateImage(allocator_, &image, &allocation, &shadow_dummy_image_,
+                       &shadow_dummy_allocation_, nullptr) != VK_SUCCESS)
+    {
+        note(device_failed_, "shadow dummy image creation failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    VkImageViewCreateInfo view{};
+    view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view.image = shadow_dummy_image_;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = VK_FORMAT_D32_SFLOAT;
+    view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    view.subresourceRange.levelCount = 1;
+    view.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(device_, &view, nullptr, &shadow_dummy_view_) != VK_SUCCESS)
+    {
+        vmaDestroyImage(allocator_, shadow_dummy_image_, shadow_dummy_allocation_);
+        shadow_dummy_image_ = VK_NULL_HANDLE;
+        note(device_failed_, "shadow dummy view creation failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    /* Cleared to the far plane: a stub compare reads "not shadowed". */
+    VkCommandBufferAllocateInfo command{};
+    command.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    command.commandPool = command_pool_;
+    command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    command.commandBufferCount = 1;
+    VkCommandBuffer buffer = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(device_, &command, &buffer) != VK_SUCCESS)
+    {
+        note(device_failed_, "shadow dummy transition allocation failed");
+        return RESONATE_E_INTERNAL;
+    }
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(buffer, &begin);
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = shadow_dummy_image_;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
+                         &barrier);
+    const VkClearDepthStencilValue far_plane{1.0F, 0U};
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT, 0U, 1U, 0U, 1U};
+    vkCmdClearDepthStencilImage(buffer, shadow_dummy_image_,
+                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far_plane, 1U, &range);
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
+                         &barrier);
+    vkEndCommandBuffer(buffer);
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &buffer;
+    const VkResult submitted = vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(queue_);
+    vkFreeCommandBuffers(device_, command_pool_, 1, &buffer);
+    if (submitted != VK_SUCCESS)
+    {
+        note(device_failed_, "shadow dummy transition failed");
+        return RESONATE_E_INTERNAL;
+    }
+
+    for (uint32_t slot = 0; slot < kShadowTableSize; ++slot)
+    {
+        writeShadowSlot(slot, shadow_dummy_view_);
+    }
+    return RESONATE_OK;
 }
 
 void Context::drainGraveyard(std::vector<Retired>& graveyard)
