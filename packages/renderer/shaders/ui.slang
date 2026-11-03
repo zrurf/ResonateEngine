@@ -16,7 +16,7 @@ struct UiPush
 
 [[vk::push_constant]] UiPush push;
 
-[[vk::binding(5, 0)]] Sampler2D image_table[16];
+[[vk::binding(5, 0)]] Sampler2D image_table[64];
 
 struct VertexInput
 {

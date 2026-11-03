@@ -449,7 +449,12 @@ class Context
        indexing the image slots are too, and destroyed bindings return to the
        dummy. On one with it the image slots stay partially bound. */
     static constexpr uint32_t kStorageTableSize = 7;
-    static constexpr uint32_t kImageTableSize = 16;
+    /* The sampled-image table's capacity. Every shader declares its array at
+       this size, so the device layout must offer at least this many
+       per-stage samplers; init refuses a device that cannot (R4: the table
+       follows the engine's cap, 16 used to be the ceiling and the demo could
+       exhaust it). */
+    static constexpr uint32_t kImageTableSize = 64;
     static constexpr uint32_t kStorageTableBindings = 5;
     static constexpr uint32_t kSampledTableBinding = 5;
     /* The frame block at a fixed binding: some mobile drivers return zeros for

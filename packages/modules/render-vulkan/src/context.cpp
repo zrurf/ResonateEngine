@@ -808,6 +808,20 @@ ResonateStatus Context::ensureDevice()
     }
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(physical_, &properties);
+
+    /* Every shader's image table is declared at kImageTableSize, so the
+       per-stage sampler limit has to cover it: a smaller device would read
+       past its layout. Refuse it with the reason instead. */
+    if (properties.limits.maxPerStageDescriptorSamplers < kImageTableSize)
+    {
+        std::fprintf(stderr,
+                     "render-vulkan: %s offers %u samplers per stage; the renderer's image "
+                     "table needs %u\n",
+                     properties.deviceName,
+                     properties.limits.maxPerStageDescriptorSamplers, kImageTableSize);
+        return RESONATE_E_UNSUPPORTED;
+    }
+
     const bool core_indexing = instance_api_version_ >= VK_API_VERSION_1_2 &&
                                properties.apiVersion >= VK_API_VERSION_1_2;
     const bool extension_indexing =
@@ -994,12 +1008,12 @@ ResonateStatus Context::ensureDevice()
     VkFormatProperties d16_props{};
     vkGetPhysicalDeviceFormatProperties(physical_, VK_FORMAT_D16_UNORM, &d16_props);
     std::fprintf(stderr,
-                 "render-vulkan: %s, Vulkan %u.%u, %s table, samplers/stage=%u, "
+                 "render-vulkan: %s, Vulkan %u.%u, %s table=%u, samplers/stage=%u, "
                  "storage/stage=%u, resources/stage=%u, rgba16f color=%u, d32 depth=%u, "
                  "b10g11r11 color=%u, d16 depth=%u\n",
                  properties.deviceName, VK_VERSION_MAJOR(properties.apiVersion),
                  VK_VERSION_MINOR(properties.apiVersion), bindless_ ? "bindless" : "compat",
-                 properties.limits.maxPerStageDescriptorSamplers,
+                 kImageTableSize, properties.limits.maxPerStageDescriptorSamplers,
                  properties.limits.maxPerStageDescriptorStorageBuffers,
                  properties.limits.maxPerStageResources,
                  (color_props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0U,

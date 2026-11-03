@@ -55,7 +55,7 @@ struct Push
 [[vk::binding(1, 0)]] StructuredBuffer<Light> light_table[7];
 [[vk::binding(2, 0)]] StructuredBuffer<uint> light_indices[7];
 [[vk::binding(3, 0)]] StructuredBuffer<ClusterLights> cluster_lights[7];
-[[vk::binding(5, 0)]] Sampler2D image_table[16];
+[[vk::binding(5, 0)]] Sampler2D image_table[64];
 
 [[vk::push_constant]] Push push;
 

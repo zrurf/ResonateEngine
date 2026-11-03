@@ -33,7 +33,7 @@ struct FrameData
 
 [[vk::push_constant]] Push push;
 [[vk::binding(0, 0)]] StructuredBuffer<FrameData> frame_table[7];
-[[vk::binding(5, 0)]] Sampler2D image_table[16];
+[[vk::binding(5, 0)]] Sampler2D image_table[64];
 
 struct VertexOutput
 {

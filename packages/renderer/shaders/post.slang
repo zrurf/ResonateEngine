@@ -11,7 +11,7 @@ struct PostPush
                    // composite: x is 1 when the pass applies the sRGB encode
 };
 
-[[vk::binding(5, 0)]] Sampler2D image_table[16];
+[[vk::binding(5, 0)]] Sampler2D image_table[64];
 
 [[vk::push_constant]] PostPush push;
 
