@@ -759,27 +759,14 @@ ResonateStatus Context::uploadBuffer(ResonateRenderBuffer handle, uint64_t offse
         return RESONATE_OK;
     }
 
-    /* Device-local: one staging buffer, one synchronous copy. */
-    VkBufferCreateInfo staging_info{};
-    staging_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    staging_info.size = size_bytes;
-    staging_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    staging_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VmaAllocationCreateInfo staging_allocation{};
-    staging_allocation.usage = VMA_MEMORY_USAGE_AUTO;
-    staging_allocation.flags =
-        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-    VkBuffer staging_buffer = VK_NULL_HANDLE;
-    VmaAllocation staging = VK_NULL_HANDLE;
-    VmaAllocationInfo staging_info_out{};
-    if (vmaCreateBuffer(allocator_, &staging_info, &staging_allocation, &staging_buffer, &staging,
-                        &staging_info_out) != VK_SUCCESS)
+    /* Device-local: copy through the persistent staging buffer (R7) — one
+       synchronous submit, and the staging stays for the next upload. */
+    if (ResonateStatus status = ensureStaging(static_cast<VkDeviceSize>(size_bytes));
+        status != RESONATE_OK)
     {
-        return RESONATE_E_INTERNAL;
+        return status;
     }
-    std::memcpy(staging_info_out.pMappedData, data, size_bytes);
+    std::memcpy(staging_mapped_, data, size_bytes);
 
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -790,12 +777,9 @@ ResonateStatus Context::uploadBuffer(ResonateRenderBuffer handle, uint64_t offse
     copy.srcOffset = 0;
     copy.dstOffset = offset;
     copy.size = size_bytes;
-    vkCmdCopyBuffer(aux_command_, staging_buffer, slot->buffer, 1, &copy);
+    vkCmdCopyBuffer(aux_command_, staging_buffer_, slot->buffer, 1, &copy);
     vkEndCommandBuffer(aux_command_);
-    const ResonateStatus status = submitAndRun(aux_command_);
-
-    vmaDestroyBuffer(allocator_, staging_buffer, staging);
-    return status;
+    return submitAndRun(aux_command_);
 }
 
 ResonateStatus Context::uploadImage(ResonateRenderImage handle, const void* data,
@@ -822,26 +806,12 @@ ResonateStatus Context::uploadImage(ResonateRenderImage handle, const void* data
         return RESONATE_E_INVALID;
     }
 
-    VkBufferCreateInfo staging_info{};
-    staging_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    staging_info.size = size_bytes;
-    staging_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    staging_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VmaAllocationCreateInfo staging_allocation{};
-    staging_allocation.usage = VMA_MEMORY_USAGE_AUTO;
-    staging_allocation.flags =
-        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-    VkBuffer staging_buffer = VK_NULL_HANDLE;
-    VmaAllocation staging = VK_NULL_HANDLE;
-    VmaAllocationInfo staging_info_out{};
-    if (vmaCreateBuffer(allocator_, &staging_info, &staging_allocation, &staging_buffer, &staging,
-                        &staging_info_out) != VK_SUCCESS)
+    if (ResonateStatus status = ensureStaging(static_cast<VkDeviceSize>(size_bytes));
+        status != RESONATE_OK)
     {
-        return RESONATE_E_INTERNAL;
+        return status;
     }
-    std::memcpy(staging_info_out.pMappedData, data, size_bytes);
+    std::memcpy(staging_mapped_, data, size_bytes);
 
     vkResetCommandBuffer(aux_command_, 0);
     VkCommandBufferBeginInfo begin{};
@@ -869,7 +839,7 @@ ResonateStatus Context::uploadImage(ResonateRenderImage handle, const void* data
     copy.imageSubresource.aspectMask = to_transfer.subresourceRange.aspectMask;
     copy.imageSubresource.layerCount = 1;
     copy.imageExtent = VkExtent3D{slot->width, slot->height, 1U};
-    vkCmdCopyBufferToImage(aux_command_, staging_buffer, slot->image,
+    vkCmdCopyBufferToImage(aux_command_, staging_buffer_, slot->image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 
     if (slot->mip_levels > 1U)
@@ -957,10 +927,7 @@ ResonateStatus Context::uploadImage(ResonateRenderImage handle, const void* data
     }
 
     vkEndCommandBuffer(aux_command_);
-    const ResonateStatus status = submitAndRun(aux_command_);
-
-    vmaDestroyBuffer(allocator_, staging_buffer, staging);
-    return status;
+    return submitAndRun(aux_command_);
 }
 
 ResonateStatus Context::bindPipeline(ResonateRenderPipeline handle)

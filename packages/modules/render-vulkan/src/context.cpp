@@ -299,6 +299,12 @@ Context::~Context()
         {
             vkDestroySampler(device_, shadow_sampler_, nullptr);
         }
+        if (staging_buffer_ != VK_NULL_HANDLE)
+        {
+            vmaDestroyBuffer(allocator_, staging_buffer_, staging_allocation_);
+            staging_buffer_ = VK_NULL_HANDLE;
+            staging_allocation_ = nullptr;
+        }
         if (shadow_dummy_view_ != VK_NULL_HANDLE)
         {
             vkDestroyImageView(device_, shadow_dummy_view_, nullptr);
@@ -1457,6 +1463,52 @@ ResonateStatus Context::createTableImageDummy()
     {
         writeImageSlot(slot, table_dummy_view_, false);
     }
+    return RESONATE_OK;
+}
+
+ResonateStatus Context::ensureStaging(VkDeviceSize bytes)
+{
+    if (staging_buffer_ != VK_NULL_HANDLE && staging_capacity_ >= bytes)
+    {
+        return RESONATE_OK;
+    }
+    if (staging_buffer_ != VK_NULL_HANDLE)
+    {
+        vmaDestroyBuffer(allocator_, staging_buffer_, staging_allocation_);
+        staging_buffer_ = VK_NULL_HANDLE;
+        staging_allocation_ = nullptr;
+        staging_mapped_ = nullptr;
+        staging_capacity_ = 0U;
+    }
+
+    /* Growth is doubling from 4 MB, so a run's largest upload sets the high
+       water mark and every later upload reuses it. */
+    VkDeviceSize capacity = staging_capacity_ == 0U ? 4U * 1024U * 1024U : staging_capacity_ * 2U;
+    while (capacity < bytes)
+    {
+        capacity *= 2U;
+    }
+
+    VkBufferCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    info.size = capacity;
+    info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VmaAllocationCreateInfo allocation{};
+    allocation.usage = VMA_MEMORY_USAGE_AUTO;
+    allocation.flags =
+        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VmaAllocationInfo allocation_info{};
+    if (vmaCreateBuffer(allocator_, &info, &allocation, &staging_buffer_, &staging_allocation_,
+                        &allocation_info) != VK_SUCCESS)
+    {
+        return RESONATE_E_INTERNAL;
+    }
+    staging_mapped_ = allocation_info.pMappedData;
+    staging_capacity_ = capacity;
+    ++staging_allocations_;
+    std::fprintf(stderr, "render-vulkan: staging buffer %.1f MB (allocation #%u)\n",
+                 static_cast<double>(capacity) / (1024.0 * 1024.0), staging_allocations_);
     return RESONATE_OK;
 }
 

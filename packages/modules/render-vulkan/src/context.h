@@ -502,6 +502,14 @@ class Context
     VkSampler table_sampler_linear_ = VK_NULL_HANDLE;
     VkSampler table_sampler_nearest_ = VK_NULL_HANDLE;
     VkSampler shadow_sampler_ = VK_NULL_HANDLE;
+    /* The persistent upload staging (R7): one host-visible buffer grown on
+       demand and reused for every synchronous upload, instead of a per-upload
+       VMA allocation. `staging_allocations_` counts the creations. */
+    VkBuffer staging_buffer_ = VK_NULL_HANDLE;
+    VmaAllocation_T* staging_allocation_ = nullptr;
+    void* staging_mapped_ = nullptr;
+    VkDeviceSize staging_capacity_ = 0U;
+    std::uint32_t staging_allocations_ = 0U;
 
     /* A device without descriptor indexing has no partially bound table, so
        every image slot starts on a 1x1 dummy and destroyed images go back to
@@ -518,6 +526,7 @@ class Context
     VkImageView shadow_dummy_view_ = VK_NULL_HANDLE;
     ResonateStatus createShadowDummy();
     ResonateStatus createSamplerTable();
+    ResonateStatus ensureStaging(VkDeviceSize bytes);
     void writeShadowSlot(uint32_t slot, VkImageView view);
 
     /* The open frame and pass, and the state their commands use. One command
