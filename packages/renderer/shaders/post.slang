@@ -4,7 +4,8 @@
 // triangle from the vertex id and read their inputs through the sampled-image
 // table.
 // Entries: postVertex, brightFragment, bloomDownFragment, bloomUpFragment,
-// tonemapFragment, fxaaFragment, upscaleFragment, blendFragment.
+// tonemapFragment, fxaaFragment, upscaleFragment, magnifyFragment,
+// blendFragment.
 
 struct PostPush
 {
@@ -317,6 +318,14 @@ float4 upscaleFragment(VertexOutput input) : SV_Target
     return float4(fsrEasu(input.uv, push.params.xy, push.params.zw), 1.0);
 }
 
+[shader("fragment")]
+float4 magnifyFragment(VertexOutput input) : SV_Target
+{
+    // The plain magnify for a device that cannot afford EASU: x/y carry the
+    // uv window the scene occupies in its target.
+    return float4(image_table[push.slots.x].Sample(input.uv * push.params.xy).rgb, 1.0);
+}
+
 // RCAS: a contrast-adaptive sharpen of the upscaled scene. The lobe grows where
 // the neighbourhood is flat and shrinks on strong edges, and the result is
 // clamped to the neighbourhood, so detail returns without haloes.
@@ -352,7 +361,7 @@ float4 blendFragment(VertexOutput input) : SV_Target
     // the sharpener.
     float3 scene = push.params.z > 0.0
                        ? fsrRcas(input.uv, push.params.xy, push.params.z)
-                       : image_table[push.slots.x].Sample(input.uv * push.params.xy).rgb;
+                       : image_table[push.slots.x].Sample(input.uv).rgb;
     // The canvas quantizes to eight bits, so the dither belongs at output
     // resolution: dithering the scaled scene first would let the upscale and
     // the sharpen turn the noise into visible blocks. Only the scene is

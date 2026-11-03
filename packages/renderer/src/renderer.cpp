@@ -567,6 +567,7 @@ struct RenderSystem::Impl
     ResonateRenderPipeline composite_pipeline{};
     ResonateRenderPipeline fxaa_pipeline{};
     ResonateRenderPipeline upscale_pipeline{};
+    ResonateRenderPipeline magnify_pipeline{};
     ResonateRenderPipeline blend_pipeline{};
     ResonateRenderPipeline ui_pipeline{};
     bool pipelines_ready = false;
@@ -873,9 +874,6 @@ bool RenderSystem::Impl::initialize()
        mobile GPU cannot afford next to its scene: "auto" keeps the bilinear
        magnify there and uses the reconstruction on desktop. */
     upscale_easu = upscale_mode == "easu" || (upscale_mode == "auto" && !compat_tier);
-    /* The upscale pass is part of the graph only on the EASU path; the
-       bilinear fallback magnifies in the blend itself. */
-    const bool easu = upscale_easu;
 
     resonate::render::RenderGraph graph;
     canvas_resource = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
@@ -921,15 +919,12 @@ bool RenderSystem::Impl::initialize()
             "ldr_aa", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
             RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     }
-    /* The upscaled scene at output resolution; RCAS sharpens it and the blend
-       puts the UI over it. */
-    scene_up_resource = resonate::render::kInvalidResource;
-    if (easu)
-    {
-        scene_up_resource = graph.declareImage(
-            "scene_up", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
-            RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
-    }
+    /* The scene at output resolution: EASU reconstructs it, or the plain
+       magnify copies it there when the device cannot afford the taps. RCAS
+       sharpens it and the blend puts the UI over it. */
+    scene_up_resource = graph.declareImage(
+        "scene_up", RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM, target_width, target_height,
+        RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT | RESONATE_RENDER_IMAGE_SAMPLED);
     if (bloom)
     {
         /* R11G11B10F: the pack is a third of RGBA16F and its precision covers a
@@ -1239,32 +1234,28 @@ bool RenderSystem::Impl::initialize()
     /* The EASU pass reconstructs the scene at the output extent from the scaled
        sub-rectangle. It runs before the blend so RCAS can sharpen at output
        resolution and the UI, composited last, never passes through it. */
-    if (easu)
-    {
-        Use upscale_read{};
-        upscale_read.resource = fxaa ? ldr_aa_resource : ldr_resource;
-        upscale_read.stages = resonate::render::kStageFragment;
-        upscale_read.access = resonate::render::kAccessShaderRead;
-        upscale_read.layout = kLayoutShaderReadOnly;
-        Use upscale_write{};
-        upscale_write.resource = scene_up_resource;
-        upscale_write.stages = resonate::render::kStageColorOutput;
-        upscale_write.access = resonate::render::kAccessColorWrite;
-        upscale_write.layout = kLayoutColorAttachment;
-        resonate::render::PassDesc upscale{};
-        upscale.name = "upscale";
-        upscale.reads = &upscale_read;
-        upscale.read_count = 1U;
-        upscale.writes = &upscale_write;
-        upscale.write_count = 1U;
-        upscale.context = this;
-        upscale.execute = &Impl::upscaleEntry;
-        graph.addPass(upscale);
-    }
+    Use upscale_read{};
+    upscale_read.resource = fxaa ? ldr_aa_resource : ldr_resource;
+    upscale_read.stages = resonate::render::kStageFragment;
+    upscale_read.access = resonate::render::kAccessShaderRead;
+    upscale_read.layout = kLayoutShaderReadOnly;
+    Use upscale_write{};
+    upscale_write.resource = scene_up_resource;
+    upscale_write.stages = resonate::render::kStageColorOutput;
+    upscale_write.access = resonate::render::kAccessColorWrite;
+    upscale_write.layout = kLayoutColorAttachment;
+    resonate::render::PassDesc upscale{};
+    upscale.name = "upscale";
+    upscale.reads = &upscale_read;
+    upscale.read_count = 1U;
+    upscale.writes = &upscale_write;
+    upscale.write_count = 1U;
+    upscale.context = this;
+    upscale.execute = &Impl::upscaleEntry;
+    graph.addPass(upscale);
 
     Use blend_reads[2]{};
-    blend_reads[0].resource =
-        easu ? scene_up_resource : (fxaa ? ldr_aa_resource : ldr_resource);
+    blend_reads[0].resource = scene_up_resource;
     blend_reads[0].stages = resonate::render::kStageFragment;
     blend_reads[0].access = resonate::render::kAccessShaderRead;
     blend_reads[0].layout = kLayoutShaderReadOnly;
@@ -1864,6 +1855,8 @@ bool RenderSystem::Impl::ensurePipelines()
         readFile(std::filesystem::path(directory) / "post.fxaaFragment.spv");
     const std::vector<char> upscale_spirv =
         readFile(std::filesystem::path(directory) / "post.upscaleFragment.spv");
+    const std::vector<char> magnify_spirv =
+        readFile(std::filesystem::path(directory) / "post.magnifyFragment.spv");
     const std::vector<char> blend_spirv =
         readFile(std::filesystem::path(directory) / "post.blendFragment.spv");
     const std::vector<char> ui_vertex_spirv =
@@ -1874,8 +1867,8 @@ bool RenderSystem::Impl::ensurePipelines()
         shadow_fragment_spirv.empty() || build_spirv.empty() || cull_spirv.empty() ||
         post_vertex_spirv.empty() || bright_spirv.empty() || bloom_down_spirv.empty() ||
         bloom_up_spirv.empty() || composite_spirv.empty() || fxaa_spirv.empty() ||
-        upscale_spirv.empty() || blend_spirv.empty() || ui_vertex_spirv.empty() ||
-        ui_fragment_spirv.empty())
+        upscale_spirv.empty() || magnify_spirv.empty() || blend_spirv.empty() ||
+        ui_vertex_spirv.empty() || ui_fragment_spirv.empty())
     {
         complain("shader files missing; run `xmake slang`");
         pipelines_failed = true;
@@ -1895,6 +1888,7 @@ bool RenderSystem::Impl::ensurePipelines()
     ResonateRenderShader composite{};
     ResonateRenderShader fxaa{};
     ResonateRenderShader upscale{};
+    ResonateRenderShader magnify{};
     ResonateRenderShader blend{};
     ResonateRenderShader ui_vertex{};
     ResonateRenderShader ui_fragment{};
@@ -1926,6 +1920,8 @@ bool RenderSystem::Impl::ensurePipelines()
                               fxaa_spirv.size(), &fxaa) != RESONATE_OK ||
         device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, upscale_spirv.data(),
                               upscale_spirv.size(), &upscale) != RESONATE_OK ||
+        device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, magnify_spirv.data(),
+                              magnify_spirv.size(), &magnify) != RESONATE_OK ||
         device->create_shader(device->self, RESONATE_RENDER_SHADER_FRAGMENT, blend_spirv.data(),
                               blend_spirv.size(), &blend) != RESONATE_OK ||
         device->create_shader(device->self, RESONATE_RENDER_SHADER_VERTEX, ui_vertex_spirv.data(),
@@ -2020,19 +2016,20 @@ bool RenderSystem::Impl::ensurePipelines()
        write the pyramid's own R11G11B10F images, whatever format the scene HDR
        target uses. Only the final blend owns the canvas, so its pipeline names
        the swapchain format. */
-    const ResonateRenderFormat post_targets[7] = {RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT,
+    const ResonateRenderFormat post_targets[8] = {RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT,
                                                   RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT,
                                                   RESONATE_RENDER_FORMAT_B10G11R11_UFLOAT,
+                                                  RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
                                                   RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
                                                   RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
                                                   RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM,
                                                   RESONATE_RENDER_FORMAT_UNKNOWN};
-    ResonateRenderShader* post_fragments[7] = {&bright, &bloom_down, &bloom_up, &composite,
-                                               &fxaa,   &upscale,    &blend};
-    ResonateRenderPipeline* post_pipelines[7] = {&bright_pipeline,      &bloom_down_pipeline,
+    ResonateRenderShader* post_fragments[8] = {&bright, &bloom_down, &bloom_up, &composite,
+                                               &fxaa,   &upscale,    &magnify,   &blend};
+    ResonateRenderPipeline* post_pipelines[8] = {&bright_pipeline,      &bloom_down_pipeline,
                                                  &bloom_up_pipeline,    &composite_pipeline,
                                                  &fxaa_pipeline,        &upscale_pipeline,
-                                                 &blend_pipeline};
+                                                 &magnify_pipeline,     &blend_pipeline};
 
     /* The fullscreen triangle carries its positions and UVs in a vertex buffer,
        so the vertex stage needs no base-vertex builtin (shaderDrawParameters is
@@ -2073,7 +2070,7 @@ bool RenderSystem::Impl::ensurePipelines()
     post_stream.attribute_count = 2U;
     post_stream.attributes = post_attributes;
 
-    for (std::uint32_t i = 0; i < 7U; ++i)
+    for (std::uint32_t i = 0; i < 8U; ++i)
     {
         ResonateRenderGraphicsPipelineDesc post_desc{};
         post_desc.struct_size = sizeof(post_desc);
@@ -3292,16 +3289,29 @@ void RenderSystem::Impl::fxaaEntry(void* context, GraphExecuteContext& commands)
 void RenderSystem::Impl::upscaleEntry(void* context, GraphExecuteContext& commands)
 {
     auto* self = static_cast<RenderSystem::Impl*>(context);
-    /* x/y: the extent the scene was rendered at, which is the EASU source; z/w:
-       one output texel, which maps every reconstruction tap into the target. */
-    self->runPost(commands, self->scene_up_resource, self->upscale_pipeline,
-                  commands.imageSlot(self->features.antialiases() ? self->ldr_aa_resource
-                                                                  : self->ldr_resource),
-                  0U, 0U,
-                  Vec4{static_cast<float>(self->render_width),
-                       static_cast<float>(self->render_height),
-                       1.0F / static_cast<float>(self->target_width),
-                       1.0F / static_cast<float>(self->target_height)},
+    const std::uint32_t source =
+        commands.imageSlot(self->features.antialiases() ? self->ldr_aa_resource
+                                                        : self->ldr_resource);
+    if (self->upscale_easu)
+    {
+        /* x/y: the extent the scene was rendered at, which is the EASU source;
+           z/w: one output texel, which maps every reconstruction tap into the
+           target. */
+        self->runPost(commands, self->scene_up_resource, self->upscale_pipeline, source, 0U, 0U,
+                      Vec4{static_cast<float>(self->render_width),
+                           static_cast<float>(self->render_height),
+                           1.0F / static_cast<float>(self->target_width),
+                           1.0F / static_cast<float>(self->target_height)},
+                      true);
+        return;
+    }
+    /* The plain magnify: x/y carry the uv window the scene occupies. */
+    self->runPost(commands, self->scene_up_resource, self->magnify_pipeline, source, 0U, 0U,
+                  Vec4{static_cast<float>(self->render_width) /
+                           static_cast<float>(self->target_width),
+                       static_cast<float>(self->render_height) /
+                           static_cast<float>(self->target_height),
+                       0.0F, 0.0F},
                   true);
 }
 
@@ -3333,20 +3343,13 @@ void RenderSystem::Impl::blendEntry(void* context, GraphExecuteContext& commands
     auto* self = static_cast<RenderSystem::Impl*>(context);
     ResonateRenderDevice& device = *commands.device;
     /* The upscale pass already magnified the scene; this pass sharpens that
-       image and puts the UI over it. The bilinear fallback magnifies here
-       instead, so z/w then carry the uv window the scene occupies. */
-    const bool upscaled = self->upscale_easu;
-    const ResourceId scene =
-        upscaled ? self->scene_up_resource
-                 : (self->features.antialiases() ? self->ldr_aa_resource : self->ldr_resource);
+       image (RCAS on the EASU path) and puts the UI over it. */
+    const ResourceId scene = self->scene_up_resource;
     const Vec4 blend_params =
-        upscaled ? Vec4{1.0F / static_cast<float>(self->target_width),
-                        1.0F / static_cast<float>(self->target_height), kRcasSharpness, 0.0F}
-                 : Vec4{static_cast<float>(self->render_width) /
-                            static_cast<float>(self->target_width),
-                        static_cast<float>(self->render_height) /
-                            static_cast<float>(self->target_height),
-                        0.0F, 0.0F};
+        self->upscale_easu
+            ? Vec4{1.0F / static_cast<float>(self->target_width),
+                   1.0F / static_cast<float>(self->target_height), kRcasSharpness, 0.0F}
+            : Vec4{1.0F, 1.0F, 0.0F, 0.0F};
     /* With tgfx ready the blend pass samples the tgfx target directly — the
        overlay pass is skipped entirely, which is also the Mali-compatible
        path. The barrier guards the target's last write (tgfx's own submit or
