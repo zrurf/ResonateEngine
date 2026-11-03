@@ -85,8 +85,9 @@ internal sealed class AndroidPackager
             }
         }
 
-        /* The loader pairs a library with `<id>.toml`; the manifests travel as
-           assets because the APK's library directory is read-only. */
+        /* The loader pairs a library with a manifest of the same id; the baked
+           manifests travel as assets because the APK's library directory is
+           read-only, and no text form ships. */
         foreach (string directory in Directory.GetDirectories(_context.Path("packages", "modules")))
         {
             string manifest = Path.Combine(directory, "resonate.module.toml");
@@ -97,8 +98,8 @@ internal sealed class AndroidPackager
             Match id = Regex.Match(File.ReadAllText(manifest), "id\\s*=\\s*\"([^\"]+)\"");
             if (id.Success)
             {
-                Copy(manifest,
-                     Path.Combine(_staging, "assets", "plugins", id.Groups[1].Value + ".toml"));
+                Bake(manifest,
+                     Path.Combine(_staging, "assets", "plugins", id.Groups[1].Value + ".rman"));
             }
         }
 
@@ -241,7 +242,7 @@ internal sealed class AndroidPackager
         }
         string target = Path.Combine(_staging, "assets", "textures");
         Directory.CreateDirectory(target);
-        Copy(manifest, Path.Combine(target, "products.toml"));
+        Bake(manifest, Path.Combine(target, "products.rman"));
         foreach (string texture in Files(textures, "*.ktx2"))
         {
             Copy(texture, Path.Combine(target, Path.GetFileName(texture)));
@@ -249,12 +250,18 @@ internal sealed class AndroidPackager
     }
 
     /* The package ships the cooked products flat, so it writes its own
-       manifest beside them (StagedProducts); only the clips are asset
-       products today. */
+       manifest beside them (StagedProducts) and bakes it; only the clips are
+       asset products today. */
     private void StageAssetManifest()
     {
         int count = StagedProducts.Write(_context, Path.Combine(_staging, "assets", "animation"),
                                          "products.toml", null);
+        string manifest = Path.Combine(_staging, "assets", "animation", "products.toml");
+        if (File.Exists(manifest))
+        {
+            Bake(manifest, Path.Combine(_staging, "assets", "animation", "products.rman"));
+            File.Delete(manifest);
+        }
         if (count != 0)
         {
             _context.Output.WriteLine($"android: {count} asset product(s) staged");
@@ -400,5 +407,22 @@ internal sealed class AndroidPackager
     private static void Run(string program, params string[] arguments)
     {
         ProcessRunner.MustRun(program, arguments);
+    }
+
+    /* Bakes one staged manifest through the host tool the packaging tasks
+       build first; a shipped build never carries the text form. */
+    private void Bake(string source, string target)
+    {
+        /* Host tools always land in the project's build/tools, whichever
+           platform the packaging config targets. */
+        string tool = Path.Combine(_context.ProjectDirectory, "build", "tools",
+                                   "Resonate.Tools.ManifestBake" +
+                                   (OperatingSystem.IsWindows() ? ".exe" : string.Empty));
+        if (!File.Exists(tool))
+        {
+            throw new BuilderException($"the manifest bake tool is missing: {tool}");
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        Run(tool, source, target);
     }
 }

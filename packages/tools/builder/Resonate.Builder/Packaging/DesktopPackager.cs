@@ -46,7 +46,11 @@ internal sealed class DesktopPackager
         List<string> manifests = Files(_plugins, "*.toml");
         foreach (string manifest in manifests)
         {
-            Copy(manifest, Path.Combine(_staging, "plugins", Path.GetFileName(manifest)));
+            /* Packaged builds carry the baked twin, never the text: the runtime
+               reads it without parsing and no source path travels along. */
+            string baked = Path.Combine(_staging, "plugins",
+                                        Path.ChangeExtension(Path.GetFileName(manifest), ".rman"));
+            Bake(manifest, baked);
         }
         List<string> libraries =
             Files(_plugins, "*.dll").Concat(Files(_plugins, "*.so"))
@@ -95,7 +99,8 @@ internal sealed class DesktopPackager
         string texture_manifest = Path.Combine(textures, "products.toml");
         if (File.Exists(texture_manifest))
         {
-            Copy(texture_manifest, Path.Combine(_staging, "content", "textures", "products.toml"));
+            Bake(texture_manifest,
+                 Path.Combine(_staging, "content", "textures", "products.rman"));
             foreach (string texture in Files(textures, "*.ktx2"))
             {
                 Copy(texture,
@@ -107,8 +112,17 @@ internal sealed class DesktopPackager
             _context.Output.WriteLine("desktop: no texture manifest; the run serves no textures");
         }
 
-        int products = StagedProducts.Write(_context, Path.Combine(_staging, "content", "animation"),
+        string animation_manifest =
+            Path.Combine(_staging, "content", "animation", "products.toml");
+        int products = StagedProducts.Write(_context,
+                                            Path.Combine(_staging, "content", "animation"),
                                             "products.toml", null);
+        if (File.Exists(animation_manifest))
+        {
+            Bake(animation_manifest,
+                 Path.Combine(_staging, "content", "animation", "products.rman"));
+            File.Delete(animation_manifest);
+        }
         _context.Output.WriteLine(
             products != 0
                 ? $"desktop: {_staging} ({products} asset product(s))"
@@ -130,5 +144,22 @@ internal sealed class DesktopPackager
     {
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         File.Copy(source, target, overwrite: true);
+    }
+
+    /* Bakes one staged manifest through the host tool the packaging tasks
+       build first; a shipped build never carries the text form. */
+    private void Bake(string source, string target)
+    {
+        /* Host tools always land in the project's build/tools, whichever
+           platform the packaging config targets. */
+        string tool = Path.Combine(_context.ProjectDirectory, "build", "tools",
+                                   "Resonate.Tools.ManifestBake" +
+                                   (OperatingSystem.IsWindows() ? ".exe" : string.Empty));
+        if (!File.Exists(tool))
+        {
+            throw new BuilderException($"the manifest bake tool is missing: {tool}");
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        ProcessRunner.MustRun(tool, new[] { source, target });
     }
 }

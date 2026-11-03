@@ -20,6 +20,7 @@
 #include <ucontext.h>
 #include <unistd.h>
 
+#include <resonate/asset/baked_manifest.h>
 #include <resonate/startup/startup.hpp>
 #include <resonate/window/android.hpp>
 
@@ -366,12 +367,12 @@ void android_main(android_app* app)
     /* The products manifests the packager staged: authored clips and textures
        resolve by asset id through the same VFS the desktop run uses. */
     const std::string animation = stageAssets(app, "animation");
-    if (access((animation + "/products.toml").c_str(), R_OK) == 0)
+    if (!resonate::asset::resolveManifestPath(animation + "/products.toml").empty())
     {
         setenv("RESONATE_PRODUCTS", (animation + "/products.toml").c_str(), 1);
     }
     const std::string textures = stageAssets(app, "textures");
-    if (access((textures + "/products.toml").c_str(), R_OK) == 0)
+    if (!resonate::asset::resolveManifestPath(textures + "/products.toml").empty())
     {
         setenv("RESONATE_TEXTURE_PRODUCTS", (textures + "/products.toml").c_str(), 1);
     }

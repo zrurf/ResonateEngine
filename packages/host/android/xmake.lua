@@ -25,7 +25,7 @@ target("Resonate.Host.Android")
     set_filename("libmain.so")
     add_files("src/main.cpp")
 
-    add_deps("Resonate.Startup")
+    add_deps("Resonate.Startup", "Resonate.Asset.Meta")
 
     -- Packaged beside libmain.so, never linked into it: the module host
     -- discovers and loads them at run time.

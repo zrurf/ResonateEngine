@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <resonate/application/config_store.h>
+#include <resonate/asset/baked_manifest.h>
 #include <resonate/core/allocator.h>
 #include <resonate/core/job.h>
 #include <resonate/ecs/world.h>
@@ -18,6 +19,11 @@
 #include <resonate/pal/io.h>
 #include <resonate/pal/thread.h>
 #include <resonate/window/host.hpp>
+
+#if !defined(TOML_EXCEPTIONS)
+#    define TOML_EXCEPTIONS 0
+#endif
+#include <toml++/toml.hpp>
 
 #include "fake_host.h"
 #include "paths.h"
@@ -293,6 +299,45 @@ TEST_CASE("manifests are read from a directory of their own", "[module][loader]"
         std::filesystem::copy_file(std::filesystem::path(plugin_directory) / name,
                                    manifests / name, error);
         REQUIRE_FALSE(error);
+    }
+
+    auto host = resonate::ModuleHost::create(resonate::systemAllocator());
+    REQUIRE(host != nullptr);
+    REQUIRE(host->discover(plugin_directory, manifests.string()) == RESONATE_OK);
+    REQUIRE(host->records().size() == 4U);
+}
+
+TEST_CASE("manifests are read from their baked twins", "[module][loader]")
+{
+    /* Packaged builds ship the baked manifest and no text. */
+    const std::string plugin_directory = resonate::test::findBuildDirectory("plugins");
+    INFO("the plugin targets are a build dependency of this test target");
+    REQUIRE_FALSE(plugin_directory.empty());
+
+    const std::filesystem::path manifests =
+        std::filesystem::path(resonate_pal_io_executable_directory()) / "loader-manifests-baked";
+    std::error_code error;
+    std::filesystem::remove_all(manifests, error);
+    std::filesystem::create_directories(manifests, error);
+    REQUIRE_FALSE(error);
+
+    for (const char* id : {"resonate.audio", "resonate.physics", "resonate.render-vulkan",
+                           "resonate.ui"})
+    {
+        std::ifstream in(std::filesystem::path(plugin_directory) / (std::string(id) + ".toml"),
+                         std::ios::binary);
+        REQUIRE(in.is_open());
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        const toml::parse_result result = toml::parse(text);
+        REQUIRE(result);
+        std::vector<std::uint8_t> baked;
+        std::string bake_error;
+        REQUIRE(resonate::asset::bakeTable(result.table(), baked, bake_error));
+        std::ofstream out(manifests / (std::string(id) + ".rman"), std::ios::binary);
+        REQUIRE(out.is_open());
+        out.write(reinterpret_cast<const char*>(baked.data()),
+                  static_cast<std::streamsize>(baked.size()));
     }
 
     auto host = resonate::ModuleHost::create(resonate::systemAllocator());

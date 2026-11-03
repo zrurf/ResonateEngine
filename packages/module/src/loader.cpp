@@ -1,3 +1,4 @@
+#include <resonate/asset/baked_manifest.h>
 #include "resonate/module/host.hpp"
 
 #include <algorithm>
@@ -901,17 +902,11 @@ void ModuleHost::Impl::systemRemoveForModule(void* user_data, const char* name)
     }
 }
 
-ResonateStatus parseManifest(std::string_view toml_text, ModuleManifest& out_manifest)
+ResonateStatus parseManifestTable(const toml::table& table, ModuleManifest& out_manifest)
 {
     out_manifest = ModuleManifest{};
 
-    const toml::parse_result result = toml::parse(toml_text);
-    if (!result)
-    {
-        return RESONATE_E_INVALID;
-    }
-
-    const toml::table* const section = manifestSection(result.table(), "module");
+    const toml::table* const section = manifestSection(table, "module");
     if (section == nullptr)
     {
         return RESONATE_E_INVALID;
@@ -928,6 +923,16 @@ ResonateStatus parseManifest(std::string_view toml_text, ModuleManifest& out_man
                           readNames(*section, "depends_on", out_manifest.depends_on);
 
     return complete ? RESONATE_OK : RESONATE_E_INVALID;
+}
+
+ResonateStatus parseManifest(std::string_view toml_text, ModuleManifest& out_manifest)
+{
+    const toml::parse_result result = toml::parse(toml_text);
+    if (!result)
+    {
+        return RESONATE_E_INVALID;
+    }
+    return parseManifestTable(result.table(), out_manifest);
 }
 
 std::unique_ptr<ModuleHost> ModuleHost::create(Allocator& allocator)
@@ -1074,23 +1079,42 @@ ResonateStatus ModuleHost::discover(const std::string& plugin_directory,
             continue;
         }
 
-        std::string text;
-        if (!readFile(manifest_directory + "/" + identity->id + ".toml", text))
-        {
-            impl->write(RESONATE_LOG_ERROR,
-                        std::string(identity->id) + " has no manifest beside its library");
-            resonate_pal_library_unload(&library);
-            continue;
-        }
-
+        /* Packaged builds ship the baked twin and no TOML; the source tree has
+           only the text. Either alone is enough. */
         ModuleManifest manifest;
-        if (parseManifest(text, manifest) != RESONATE_OK)
+        toml::table manifest_table;
+        std::string baked_error;
+        if (resonate::asset::loadBaked(manifest_directory + "/" + identity->id + ".rman",
+                                       manifest_table, baked_error))
         {
-            impl->write(RESONATE_LOG_ERROR, std::string(identity->id) +
-                                                "'s manifest does not parse or is missing a "
-                                                "required field");
-            resonate_pal_library_unload(&library);
-            continue;
+            if (parseManifestTable(manifest_table, manifest) != RESONATE_OK)
+            {
+                impl->write(RESONATE_LOG_ERROR, std::string(identity->id) +
+                                                    "'s baked manifest does not parse or is "
+                                                    "missing a required field");
+                resonate_pal_library_unload(&library);
+                continue;
+            }
+        }
+        else
+        {
+            std::string text;
+            if (!readFile(manifest_directory + "/" + identity->id + ".toml", text))
+            {
+                impl->write(RESONATE_LOG_ERROR,
+                            std::string(identity->id) + " has no manifest beside its library" +
+                                (baked_error.empty() ? "" : "; " + baked_error));
+                resonate_pal_library_unload(&library);
+                continue;
+            }
+            if (parseManifest(text, manifest) != RESONATE_OK)
+            {
+                impl->write(RESONATE_LOG_ERROR, std::string(identity->id) +
+                                                    "'s manifest does not parse or is missing a "
+                                                    "required field");
+                resonate_pal_library_unload(&library);
+                continue;
+            }
         }
         if (manifest.id != identity->id)
         {

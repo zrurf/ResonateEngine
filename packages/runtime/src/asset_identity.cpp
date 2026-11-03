@@ -1,3 +1,4 @@
+#include <resonate/asset/baked_manifest.h>
 #include <resonate/asset/identity.h>
 
 #include <algorithm>
@@ -96,17 +97,13 @@ bool parseGuid(std::string_view text, AssetId& out)
     return true;
 }
 
-bool Identity::loadProducts(std::string_view toml, std::string& error)
+/* The manifest body, shared by the text and the baked paths: parses the
+   [[product]] entries into `parsed` and leaves `products` untouched when any
+   entry is bad. */
+bool appendProducts(const toml::table& table, const std::vector<Product>& existing,
+                    std::vector<Product>& parsed, std::string& error)
 {
-    /* This toml++ version's parse_result is the table itself: false means the
-       text did not parse, with no description to relay. */
-    toml::parse_result result = toml::parse(toml);
-    if (!result)
-    {
-        error = "the manifest does not parse";
-        return false;
-    }
-    const toml::array* entries = result.table()["product"].as_array();
+    const toml::array* entries = table["product"].as_array();
     if (entries == nullptr)
     {
         return true;
@@ -120,9 +117,6 @@ bool Identity::loadProducts(std::string_view toml, std::string& error)
         const std::filesystem::path relative(path);
         return !relative.is_absolute() && !relative.has_root_path();
     };
-    /* Parsed aside: a manifest with one bad entry leaves the identity exactly
-       as it was, so a caller that reports the failure never serves half of it. */
-    std::vector<Product> parsed;
     parsed.reserve(entries->size());
     for (const toml::node& entry : *entries)
     {
@@ -162,13 +156,31 @@ bool Identity::loadProducts(std::string_view toml, std::string& error)
             return std::any_of(known.begin(), known.end(),
                                [&record](const Product& item) { return item.id == record.id; });
         };
-        if (duplicates(products_) || duplicates(parsed))
+        if (duplicates(existing) || duplicates(parsed))
         {
             error = "the manifest names " + formatGuid(record.id) + " twice";
             return false;
         }
         record.path = path;
         parsed.push_back(std::move(record));
+    }
+    return true;
+}
+
+bool Identity::loadProducts(std::string_view toml, std::string& error)
+{
+    /* This toml++ version's parse_result is the table itself: false means the
+       text did not parse, with no description to relay. */
+    toml::parse_result result = toml::parse(toml);
+    if (!result)
+    {
+        error = "the manifest does not parse";
+        return false;
+    }
+    std::vector<Product> parsed;
+    if (!appendProducts(result.table(), products_, parsed, error))
+    {
+        return false;
     }
     products_.insert(products_.end(), std::make_move_iterator(parsed.begin()),
                      std::make_move_iterator(parsed.end()));
@@ -189,10 +201,27 @@ std::optional<std::string> Identity::locate(const AssetId& id) const
 
 bool Identity::loadFile(const std::string& path, std::string& error)
 {
+    /* Packaged builds ship the baked twin and no TOML; the source tree has
+       only the text. Either alone is enough. */
+    std::string baked_error;
+    {
+        toml::table table;
+        if (loadBaked(bakedTwinOf(path), table, baked_error))
+        {
+            std::vector<Product> parsed;
+            if (!appendProducts(table, products_, parsed, error))
+            {
+                return false;
+            }
+            products_.insert(products_.end(), std::make_move_iterator(parsed.begin()),
+                             std::make_move_iterator(parsed.end()));
+            return true;
+        }
+    }
     std::ifstream in(path, std::ios::binary);
     if (!in.is_open())
     {
-        error = "cannot open " + path;
+        error = "cannot open " + path + (baked_error.empty() ? "" : "; " + baked_error);
         return false;
     }
     const std::string text((std::istreambuf_iterator<char>(in)),

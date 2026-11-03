@@ -399,6 +399,7 @@ task("android-apk")
         import("core.project.project")
         config.load()
 
+
         local host = project.target("Resonate.Host.Android")
         local module = project.target("Resonate.Module.resonate.audio")
         if host == nil or module == nil then
@@ -437,6 +438,7 @@ task("desktop-package")
         import("core.project.config")
         import("core.project.project")
         config.load()
+
 
         local launcher = project.target("Resonate.Launcher")
         local module = project.target("Resonate.Module.resonate.audio")
@@ -490,6 +492,7 @@ end
 if not get_config("engine_only") then
     includes("packages/csharp")
     includes("packages/tools/texcook")
+    includes("packages/tools/manifestbake")
     includes("packages/tools/iconcook")
     includes("packages/tools/cook")
     includes("packages/editor")

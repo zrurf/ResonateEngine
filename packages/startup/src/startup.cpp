@@ -31,6 +31,7 @@
 #include <resonate/application/systems.h>
 #include <resonate/ecs/world.h>
 #include <resonate/animation/player.h>
+#include <resonate/asset/baked_manifest.h>
 #include <resonate/asset/vfs.h>
 #include <resonate/hierarchy/system.h>
 #include <resonate/hierarchy/tree.h>

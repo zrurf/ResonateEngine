@@ -8,8 +8,10 @@
 target("Resonate.Asset.Meta")
     set_kind("static")
     add_includedirs("include", {public = true})
-    add_files("src/asset_identity.cpp", "src/meta.cpp")
-    add_packages("toml++")
+    add_files("src/asset_identity.cpp", "src/meta.cpp", "src/baked_manifest.cpp")
+    -- Public: baked_manifest.h, which every manifest reader includes, is
+    -- written against toml++.
+    add_packages("toml++", {public = true})
 
 target("Resonate.Runtime")
     set_kind("static")

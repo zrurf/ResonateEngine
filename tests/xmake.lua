@@ -104,6 +104,9 @@ target("Resonate.Tests")
              "Resonate.CSharp", "Resonate.Startup", "Resonate.Animation", "Resonate.Scene",
              "Resonate.Cook")
 
+    -- The baked-manifest tests parse TOML and read the codec's public header.
+    add_packages("toml++")
+
     -- The C# host test loads a managed fixture; publishing it is a build step,
     -- so a stale or missing assembly fails the build instead of a test that
     -- quietly skips the only coverage of the managed path.

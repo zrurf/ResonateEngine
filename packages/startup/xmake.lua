@@ -12,6 +12,7 @@ target("Resonate.Startup")
     end
 
     add_deps("Resonate.Runtime", "Resonate.Window", "Resonate.Render",
+             "Resonate.Asset.Meta",
              "Resonate.Hierarchy", "Resonate.Renderer", "Resonate.Gameplay",
              "Resonate.Scene", "Resonate.UI", "Resonate.Document")
 
