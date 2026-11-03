@@ -6,6 +6,7 @@
 #include <vma/vk_mem_alloc.h>
 
 #include "context.h"
+#include "reflection.h"
 
 #include <cstddef>
 #include <cstring>
@@ -443,6 +444,31 @@ ResonateStatus Context::createShader(ResonateRenderShaderStage stage, const void
     std::memcpy(&magic, spirv, sizeof(magic));
     if (magic != kSpirvMagic)
     {
+        return RESONATE_E_INVALID;
+    }
+
+    /* The module must match the engine's descriptor contract before the driver
+       sees it: a drifted table length or an out-of-contract binding surfaces
+       here with its name, not as a draw that reads nothing (R6). */
+    ShaderContract contract{};
+    contract.storage_bindings_begin = 0U;
+    contract.storage_bindings_end = kStorageTableBindings;
+    contract.storage_table_size = kStorageTableSize;
+    contract.sampled_table_binding = kSampledTableBinding;
+    contract.sampled_table_size = kImageTableSize;
+    contract.frame_binding = kFrameBinding;
+    contract.shadow_table_binding = kShadowTableBinding;
+    contract.shadow_table_size = kShadowTableSize;
+    contract.max_push_constants = kMaxConstants;
+    const ShaderStageKind kind = stage == RESONATE_RENDER_SHADER_VERTEX  ? ShaderStageKind::Vertex
+                                 : stage == RESONATE_RENDER_SHADER_COMPUTE
+                                     ? ShaderStageKind::Compute
+                                     : ShaderStageKind::Fragment;
+    std::string reflection_error;
+    if (!reflectShader(static_cast<const std::uint32_t*>(spirv), size_bytes / 4U, kind, contract,
+                       reflection_error))
+    {
+        note(device_failed_, reflection_error.c_str());
         return RESONATE_E_INVALID;
     }
 
