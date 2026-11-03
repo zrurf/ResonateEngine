@@ -303,10 +303,13 @@ void android_main(android_app* app)
     installCrashHandler();
     redirectStdioToLogcat();
     resonate::window::attachAndroidApp(app);
-    /* No config files travel with the package yet, so the handheld render scale
-       is the built-in default: this GPU cannot hold 60 fps at the full 2400-wide
-       target, and the UI keeps its own resolution either way. */
-    setenv("RESONATE_RENDER_SCALE", "0.40", 1);
+    /* No config files travel with the package yet, so the handheld default is
+       written here: the adaptive controller holds the 60 fps budget and starts
+       at native resolution, trading it down only when a scene cannot afford
+       it. MSAA stays off by default — the Mali-G51 measured 4x as unaffordable
+       at native (it forces the scale down); the setting is declared for a
+       title to opt into, and the device clamps a count its formats reject. */
+    setenv("RESONATE_TARGET_FRAME_MS", "16.7", 1);
     applyDebugProperties();
 
     std::vector<std::string> arguments{"resonate"};

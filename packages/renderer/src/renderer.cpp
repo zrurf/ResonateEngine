@@ -514,6 +514,10 @@ struct RenderSystem::Impl
     double sample_ms = 0.0;
     unsigned sample_frames = 0U;
     std::chrono::steady_clock::time_point sample_since = std::chrono::steady_clock::now();
+    /* Windows to ignore after a scale change (their frames carry the graph
+       rebuild), and the consecutive-overload count that gates a step down. */
+    unsigned skip_windows = 0U;
+    unsigned slow_windows = 0U;
 
     ResonateRenderPipeline scene_pipeline{};
     ResonateRenderPipeline shadow_pipeline{};
@@ -3564,7 +3568,11 @@ void RenderSystem::Impl::renderLoop()
         else if (frame_budget > 0.0F)
         {
             /* One decision per window: a step every frame would chase noise and
-               rebuild the graph constantly. */
+               rebuild the graph constantly. The window right after a change is
+               skipped, because its frames carry the graph rebuild itself, and
+               a step down waits for two consecutive overloaded windows — a
+               single 33 ms frame from a vsync miss must not lower resolution
+               for good while a fast window raises it at once. */
             sample_ms += std::chrono::duration<double, std::milli>(
                              std::chrono::steady_clock::now() - frame_begin)
                              .count();
@@ -3576,13 +3584,37 @@ void RenderSystem::Impl::renderLoop()
             {
                 const double average = sample_ms / static_cast<double>(sample_frames);
                 const float current_scale = render_scale.load(std::memory_order_relaxed);
-                const float wanted = adaptiveScaleStep(current_scale, average, frame_budget,
-                                                       kMinRenderScale);
-                if (wanted != current_scale)
+                if (skip_windows > 0)
                 {
-                    render_scale.store(wanted, std::memory_order_relaxed);
-                    std::fprintf(stderr, "renderer: render scale %.2f for %.1f ms\n",
-                                 static_cast<double>(wanted), average);
+                    --skip_windows;
+                }
+                else
+                {
+                    const float wanted = adaptiveScaleStep(current_scale, average, frame_budget,
+                                                           kMinRenderScale);
+                    if (wanted < current_scale)
+                    {
+                        if (++slow_windows >= 2)
+                        {
+                            slow_windows = 0;
+                            render_scale.store(wanted, std::memory_order_relaxed);
+                            skip_windows = 1;
+                            std::fprintf(stderr, "renderer: render scale %.2f for %.1f ms\n",
+                                         static_cast<double>(wanted), average);
+                        }
+                    }
+                    else if (wanted > current_scale)
+                    {
+                        slow_windows = 0;
+                        render_scale.store(wanted, std::memory_order_relaxed);
+                        skip_windows = 1;
+                        std::fprintf(stderr, "renderer: render scale %.2f for %.1f ms\n",
+                                     static_cast<double>(wanted), average);
+                    }
+                    else
+                    {
+                        slow_windows = 0;
+                    }
                 }
                 sample_ms = 0.0;
                 sample_frames = 0U;

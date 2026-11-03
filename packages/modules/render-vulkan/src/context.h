@@ -292,6 +292,13 @@ class Context
     ResonateStatus ensureDevice();
     ResonateStatus createSwapchain(uint32_t width, uint32_t height);
     ResonateStatus createOffscreen(uint32_t width, uint32_t height);
+    /* The sample count a request becomes here: the largest count <= `requested`
+       that both attachments' images support, so an unsupported count falls
+       back to 1x instead of dropping the pass (R1 tail). A missing depth side
+       does not constrain. */
+    uint32_t clampedSamples(ResonateRenderFormat color, ResonateRenderFormat depth,
+                            uint32_t requested);
+    VkSampleCountFlags sampleCountsOf(VkFormat format, bool depth_usage);
     /* Scratch for barrierBatch, sized once: the batch runs on the frame
        thread and keeps the frame's allocation-free property. */
     std::vector<VkImageMemoryBarrier> batch_image_barriers_;
@@ -526,6 +533,9 @@ class Context
     /* A fence that timed out leaves work in flight; every later frame is
        refused rather than rewriting the command buffer under it. */
     bool device_lost_ = false;
+    bool msaa_clamped_noted_ = false;
+    /* Probed per-format sample counts, keyed by VkFormat and depth usage. */
+    std::map<uint32_t, VkSampleCountFlags> sample_counts_;
 };
 
 /* Defined in context.cpp: the shared 1x-fallback sample-count mapper, used by

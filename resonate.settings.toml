@@ -94,6 +94,13 @@ default = 0
 description = "Shadow map extent in texels, square; zero keeps the tier's choice (1024 mobile, 2048 desktop)."
 
 [[setting]]
+key = "resonate.render.msaa"
+type = "int"
+range = [0, 8]
+default = 0
+description = "Scene pass sample count (0/1 off, 2/4/8); the device falls back to the highest count its formats support."
+
+[[setting]]
 key = "resonate.input.action-map"
 type = "string"
 default = ""

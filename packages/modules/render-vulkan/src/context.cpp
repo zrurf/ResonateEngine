@@ -1907,6 +1907,79 @@ VkSampleCountFlagBits sampleCountOf(uint32_t samples)
     }
 }
 
+VkSampleCountFlags Context::sampleCountsOf(VkFormat format, bool depth_usage)
+{
+    const uint32_t key = static_cast<uint32_t>(format) << 1U | (depth_usage ? 1U : 0U);
+    if (const auto found = sample_counts_.find(key); found != sample_counts_.end())
+    {
+        return found->second;
+    }
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    usage |= depth_usage ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+                         : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    VkImageFormatProperties properties{};
+    VkSampleCountFlags bits = 0U;
+    if (vkGetPhysicalDeviceImageFormatProperties(physical_, format, VK_IMAGE_TYPE_2D,
+                                                 VK_IMAGE_TILING_OPTIMAL, usage, 0,
+                                                 &properties) == VK_SUCCESS)
+    {
+        bits = properties.sampleCounts;
+    }
+    sample_counts_.emplace(key, bits);
+    return bits;
+}
+
+uint32_t Context::clampedSamples(ResonateRenderFormat color, ResonateRenderFormat depth,
+                                 uint32_t requested)
+{
+    if (requested <= 1U)
+    {
+        return 1U;
+    }
+    if (color == RESONATE_RENDER_FORMAT_UNKNOWN)
+    {
+        color = surfaceFormat();
+    }
+    if (depth == RESONATE_RENDER_FORMAT_UNKNOWN)
+    {
+        depth = RESONATE_RENDER_FORMAT_NONE;
+    }
+    for (const uint32_t candidate : {8U, 4U, 2U})
+    {
+        if (candidate > requested)
+        {
+            continue;
+        }
+        const VkSampleCountFlags bit = static_cast<VkSampleCountFlags>(candidate);
+        if (color != RESONATE_RENDER_FORMAT_NONE &&
+            (sampleCountsOf(formatOf(color), false) & bit) == 0U)
+        {
+            continue;
+        }
+        if (depth != RESONATE_RENDER_FORMAT_NONE &&
+            (sampleCountsOf(formatOf(depth), true) & bit) == 0U)
+        {
+            continue;
+        }
+        if (candidate != requested && !msaa_clamped_noted_)
+        {
+            msaa_clamped_noted_ = true;
+            std::fprintf(stderr,
+                         "render-vulkan: %ux MSAA is unsupported for these formats; using %ux\n",
+                         requested, candidate);
+        }
+        return candidate;
+    }
+    if (!msaa_clamped_noted_)
+    {
+        msaa_clamped_noted_ = true;
+        std::fprintf(stderr,
+                     "render-vulkan: %ux MSAA is unsupported for these formats; using 1x\n",
+                     requested);
+    }
+    return 1U;
+}
+
 ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRenderFormat depth,
                                       uint32_t samples, uint32_t ops, VkRenderPass* out)
 {
@@ -2608,11 +2681,41 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
         desc.colorless != 0U;
     /* The pass tails: a sample count above 1 runs the pass on the device's
        transient MSAA attachments and resolves into the color target; the
-       action bits shape the 1x path. Zero reads as 1x. */
+       action bits shape the 1x path. Zero reads as 1x. The request is clamped
+       to what the pass's formats support here, so a count this device cannot
+       do falls back instead of failing the pass (R1 tail). */
+    uint32_t requested_samples = 0U;
+    if (desc.struct_size >= offsetof(ResonateRenderPassDesc, samples) + sizeof(uint32_t))
+    {
+        requested_samples = desc.samples;
+    }
+    ResonateRenderFormat pass_color = RESONATE_RENDER_FORMAT_NONE;
+    ResonateRenderFormat pass_depth = RESONATE_RENDER_FORMAT_NONE;
+    if (desc.color.value != 0)
+    {
+        if (const ImageSlot* color = images_.live(handleIndex(desc.color.value),
+                                                  handleGeneration(desc.color.value));
+            color != nullptr)
+        {
+            pass_color = color->format_id;
+        }
+    }
+    else if (!colorless)
+    {
+        pass_color = surfaceFormat();
+    }
+    if (desc.depth.value != 0)
+    {
+        if (const ImageSlot* depth = images_.live(handleIndex(desc.depth.value),
+                                                  handleGeneration(desc.depth.value));
+            depth != nullptr)
+        {
+            pass_depth = depth->format_id;
+        }
+    }
     const uint32_t samples =
-        desc.struct_size >= offsetof(ResonateRenderPassDesc, samples) + sizeof(uint32_t)
-            ? static_cast<uint32_t>(sampleCountOf(desc.samples))
-            : 1U;
+        static_cast<uint32_t>(sampleCountOf(clampedSamples(pass_color, pass_depth,
+                                                           requested_samples)));
     const uint32_t ops =
         desc.struct_size >= offsetof(ResonateRenderPassDesc, attachment_ops) + sizeof(uint32_t)
             ? desc.attachment_ops
