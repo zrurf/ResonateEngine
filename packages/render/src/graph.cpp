@@ -293,51 +293,9 @@ bool RenderGraph::compile(GraphPlan& out_plan, std::string& out_error,
         }
     }
 
-    /* Alias groups: first-fit over the transient resources in declaration
-       order, per kind, on disjoint lifetimes. Imports stay outside. */
-    for (ResourceId resource = 0; resource < resources_.size(); ++resource)
-    {
-        const PlanResource& plan_resource = out_plan.resources[resource];
-        if (plan_resource.imported)
-        {
-            continue;
-        }
-        const ResourceLifetime& lifetime = out_plan.lifetimes[resource];
-        if (lifetime.first_step == UINT32_MAX)
-        {
-            continue;
-        }
-        AliasGroup* group = nullptr;
-        for (AliasGroup& candidate : out_plan.aliases)
-        {
-            if (candidate.kind != plan_resource.kind)
-            {
-                continue;
-            }
-            bool overlaps = false;
-            for (ResourceId member : candidate.members)
-            {
-                const ResourceLifetime& other = out_plan.lifetimes[member];
-                if (lifetime.first_step <= other.last_step &&
-                    other.first_step <= lifetime.last_step)
-                {
-                    overlaps = true;
-                    break;
-                }
-            }
-            if (!overlaps)
-            {
-                group = &candidate;
-                break;
-            }
-        }
-        if (group == nullptr)
-        {
-            out_plan.aliases.push_back(AliasGroup{plan_resource.kind, {}});
-            group = &out_plan.aliases.back();
-        }
-        group->members.push_back(resource);
-    }
+    /* Transient resources are materialized once and reused every frame, so no
+       alias groups are computed (IGL/Daxa R11: the field was dead; a
+       memory-aliasing pass is a later slice if a target run needs it). */
 
     /* Barriers: walk the live order tracking each resource's state, and emit
        the transition a use needs from the state before it. A write always

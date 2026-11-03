@@ -168,15 +168,6 @@ struct PlanStep
     std::vector<Barrier> barriers;
 };
 
-/* Declared (transient) resources whose lifetimes do not overlap may share
-   physical memory; the materializer sizes the group's backing from its
-   members. */
-struct AliasGroup
-{
-    ResourceKind kind = ResourceKind::Image;
-    std::vector<ResourceId> members;
-};
-
 struct ResourceLifetime
 {
     std::uint32_t first_step = UINT32_MAX;
@@ -189,7 +180,6 @@ struct GraphPlan
     std::vector<PlanPass> passes;
     std::vector<PlanStep> steps;
     std::vector<Barrier> final_barriers;
-    std::vector<AliasGroup> aliases;
     /* Indexed by resource id; UINT32_MAX first means the resource has no use
        among the live passes. */
     std::vector<ResourceLifetime> lifetimes;
