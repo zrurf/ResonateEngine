@@ -131,7 +131,10 @@ void say(void* user_data, ReportFn report, const std::string& message)
 [[nodiscard]] bool isDocument(const std::filesystem::path& path)
 {
     const std::string extension = loweredExtension(path);
-    return extension == ".rscene" || extension == ".rui";
+    /* A stylesheet parses as a document whose StyleSheet subtrees the importer
+       lifts, so it cooks like one: the shipped form is the binary, and no
+       source path travels with it. */
+    return extension == ".rscene" || extension == ".rui" || extension == ".rcss";
 }
 
 [[nodiscard]] bool isClip(const std::filesystem::path& path)
@@ -160,7 +163,7 @@ void say(void* user_data, ReportFn report, const std::string& message)
 [[nodiscard]] bool isRuntimeAsset(const std::filesystem::path& path)
 {
     static const char* const kExtensions[] = {".ttf", ".otf", ".png", ".jpg",
-                                              ".jpeg", ".ktx2", ".icons", ".rcss"};
+                                              ".jpeg", ".ktx2", ".icons"};
     const std::string extension = loweredExtension(path);
     return std::any_of(std::begin(kExtensions), std::end(kExtensions),
                        [&extension](const char* candidate) { return extension == candidate; });

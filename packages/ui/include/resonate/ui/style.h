@@ -49,8 +49,9 @@ class StyleTable
 bool buildStyles(dom::Document& document, StyleTable& out,
                  std::vector<dom::Diagnostic>& diagnostics);
 
-/* Reads one stylesheet file for loadStylesheets. */
-using StylesheetReader = bool (*)(void* context, std::string_view path, std::string& out_text);
+/* Reads one stylesheet file for loadStylesheets: the bytes may be the text or
+   the cooked binary form, which the importer tells apart by magic. */
+using StylesheetReader = bool (*)(void* context, std::string_view path, std::string& out_bytes);
 
 /* Expands <StyleSheet src="..."> references: each file parses as a document
    whose StyleSheet subtrees are imported right after the reference, so rules

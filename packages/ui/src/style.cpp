@@ -1,7 +1,10 @@
 #include <resonate/ui/style.h>
 
+#include <resonate/dom/document.h>
+
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -576,7 +579,13 @@ bool loadStylesheets(dom::Document& document, void* context, StylesheetReader re
             continue;
         }
         std::vector<dom::Diagnostic> imported_diagnostics;
-        auto imported = dom::Document::parse(text, &documentSchema(), imported_diagnostics);
+        const auto* first = reinterpret_cast<const std::byte*>(text.data());
+        auto imported = dom::Document::isBinary(Span<const std::byte>(first, text.size()))
+                            ? dom::Document::parseBinary(
+                                  Span<const std::byte>(first, text.size()),
+                                  imported_diagnostics)
+                            : dom::Document::parse(text, &documentSchema(),
+                                                   imported_diagnostics);
         for (dom::Diagnostic& diagnostic : imported_diagnostics)
         {
             diagnostic.message = path + ": " + diagnostic.message;
