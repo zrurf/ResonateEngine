@@ -876,7 +876,10 @@ bool RenderSystem::Impl::initialize()
     upscale_easu = upscale_mode == "easu" || (upscale_mode == "auto" && !compat_tier);
 
     resonate::render::RenderGraph graph;
-    canvas_resource = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
+    /* The acquired image arrives in the present layout (undefined on its first
+       use) and the plan takes it from there; the device resolves the {0}
+       import against the acquired image each frame. */
+    canvas_resource = graph.importImage("backbuffer", kLayoutPresent, kLayoutPresent);
     /* The tier picks the scene formats: packed HDR and 16-bit depth halve the
        bandwidth of the full-size targets on a mobile GPU; the settings may
        name the HDR format explicitly. */

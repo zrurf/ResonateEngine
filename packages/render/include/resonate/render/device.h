@@ -274,7 +274,10 @@ typedef struct ResonateRenderPassDesc
 typedef struct ResonateRenderBarrierDesc
 {
     uint32_t struct_size;
-    ResonateRenderBuffer buffer; /* one of the two, the other null */
+    /* One of the two, the other null. Image {0} with no buffer names the
+       canvas's acquired image — the same convention begin_pass uses for its
+       colour target — so the plan can carry the canvas's own transitions. */
+    ResonateRenderBuffer buffer;
     ResonateRenderImage image;
     uint32_t before_stages;
     uint32_t after_stages;

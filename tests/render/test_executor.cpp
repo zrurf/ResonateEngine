@@ -122,9 +122,9 @@ FakeDevice* makeDevice()
 }
 
 /* A scene pass writing a transient, a post pass reading it into the canvas:
-   the smallest graph with a materialized resource, interior barriers and a
-   canvas the executor must not final-barrier. The passes record what the
-   context resolved for them. */
+   the smallest graph with a materialized resource, interior barriers and the
+   canvas's own present transition. The passes record what the context
+   resolved for them. */
 struct DemoGraph
 {
     RenderGraph graph;
@@ -138,7 +138,7 @@ struct DemoGraph
 
     DemoGraph()
     {
-        canvas = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
+        canvas = graph.importImage("backbuffer", kLayoutPresent, kLayoutPresent);
         hdr = graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT, 64U, 64U,
                                  RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
 
@@ -204,16 +204,18 @@ TEST_CASE("executor: one submission per frame, in plan order", "[render][executo
 
         /* The transient materializes before the first frame opens (the resource
            table write is the creation); frame two reuses it. Each frame replays
-           the plan's two transient barriers — the canvas's own are the device's
-           and stay unreplayed. */
-        REQUIRE(fake->calls.size() == 9U);
+           the plan's four barriers — the scene's write, the post pass's read
+           and canvas write, and the canvas's present transition. */
+        REQUIRE(fake->calls.size() == 13U);
         CHECK(fake->calls[0] == "create_image");
         CHECK(fake->calls[1] == "begin_frame");
         CHECK(fake->calls[2] == "barrier");
         CHECK(fake->calls[3] == "barrier");
-        CHECK(fake->calls[4] == "present");
-        CHECK(fake->calls[5] == "begin_frame");
-        CHECK(fake->calls[8] == "present");
+        CHECK(fake->calls[4] == "barrier");
+        CHECK(fake->calls[5] == "barrier");
+        CHECK(fake->calls[6] == "present");
+        CHECK(fake->calls[7] == "begin_frame");
+        CHECK(fake->calls[12] == "present");
 
         const auto first_present = std::find(fake->calls.begin(), fake->calls.end(), "present");
         REQUIRE(first_present != fake->calls.end());
@@ -227,7 +229,7 @@ TEST_CASE("executor: one submission per frame, in plan order", "[render][executo
     delete fake;
 }
 
-TEST_CASE("executor: the canvas reads as {0}, the transient as its created handle",
+TEST_CASE("executor: the canvas reads as {0} and its transitions reach the device",
           "[render][executor]")
 {
     DemoGraph demo;
@@ -242,19 +244,28 @@ TEST_CASE("executor: the canvas reads as {0}, the transient as its created handl
         REQUIRE(fake->created_images.size() == 1U);
         CHECK(demo.seen_hdr.value == 1U);
 
-        /* The plan derives the canvas's present transition, but the device's own
-           render pass takes the swapchain image there — the executor replays no
-           barrier that lands in present. */
-        bool canvas_final = false;
-        for (const Barrier& barrier : demo.plan.final_barriers)
-        {
-            canvas_final = canvas_final || barrier.resource == demo.canvas;
-        }
-        CHECK(canvas_final);
+        /* The plan declares the canvas's whole flow, so the executor replays
+           it: the import's first-use transition out of present into the
+           attachment, and the final transition back. Both name the canvas as
+           image {0}; the device resolves it against the acquired image. */
+        REQUIRE(fake->barriers.size() == 4U);
+        bool entered = false;
+        bool left = false;
         for (const ResonateRenderBarrierDesc& replayed : fake->barriers)
         {
-            CHECK(replayed.after_layout != RESONATE_RENDER_LAYOUT_PRESENT);
+            if (replayed.image.value != 0U)
+            {
+                continue;
+            }
+            entered = entered || (replayed.before_layout == RESONATE_RENDER_LAYOUT_PRESENT &&
+                                  replayed.after_layout ==
+                                      RESONATE_RENDER_LAYOUT_COLOR_ATTACHMENT);
+            left = left || replayed.after_layout == RESONATE_RENDER_LAYOUT_PRESENT;
         }
+        CHECK(entered);
+        CHECK(left);
+        CHECK(fake->barriers.back().image.value == 0U);
+        CHECK(fake->barriers.back().after_layout == RESONATE_RENDER_LAYOUT_PRESENT);
     }
     delete fake;
 }
@@ -290,9 +301,9 @@ TEST_CASE("executor: barriers carry the derived vocabulary", "[render][executor]
         std::string error;
         REQUIRE(executor.execute(error));
 
-        REQUIRE(fake->barriers.size() == 2U);
-        /* The transient's acquire, then its write-to-read transition; the
-           canvas's barriers are the device's and none is replayed for it. */
+        REQUIRE(fake->barriers.size() == 4U);
+        /* The transient's acquire and its write-to-read transition; then the
+           canvas's entry (out of present) and its present transition. */
         CHECK(fake->barriers[0].image.value != 0U);
         CHECK(fake->barriers[0].before_layout == RESONATE_RENDER_LAYOUT_UNDEFINED);
         CHECK(fake->barriers[0].after_layout == RESONATE_RENDER_LAYOUT_COLOR_ATTACHMENT);
@@ -301,6 +312,11 @@ TEST_CASE("executor: barriers carry the derived vocabulary", "[render][executor]
         CHECK(fake->barriers[1].after_layout == RESONATE_RENDER_LAYOUT_SHADER_READ_ONLY);
         CHECK(fake->barriers[1].before_access == kAccessColorWrite);
         CHECK(fake->barriers[1].after_access == kAccessShaderRead);
+        CHECK(fake->barriers[2].image.value == 0U);
+        CHECK(fake->barriers[2].before_layout == RESONATE_RENDER_LAYOUT_PRESENT);
+        CHECK(fake->barriers[2].after_layout == RESONATE_RENDER_LAYOUT_COLOR_ATTACHMENT);
+        CHECK(fake->barriers[3].image.value == 0U);
+        CHECK(fake->barriers[3].after_layout == RESONATE_RENDER_LAYOUT_PRESENT);
     }
     delete fake;
 }

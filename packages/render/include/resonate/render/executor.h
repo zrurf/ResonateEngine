@@ -9,8 +9,9 @@
  * materialized once and reused every frame; the graph's barriers treat each
  * frame as starting discarded, so a transient's first use in a frame must be a
  * write. The canvas import needs no backing: its handle reads as {0}, the
- * device's swapchain convention, and the device owns its layout flow — every
- * canvas barrier the plan derives is the device's, not the executor's.
+ * device's canvas convention, and the plan carries its layout flow — the
+ * first-use transition into colour attachment and the final transition into
+ * present — which the device replays against the acquired image.
  */
 
 #include <resonate/render/graph.h>

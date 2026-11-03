@@ -224,10 +224,6 @@ bool GraphExecutor::applyAll(const std::vector<Barrier>& barriers, const char* f
     {
         for (const Barrier& barrier : barriers)
         {
-            if (barrier.resource == canvas_)
-            {
-                continue; /* the device owns the canvas's layout flow */
-            }
             if (!apply(barrier))
             {
                 out_error = failure;
@@ -238,9 +234,8 @@ bool GraphExecutor::applyAll(const std::vector<Barrier>& barriers, const char* f
     }
 
     /* The compat tier: consecutive same-direction barriers share one device
-       call. The canvas keeps its own path, and a direction flip flushes the
-       run so a read-after-write never merges with the write it depends
-       on. */
+       call. A direction flip flushes the run so a read-after-write never
+       merges with the write it depends on. */
     constexpr std::uint32_t kWrites =
         RESONATE_RENDER_ACCESS_SHADER_WRITE | RESONATE_RENDER_ACCESS_COLOR_WRITE |
         RESONATE_RENDER_ACCESS_DEPTH_WRITE | RESONATE_RENDER_ACCESS_TRANSFER_WRITE;
@@ -262,10 +257,6 @@ bool GraphExecutor::applyAll(const std::vector<Barrier>& barriers, const char* f
     bool have_run = false;
     for (const Barrier& barrier : barriers)
     {
-        if (barrier.resource == canvas_)
-        {
-            continue;
-        }
         const bool barrier_writes = (barrier.after_access & kWrites) != 0U;
         if (have_run && barrier_writes != writing)
         {

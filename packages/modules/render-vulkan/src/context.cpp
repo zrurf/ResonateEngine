@@ -885,6 +885,11 @@ ResonateStatus Context::ensureDevice()
             ? vulkan12.descriptorBindingStorageBufferUpdateAfterBind != 0U
             : (extension_indexing ? indexing.descriptorBindingStorageBufferUpdateAfterBind != 0U
                                   : false);
+    const bool uab_unused =
+        core_indexing
+            ? vulkan12.descriptorBindingUpdateUnusedWhilePending != 0U
+            : (extension_indexing ? indexing.descriptorBindingUpdateUnusedWhilePending != 0U
+                                  : false);
     if (core_indexing)
     {
         partially_bound = vulkan12.descriptorBindingPartiallyBound;
@@ -899,8 +904,10 @@ ResonateStatus Context::ensureDevice()
     bindless_ = partially_bound && non_uniform &&
                 std::getenv("RESONATE_FORCE_COMPAT") == nullptr;
     /* A table slot is rewritten while frames may still sample the set; only a
-       device with update-after-bind lets the write skip the idle wait. */
-    update_after_bind_ = bindless_ && uab_sampled && uab_storage;
+       device with update-after-bind lets the write skip the idle wait, and
+       rewriting a binding a pending submission may read also needs the
+       unused-while-pending feature. */
+    update_after_bind_ = bindless_ && uab_sampled && uab_storage && uab_unused;
 
     const bool dynamic_buffers = features.features.shaderStorageBufferArrayDynamicIndexing;
     const bool dynamic_images = features.features.shaderSampledImageArrayDynamicIndexing;
@@ -936,6 +943,7 @@ ResonateStatus Context::ensureDevice()
         {
             enabled12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
             enabled12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+            enabled12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
         }
         enabled12.pNext = &enabled11;
         interface_chain = &enabled12;
@@ -948,6 +956,7 @@ ResonateStatus Context::ensureDevice()
         {
             enabled_indexing.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
             enabled_indexing.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+            enabled_indexing.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
         }
         enabled_indexing.pNext = &enabled11;
         interface_chain = &enabled_indexing;
@@ -1172,6 +1181,10 @@ ResonateStatus Context::ensureDevice()
     VkDescriptorSetLayoutCreateInfo table_layout{};
     table_layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     table_layout.pNext = bindless_ ? &binding_flags_info : nullptr;
+    /* The binding flags above require the layout to opt into the same pool
+       feature; without the flag the flags are invalid. */
+    table_layout.flags =
+        update_after_bind_ ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT : 0U;
     table_layout.bindingCount = kTableBindingCount;
     table_layout.pBindings = table_bindings;
     if (vkCreateDescriptorSetLayout(device_, &table_layout, nullptr, &table_layout_) != VK_SUCCESS)
@@ -1342,12 +1355,13 @@ ResonateStatus Context::ensureDevice()
         return RESONATE_E_INTERNAL;
     }
 
-    if (!bindless_)
+    /* A released table slot must point at a real image: a sampled-image
+       descriptor cannot be null (unlike a storage buffer), so the dummy backs
+       both tiers — a partially bound table still needs a defined view for the
+       destroy path's rewrite. */
+    if (ResonateStatus status = createTableImageDummy(); status != RESONATE_OK)
     {
-        if (ResonateStatus status = createTableImageDummy(); status != RESONATE_OK)
-        {
-            return status;
-        }
+        return status;
     }
     if (ResonateStatus status = createShadowDummy(); status != RESONATE_OK)
     {
@@ -1780,6 +1794,7 @@ ResonateStatus Context::createSwapchain(uint32_t width, uint32_t height)
         views_.push_back(handle);
     }
     swapchain_images_ = images;
+    swapchain_presented_.assign(images.size(), false);
     discardMsaa();
 
     if (renderPassFor(RESONATE_RENDER_FORMAT_UNKNOWN, RESONATE_RENDER_FORMAT_UNKNOWN, 1, 0,
@@ -1931,6 +1946,7 @@ void Context::destroySwapchainObjects()
     }
     views_.clear();
     swapchain_images_.clear();
+    swapchain_presented_.clear();
     for (VkSemaphore semaphore : present_semaphores_)
     {
         vkDestroySemaphore(device_, semaphore, nullptr);
@@ -2162,12 +2178,9 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
         attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        /* Only a swapchain image ends a pass in the present layout; an
-           offscreen target stays a color attachment, which is where readback
-           picks it up. */
-        attachments[1].finalLayout = color == RESONATE_RENDER_FORMAT_UNKNOWN && !offscreen_
-                                         ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-                                         : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        /* The pass leaves every colour target in the colour-attachment layout;
+           the plan's final barrier is what takes the canvas to present (R3). */
+        attachments[1].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
         attachments[2].format = VK_FORMAT_D32_SFLOAT;
         attachments[2].samples = sample_flags;
@@ -2188,13 +2201,15 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
             color_transient ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
         attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        /* Only a swapchain image ends a pass in the present layout; an
-           offscreen target stays a color attachment, which is where readback
-           picks it up. */
-        attachments[0].finalLayout = color == RESONATE_RENDER_FORMAT_UNKNOWN && !offscreen_
-                                         ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-                                         : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        /* A loading pass must find the target in the attachment layout: the
+           graph transitions it there before the pass, and the canvas follows
+           the same rule. A clearing pass may discard whatever was there. */
+        attachments[0].initialLayout = color_loads
+                                           ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                                           : VK_IMAGE_LAYOUT_UNDEFINED;
+        /* The pass leaves every colour target in the colour-attachment layout;
+           the plan's final barrier is what takes the canvas to present (R3). */
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
 
     VkSubpassDescription subpass{};
@@ -2233,7 +2248,9 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
             depth_transient ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
         attachments[depth_index].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[depth_index].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachments[depth_index].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[depth_index].initialLayout =
+            depth_loads ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                        : VK_IMAGE_LAYOUT_UNDEFINED;
         attachments[depth_index].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
         subpass.pDepthStencilAttachment = &depth_reference;
@@ -2246,24 +2263,6 @@ ResonateStatus Context::renderPassFor(ResonateRenderFormat color, ResonateRender
     pass.pAttachments = attachments;
     pass.subpassCount = 1;
     pass.pSubpasses = &subpass;
-    /* A pass that ends in the present layout feeds the presentation engine,
-       which is external to the pass: the dependency makes the colour writes
-       and the final transition available before that read. The Mali-G51 drops
-       the last pass's fragment work without it (a frame shows the clear
-       colour alone) while the same pass keeps drawing on Adreno and desktop
-       drivers, so the dependency is not optional. */
-    VkSubpassDependency present_dependency{};
-    if (!colorless && color == RESONATE_RENDER_FORMAT_UNKNOWN && !offscreen_)
-    {
-        present_dependency.srcSubpass = 0;
-        present_dependency.dstSubpass = VK_SUBPASS_EXTERNAL;
-        present_dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        present_dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        present_dependency.dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-        present_dependency.dstAccessMask = 0;
-        pass.dependencyCount = 1;
-        pass.pDependencies = &present_dependency;
-    }
     VkRenderPass handle = VK_NULL_HANDLE;
     const VkResult created = vkCreateRenderPass(device_, &pass, nullptr, &handle);
     if (created != VK_SUCCESS)
@@ -2747,6 +2746,9 @@ ResonateStatus Context::beginFrame()
         /* The image shares the frame slot, so the fence above guarantees the
            image is free as well. */
         image_index_ = frame_ % kFramesInFlight;
+        /* Nothing transitions an offscreen canvas before use: the plan's
+           first-use barrier discards. */
+        canvas_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
     }
     else
     {
@@ -2776,6 +2778,13 @@ ResonateStatus Context::beginFrame()
            the surface is actually out of date. */
         recreate_pending_ = false;
         image_index_ = image_index;
+        /* The acquire releases the image to the application; a fresh image has
+           never been presented, so its layout is undefined, and one that has
+           is in present. */
+        const bool presented = image_index < swapchain_presented_.size() &&
+                               swapchain_presented_[image_index];
+        canvas_layout_ =
+            presented ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED;
         trace("acquire result=%d image=%u", static_cast<int>(acquired), image_index);
     }
 
@@ -3246,6 +3255,12 @@ ResonateStatus Context::beginPass(const ResonateRenderPassDesc& desc)
     pass_begin.pClearValues = clears;
     profileTimestamp(command);
     vkCmdBeginRenderPass(command, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
+    if (desc.color.value == 0 && !colorless)
+    {
+        /* The pass ends every colour target in the attachment layout; the
+           graph's present transition is a separate barrier. */
+        canvas_layout_ = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
 
     VkViewport viewport{};
     viewport.width = static_cast<float>(draw_extent.width);
@@ -3273,6 +3288,109 @@ ResonateStatus Context::endPass()
     profileTimestamp(frames_[frame_ % kFramesInFlight].command);
     pass_open_ = false;
     return RESONATE_OK;
+}
+
+/* The plan declares the canvas as image {0} — the same convention begin_pass
+   uses for its colour target. The device rewrites that barrier around three
+   facts the plan does not carry:
+
+   - The presentation engine is the frame's external source. The acquire
+     semaphore releases the image, waited at colour output; a barrier whose
+     source scope is empty would otherwise be free to run its transition
+     before that wait resolves, against an image the engine still reads. An
+     empty source becomes the wait's stage — the cross-frame edge a Vulkan 1.1
+     binary semaphore provides.
+   - The destination of a transition into present is the presentation engine,
+     outside the command buffer: every later command, read access. Mali-G51
+     drops the last pass's work without it.
+   - An offscreen canvas has no engine and never leaves the colour-attachment
+     layout — readback reads it there — so both present endpoints read as
+     colour attachment. */
+bool Context::describeCanvasBarrier(const ResonateRenderBarrierDesc& desc,
+                                    VkImageMemoryBarrier* out, VkPipelineStageFlags* out_before,
+                                    VkPipelineStageFlags* out_after,
+                                    VkImageLayout* out_layout) const
+{
+    VkImage image = VK_NULL_HANDLE;
+    if (offscreen_)
+    {
+        if (image_index_ >= offscreen_images_.size())
+        {
+            return false;
+        }
+        image = offscreen_images_[image_index_].image;
+    }
+    else
+    {
+        if (image_index_ >= swapchain_images_.size())
+        {
+            return false;
+        }
+        image = swapchain_images_[image_index_];
+    }
+    if (image == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    VkImageLayout before = layoutToVulkan(desc.before_layout);
+    VkImageLayout after = layoutToVulkan(desc.after_layout);
+    if (offscreen_)
+    {
+        /* An offscreen target's previous contents are never preserved: the
+           pass clears, and frame one starts undefined anyway. UNDEFINED is the
+           only source layout valid on every frame. */
+        if (before == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+        {
+            before = VK_IMAGE_LAYOUT_UNDEFINED;
+        }
+        if (after == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+        {
+            after = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
+    }
+    else if (before == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR &&
+             (image_index_ >= swapchain_presented_.size() ||
+              !swapchain_presented_[image_index_]))
+    {
+        /* A swapchain image that has never been presented is undefined, not
+           in present: the plan's present-to-attachment transition still
+           describes the right operation, but its source may discard. */
+        before = VK_IMAGE_LAYOUT_UNDEFINED;
+    }
+    VkPipelineStageFlags before_stages = stagesToVulkan(desc.before_stages);
+    VkPipelineStageFlags after_stages = stagesToVulkan(desc.after_stages);
+    VkAccessFlags after_access = accessToVulkan(desc.after_access);
+    if (before_stages == 0)
+    {
+        before_stages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    }
+    if (after == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+    {
+        after_stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        after_access = VK_ACCESS_MEMORY_READ_BIT;
+    }
+    else if (after_stages == 0)
+    {
+        after_stages = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    }
+
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcAccessMask = accessToVulkan(desc.before_access);
+    barrier.dstAccessMask = after_access;
+    barrier.oldLayout = before;
+    barrier.newLayout = after;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    *out = barrier;
+    *out_before = before_stages;
+    *out_after = after_stages;
+    *out_layout = after;
+    return true;
 }
 
 ResonateStatus Context::barrier(const ResonateRenderBarrierDesc* desc)
@@ -3341,7 +3459,20 @@ ResonateStatus Context::barrier(const ResonateRenderBarrierDesc* desc)
                              &buffer_barrier, 0, nullptr);
         return RESONATE_OK;
     }
-    return RESONATE_E_INVALID;
+
+    VkImageMemoryBarrier canvas_barrier{};
+    VkPipelineStageFlags canvas_before = 0;
+    VkPipelineStageFlags canvas_after = 0;
+    VkImageLayout canvas_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (!describeCanvasBarrier(*desc, &canvas_barrier, &canvas_before, &canvas_after,
+                               &canvas_layout))
+    {
+        return RESONATE_E_INVALID;
+    }
+    vkCmdPipelineBarrier(command, canvas_before, canvas_after, 0, 0, nullptr, 0, nullptr, 1,
+                         &canvas_barrier);
+    canvas_layout_ = canvas_layout;
+    return RESONATE_OK;
 }
 
 ResonateStatus Context::barrierBatch(const ResonateRenderBarrierDesc* descs, uint32_t count)
@@ -3380,12 +3511,10 @@ ResonateStatus Context::barrierBatch(const ResonateRenderBarrierDesc* descs, uin
             {
                 break;
             }
-            const VkPipelineStageFlags before = stagesToVulkan(desc.before_stages);
-            const VkPipelineStageFlags after = stagesToVulkan(desc.after_stages);
-            before_stages |= before != 0 ? before : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-            after_stages |= after != 0 ? after : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
             const VkAccessFlags src = accessToVulkan(desc.before_access);
             const VkAccessFlags dst = accessToVulkan(desc.after_access);
+            const VkPipelineStageFlags before = stagesToVulkan(desc.before_stages);
+            const VkPipelineStageFlags after = stagesToVulkan(desc.after_stages);
             if (desc.image.value != 0)
             {
                 const ImageSlot* slot =
@@ -3395,6 +3524,10 @@ ResonateStatus Context::barrierBatch(const ResonateRenderBarrierDesc* descs, uin
                 {
                     return RESONATE_E_INVALID;
                 }
+                before_stages |=
+                    before != 0 ? before : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+                after_stages |=
+                    after != 0 ? after : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
                 VkImageMemoryBarrier image_barrier{};
                 image_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                 image_barrier.srcAccessMask = src;
@@ -3412,6 +3545,10 @@ ResonateStatus Context::barrierBatch(const ResonateRenderBarrierDesc* descs, uin
             }
             else if (desc.buffer.value != 0)
             {
+                before_stages |=
+                    before != 0 ? before : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+                after_stages |=
+                    after != 0 ? after : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
                 VkBufferMemoryBarrier buffer_barrier{};
                 buffer_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
                 buffer_barrier.srcAccessMask = src;
@@ -3424,7 +3561,19 @@ ResonateStatus Context::barrierBatch(const ResonateRenderBarrierDesc* descs, uin
             }
             else
             {
-                return RESONATE_E_INVALID;
+                VkImageMemoryBarrier canvas_barrier{};
+                VkPipelineStageFlags canvas_before = 0;
+                VkPipelineStageFlags canvas_after = 0;
+                VkImageLayout canvas_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+                if (!describeCanvasBarrier(desc, &canvas_barrier, &canvas_before, &canvas_after,
+                                           &canvas_layout))
+                {
+                    return RESONATE_E_INVALID;
+                }
+                before_stages |= canvas_before;
+                after_stages |= canvas_after;
+                batch_image_barriers_.push_back(canvas_barrier);
+                canvas_layout_ = canvas_layout;
             }
         }
         vkCmdPipelineBarrier(command, before_stages, after_stages, 0, 0, nullptr,
@@ -3518,16 +3667,18 @@ ResonateStatus Context::present()
                              &to_present);
     }
 
-    /* The frame's colour writes must be available to the presentation engine
-       before the image leaves this submission. On Mali-G51 the semaphore alone
-       is not enough: without this barrier some frames present the final pass's
-       clear colour and drop its draw. */
+    /* The plan normally ends the frame with the canvas's present transition,
+       and the tracked layout says so. A frame without one — a raw device
+       frame, or a plan whose canvas pass was culled — still needs the colour
+       writes available to the presentation engine before the image leaves
+       this submission, with the masks Mali-G51 requires. */
     if (!offscreen_ && swapchain_ != VK_NULL_HANDLE &&
+        canvas_layout_ != VK_IMAGE_LAYOUT_PRESENT_SRC_KHR &&
         image_index_ < static_cast<uint32_t>(swapchain_images_.size()))
     {
         VkImageMemoryBarrier to_present{};
         to_present.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        to_present.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        to_present.oldLayout = canvas_layout_;
         to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         to_present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         to_present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -3540,7 +3691,9 @@ ResonateStatus Context::present()
         vkCmdPipelineBarrier(frame.command, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                              VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0U, 0U, nullptr, 0U, nullptr, 1U,
                              &to_present);
+        canvas_layout_ = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     }
+
     tracePresentedTexel(frame.command);
     vkEndCommandBuffer(frame.command);
 
@@ -3625,6 +3778,10 @@ ResonateStatus Context::present()
     {
         note(surface_failed_, "present failed");
         return RESONATE_E_INTERNAL;
+    }
+    if (image_index_ < swapchain_presented_.size())
+    {
+        swapchain_presented_[image_index_] = true;
     }
     return RESONATE_OK;
 }

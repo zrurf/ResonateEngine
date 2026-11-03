@@ -305,6 +305,12 @@ class Context
        thread and keeps the frame's allocation-free property. */
     std::vector<VkImageMemoryBarrier> batch_image_barriers_;
     std::vector<VkBufferMemoryBarrier> batch_buffer_barriers_;
+    /* Turns a canvas barrier (image {0}) into the device's convention: the
+       acquired image, the acquire semaphore as the source edge, and the
+       presentation engine as the destination of the present transition. */
+    bool describeCanvasBarrier(const ResonateRenderBarrierDesc& desc, VkImageMemoryBarrier* out,
+                               VkPipelineStageFlags* out_before, VkPipelineStageFlags* out_after,
+                               VkImageLayout* out_layout) const;
     VkBuffer resolveBuffer(ResonateRenderBuffer handle) const;
     void destroySwapchainObjects();
     bool recreateSwapchain();
@@ -540,6 +546,13 @@ class Context
     VkBuffer bound_index_ = VK_NULL_HANDLE;
 
     uint32_t image_index_ = 0;
+    /* Where the canvas's image is right now: reset at acquire, moved by canvas
+       barriers and by passes that render into it. present() transitions only
+       when the frame's plan did not. */
+    VkImageLayout canvas_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    /* Whether each swapchain image has been presented at least once. A fresh
+       image is UNDEFINED, not present: the first transition into it says so. */
+    std::vector<bool> swapchain_presented_;
     VkPresentModeKHR present_mode_ = VK_PRESENT_MODE_FIFO_KHR;
     bool vsync_ = true;
     /* RESONATE_RENDER_PRESENT_* or -1: the configuration's vsync bool decides

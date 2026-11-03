@@ -778,7 +778,10 @@ TEST_CASE("offscreen: the probe pipeline reads the same texel at 1x and 4x",
         pipeline.struct_size = sizeof(pipeline);
         pipeline.vertex_shader = vertex;
         pipeline.fragment_shader = fragment;
-        pipeline.color_format = RESONATE_RENDER_FORMAT_UNKNOWN; /* the canvas */
+        /* The scene pass draws into the resolved target below, so the pipeline
+           is created for that format (a pipeline may only run in a pass of its
+           own attachments' formats). */
+        pipeline.color_format = RESONATE_RENDER_FORMAT_R8G8B8A8_UNORM;
         pipeline.samples = variant == 0 ? 1U : 4U;
         REQUIRE(device->create_pipeline(device->self, &pipeline,
                                         &probes[variant]) == RESONATE_OK);
@@ -814,46 +817,6 @@ TEST_CASE("offscreen: the probe pipeline reads the same texel at 1x and 4x",
     std::memcpy(frame_bytes.data() + 160U, sun, sizeof(sun));
     const std::uint32_t frame_slot = device->buffer_slot(device->self, frame_buffer);
 
-    const auto frame = [&](std::uint32_t samples)
-    {
-        REQUIRE(device->begin_frame(device->self) == RESONATE_OK);
-        /* The renderer uploads the frame data inside the open frame; the
-           update lands with the frame's own command stream. */
-        REQUIRE(device->update_buffer(device->self, frame_buffer, 0U, frame_bytes.data(),
-                                      static_cast<std::uint64_t>(frame_bytes.size())) ==
-                RESONATE_OK);
-        ResonateRenderPassDesc shadow_pass = {};
-        shadow_pass.struct_size = sizeof(shadow_pass);
-        shadow_pass.colorless = 1U;
-        shadow_pass.depth = shadow;
-        REQUIRE(device->begin_pass(device->self, &shadow_pass) == RESONATE_OK);
-        REQUIRE(device->end_pass(device->self) == RESONATE_OK);
-        REQUIRE(device->bind_image_slot(device->self, 1U, other, 1U) == RESONATE_OK);
-        REQUIRE(device->bind_pipeline(device->self, probe_compute) == RESONATE_OK);
-        const std::uint32_t compute_constants[5] = {storage_slot, 0U, 0U, 0U, 2U};
-        REQUIRE(device->set_constants(device->self, compute_constants,
-                                      sizeof(compute_constants)) == RESONATE_OK);
-        REQUIRE(device->dispatch(device->self, 2U, 1U, 1U) == RESONATE_OK);
-        ResonateRenderPassDesc pass = {};
-        pass.struct_size = sizeof(pass);
-        pass.color.value = 0U; /* the canvas */
-        pass.clear_color = ResonateVec4{0.0F, 0.0F, 0.0F, 1.0F};
-        pass.samples = samples;
-        REQUIRE(device->begin_pass(device->self, &pass) == RESONATE_OK);
-        REQUIRE(device->bind_pipeline(device->self, probes[samples == 1U ? 0U : 1U]) ==
-                RESONATE_OK);
-        /* The scene push's shape: model (64 B), tint (16 B), slots (16 B),
-           slots2 (16 B), texture_slot (4 B). The fragment reads the frame
-           slot and the texture slot. */
-        std::uint32_t constants[29] = {};
-        constants[20] = frame_slot;
-        constants[28] = 0U; /* texture slot 0 */
-        REQUIRE(device->set_constants(device->self, constants, sizeof(constants)) == RESONATE_OK);
-        REQUIRE(device->draw(device->self, 3U, 1U) == RESONATE_OK);
-        REQUIRE(device->end_pass(device->self) == RESONATE_OK);
-        REQUIRE(device->present(device->self) == RESONATE_OK);
-        REQUIRE(device->wait_idle(device->self) == RESONATE_OK);
-    };
     const auto read_red = [&]
     {
         std::vector<std::uint8_t> pixels(64U * 64U * 4U);
