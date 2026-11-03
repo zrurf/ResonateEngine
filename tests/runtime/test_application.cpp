@@ -169,5 +169,6 @@ TEST_CASE("the application reports a plugin directory it cannot read", "[runtime
 {
     const DummyVideo dummy;
 
-    REQUIRE(resonate::Application::run(configFor("no_such_plugin_directory")) == EXIT_FAILURE);
+    resonate::Application::Config config = configFor("no_such_plugin_directory");
+    REQUIRE(resonate::Application::run(config) == EXIT_FAILURE);
 }

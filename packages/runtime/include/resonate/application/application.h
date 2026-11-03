@@ -114,10 +114,14 @@ class Application
     /* Discovers, resolves and attaches modules, runs the frame loop, then
        detaches in reverse order. Returns a process exit code.
 
+       The configuration is live: a watched file reload updates `settings` (and
+       `max_fps` through the applier's own sink) during the run, which is why
+       the run takes it by reference.
+
        Runs until requestStop() is called — the SIGINT handler installed for the
        run's duration does that, so Ctrl+C stops the process in any mode — or until
        the tick above returns false. */
-    static int run(const Config& config);
+    static int run(Config& config);
 
     /* Ends the run in progress: the frame finishes, then the loop stops. */
     static void requestStop();

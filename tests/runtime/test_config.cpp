@@ -1,9 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstdio>
+#include <functional>
 #include <fstream>
 #include <map>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -363,4 +366,202 @@ TEST_CASE("the project settings contract declares the engine keys", "[settings]"
     REQUIRE(antialiasing != nullptr);
     CHECK(antialiasing->type == resonate::SettingType::Enum);
     CHECK(antialiasing->values.size() == 2U);
+}
+
+namespace
+{
+
+struct RecordedChange
+{
+    std::string path;
+    std::string value;
+};
+
+struct ChangeLog
+{
+    std::vector<RecordedChange> changes;
+    std::vector<std::string> messages;
+
+    static void onChange(void* user, const char* section, const char* key, const char* value)
+    {
+        auto* log = static_cast<ChangeLog*>(user);
+        std::string path = section != nullptr ? section : "";
+        if (key != nullptr)
+        {
+            if (!path.empty())
+            {
+                path.push_back('.');
+            }
+            path.append(key);
+        }
+        log->changes.push_back(RecordedChange{std::move(path), value != nullptr ? value : ""});
+    }
+
+    static void onMessage(void* user, const char* message)
+    {
+        static_cast<ChangeLog*>(user)->messages.emplace_back(message != nullptr ? message : "");
+    }
+
+    static bool onValidate(void* user, const char* section, const char* key, const char* value,
+                           std::string& error)
+    {
+        auto* log = static_cast<ChangeLog*>(user);
+        std::string path = section != nullptr ? section : "";
+        if (key != nullptr)
+        {
+            if (!path.empty())
+            {
+                path.push_back('.');
+            }
+            path.append(key);
+        }
+        /* The fixture refuses one specific value to exercise the refusal. */
+        if (value != nullptr && std::string(value) == "poison")
+        {
+            error = path + ": refused by the test";
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] const std::string* find(const std::string& path) const
+    {
+        for (const RecordedChange& change : changes)
+        {
+            if (change.path == path)
+            {
+                return &change.value;
+            }
+        }
+        return nullptr;
+    }
+};
+
+/* Pumps the store until `done` holds or the budget runs out: the OS delivers
+   the notification asynchronously. */
+bool pollUntil(resonate::ConfigStore& store, const std::function<bool()>& done,
+               int budget_millis = 3000)
+{
+    for (int waited = 0; waited < budget_millis; waited += 20)
+    {
+        store.poll();
+        if (done())
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("config store: a watched file reloads and reports each changed key", "[config]")
+{
+    TempConfig file;
+    file.write("[resonate.render]\nvsync = false\nname = \"first\"\n"
+               "[resonate.window]\nwidth = 800\n");
+
+    resonate::ConfigStore store;
+    ChangeLog log;
+    store.load(file.path());
+    store.setChangeSink(&log, &ChangeLog::onChange);
+    store.setMessageSink(&log, &ChangeLog::onMessage);
+    REQUIRE(store.watchFiles());
+
+    /* Let the filesystem settle the first write before the second one, so the
+       timestamps differ. */
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    file.write("[resonate.render]\nvsync = true\nname = \"second\"\n"
+               "[resonate.window]\nwidth = 800\n"
+               "[resonate.render.detail]\nlevel = 2\n");
+
+    REQUIRE(pollUntil(store, [&log] { return log.changes.size() >= 2U; }));
+    CHECK(store.readBool("resonate.render", "vsync", false) == true);
+    CHECK(store.value("resonate.render", "name") == std::optional<std::string>("second"));
+    CHECK(store.value("resonate.render.detail", "level") == std::optional<std::string>("2"));
+
+    const std::string* vsync = log.find("resonate.render.vsync");
+    REQUIRE(vsync != nullptr);
+    CHECK(*vsync == "true");
+    const std::string* level = log.find("resonate.render.detail.level");
+    REQUIRE(level != nullptr);
+    CHECK(*level == "2");
+    /* The unchanged key reports nothing. */
+    CHECK(log.find("resonate.window.width") == nullptr);
+}
+
+TEST_CASE("config store: a removed key reports an empty value", "[config]")
+{
+    TempConfig file;
+    file.write("[resonate.render]\nname = \"kept\"\nvsync = false\n");
+
+    resonate::ConfigStore store;
+    ChangeLog log;
+    store.load(file.path());
+    store.setChangeSink(&log, &ChangeLog::onChange);
+    REQUIRE(store.watchFiles());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    file.write("[resonate.render]\nname = \"kept\"\n");
+
+    REQUIRE(pollUntil(store, [&log] { return log.find("resonate.render.vsync") != nullptr; }));
+    CHECK(*log.find("resonate.render.vsync") == "");
+    CHECK(store.value("resonate.render", "vsync") == std::nullopt);
+}
+
+TEST_CASE("config store: a bad reload keeps the previous values", "[config]")
+{
+    TempConfig file;
+    file.write("[resonate.render]\nvsync = true\n");
+
+    resonate::ConfigStore store;
+    ChangeLog log;
+    store.load(file.path());
+    store.setChangeSink(&log, &ChangeLog::onChange);
+    store.setMessageSink(&log, &ChangeLog::onMessage);
+    REQUIRE(store.watchFiles());
+
+    SECTION("a file that does not parse")
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        file.write("not toml [\n");
+        REQUIRE(pollUntil(store, [&log] { return !log.messages.empty(); }));
+        CHECK(log.changes.empty());
+        CHECK(store.readBool("resonate.render", "vsync", false) == true);
+        CHECK(log.messages.front().find("kept the previous configuration") != std::string::npos);
+    }
+    SECTION("a value the sink refuses")
+    {
+        store.setValidation(&log, &ChangeLog::onValidate);
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        file.write("[resonate.render]\nvsync = true\nname = \"poison\"\n");
+        REQUIRE(pollUntil(store, [&log] { return !log.messages.empty(); }));
+        CHECK(log.changes.empty());
+        CHECK(store.value("resonate.render", "name") == std::nullopt);
+        CHECK(store.readBool("resonate.render", "vsync", false) == true);
+        CHECK(log.messages.front().find("refused by the test") != std::string::npos);
+    }
+}
+
+TEST_CASE("config store: a change shadowed by a CVar reports nothing", "[config]")
+{
+    TempConfig file;
+    file.write("[resonate.window]\nwidth = 800\n");
+
+    resonate::ConfigStore store;
+    ChangeLog log;
+    store.load(file.path());
+    store.setOverride("resonate.window", "width", "2560");
+    store.setChangeSink(&log, &ChangeLog::onChange);
+    REQUIRE(store.watchFiles());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    file.write("[resonate.window]\nwidth = 1920\n");
+
+    /* The reload happens (the file changed), but the effective value stays
+       the override's, so no event fires. Give it a moment, then check. */
+    pollUntil(store, [] { return false; }, 600);
+    CHECK(log.changes.empty());
+    CHECK(store.readUInt("resonate.window", "width", 0U) == 2560U);
 }

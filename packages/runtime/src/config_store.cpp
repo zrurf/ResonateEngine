@@ -3,12 +3,16 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#include <resonate/pal/watch.h>
 
 #include "toml_text.h"
 
@@ -18,6 +22,17 @@ namespace resonate
 struct ConfigStore::Table
 {
     toml::table value;
+};
+
+struct ConfigStore::Watch
+{
+    ResonateWatchHandle handle{};
+    std::string path;
+
+    ~Watch()
+    {
+        resonate_pal_watch_close(&handle);
+    }
 };
 
 namespace
@@ -71,12 +86,16 @@ std::string dottedKey(const char* section, const char* key)
     return path;
 }
 
-std::unique_ptr<toml::table> parseFile(const std::string& path)
+/* One layer file into `out`. A missing file is an empty layer (an optional
+   layer that is not there yet); false means the file exists but does not
+   parse, with the reason. */
+bool parseLayer(const std::string& path, toml::table& out, std::string& error)
 {
     std::ifstream in(path, std::ios::binary);
     if (!in.is_open())
     {
-        return nullptr;
+        out = toml::table{};
+        return true;
     }
 
     /* This toml++ version's parse_result is the table itself: false means the
@@ -84,10 +103,49 @@ std::unique_ptr<toml::table> parseFile(const std::string& path)
     toml::parse_result result = toml::parse(in, path);
     if (!result)
     {
-        std::cerr << "resonate: config " << path << ": does not parse\n";
-        return nullptr;
+        error = path + ": does not parse";
+        return false;
     }
-    return std::make_unique<toml::table>(std::move(result.table()));
+    out = std::move(result.table());
+    return true;
+}
+
+/* The store's effective scalars as dotted key -> text, through the same
+   shadowing visitScalars applies. */
+void collectEffective(const ConfigStore& store,
+                      std::unordered_map<std::string, std::string>& out)
+{
+    struct Collect
+    {
+        static void visit(void* user, const char* section, const char* key, const char* value)
+        {
+            auto* map = static_cast<std::unordered_map<std::string, std::string>*>(user);
+            std::string path = section != nullptr ? section : "";
+            if (key != nullptr)
+            {
+                if (!path.empty())
+                {
+                    path.push_back('.');
+                }
+                path.append(key);
+            }
+            (*map)[std::move(path)] = value != nullptr ? value : "";
+        }
+    };
+    store.visitScalars(&out, &Collect::visit);
+}
+
+/* The layer timestamps, as text: a removed file reads empty, which differs
+   from any present file. */
+std::string stampOf(const std::string& path)
+{
+    std::error_code error;
+    const auto stamp = std::filesystem::last_write_time(path, error);
+    if (error)
+    {
+        return {};
+    }
+    return std::to_string(static_cast<std::uint64_t>(stamp.time_since_epoch().count()));
 }
 
 } // namespace
@@ -102,21 +160,244 @@ ConfigStore& ConfigStore::operator=(ConfigStore&& other) noexcept = default;
 
 void ConfigStore::load(const std::string& path)
 {
+    closeWatches();
     layers_.clear();
+    layer_paths_.clear();
     overrides_.clear();
     addFile(path);
+    captureStamps();
 }
 
 void ConfigStore::addFile(const std::string& path)
 {
-    std::unique_ptr<toml::table> table = parseFile(path);
-    if (table == nullptr)
+    /* The path is recorded even when the file is missing or broken: watching
+       it is how a file that appears later is ever read. */
+    layer_paths_.push_back(path);
+    toml::table value;
+    std::string error;
+    if (!parseLayer(path, value, error))
+    {
+        std::cerr << "resonate: config " << error << "\n";
+    }
+    auto layer = std::make_unique<Table>();
+    layer->value = std::move(value);
+    layers_.push_back(std::move(layer));
+}
+
+void ConfigStore::setChangeSink(void* user, ChangeSinkFn sink)
+{
+    change_user_ = user;
+    change_ = sink;
+}
+
+void ConfigStore::setValidation(void* user, ValidationFn validation)
+{
+    validation_user_ = user;
+    validation_ = validation;
+}
+
+void ConfigStore::setMessageSink(void* user, MessageFn sink)
+{
+    message_user_ = user;
+    message_ = sink;
+}
+
+bool ConfigStore::watchFiles()
+{
+    closeWatches();
+    watches_.clear();
+    bool any = false;
+    for (const std::string& path : layer_paths_)
+    {
+        auto watch = std::make_unique<Watch>();
+        watch->path = path;
+        const ResonatePalStatus status = resonate_pal_watch_create(&watch->handle, path.c_str());
+        if (status != RESONATE_PAL_OK)
+        {
+            say("config: cannot watch " + path + ": " + std::to_string(status));
+            continue;
+        }
+        watches_.push_back(std::move(watch));
+        any = true;
+    }
+    captureStamps();
+    return any;
+}
+
+void ConfigStore::poll()
+{
+    if (watches_.empty())
     {
         return;
     }
-    auto layer = std::make_unique<Table>();
-    layer->value = std::move(*table);
-    layers_.push_back(std::move(layer));
+    bool signaled = false;
+    for (const std::unique_ptr<Watch>& watch : watches_)
+    {
+        if (resonate_pal_watch_poll(&watch->handle) > 0)
+        {
+            signaled = true;
+        }
+    }
+    if (!signaled)
+    {
+        return;
+    }
+
+    /* The notification names the directory: only a layer whose timestamp
+       moved is a reason to reload. */
+    bool changed = false;
+    for (std::size_t index = 0; index < layer_paths_.size() && index < stamps_.size(); ++index)
+    {
+        if (stampOf(layer_paths_[index]) != stamps_[index])
+        {
+            changed = true;
+            break;
+        }
+    }
+    if (!changed)
+    {
+        return;
+    }
+
+    /* Reparse the whole stack: layer order is the merge rule, and a partial
+       rebuild would have to reimplement it. */
+    std::vector<std::unique_ptr<Table>> fresh;
+    fresh.reserve(layer_paths_.size());
+    for (const std::string& path : layer_paths_)
+    {
+        toml::table value;
+        std::string error;
+        if (!parseLayer(path, value, error))
+        {
+            captureStamps();
+            say("config: kept the previous configuration: " + error);
+            return;
+        }
+        auto layer = std::make_unique<Table>();
+        layer->value = std::move(value);
+        fresh.push_back(std::move(layer));
+    }
+
+    ConfigStore probe;
+    probe.overrides_ = overrides_;
+    probe.layers_ = std::move(fresh);
+
+    /* Validate every new scalar before anything is committed. */
+    std::string validation_error;
+    if (validation_ != nullptr)
+    {
+        struct Check
+        {
+            void* user = nullptr;
+            ValidationFn validation = nullptr;
+            std::string* error = nullptr;
+            bool ok = true;
+
+            static void visit(void* data, const char* section, const char* key, const char* value)
+            {
+                auto* check = static_cast<Check*>(data);
+                if (!check->ok || check->validation == nullptr)
+                {
+                    return;
+                }
+                std::string reason;
+                if (!check->validation(check->user, section, key, value, reason))
+                {
+                    check->ok = false;
+                    *check->error = reason;
+                }
+            }
+        };
+        Check check{validation_user_, validation_, &validation_error, true};
+        probe.visitScalars(&check, &Check::visit);
+        if (!check.ok)
+        {
+            captureStamps();
+            say("config: kept the previous configuration: " + validation_error);
+            return;
+        }
+    }
+
+    /* Diff the effective values (the override layer included), then commit and
+       notify: a consumer that reacts reads the new store. */
+    std::unordered_map<std::string, std::string> before;
+    std::unordered_map<std::string, std::string> after;
+    collectEffective(*this, before);
+    collectEffective(probe, after);
+    layers_ = std::move(probe.layers_);
+    captureStamps();
+
+    std::vector<std::string> keys;
+    keys.reserve(before.size() + after.size());
+    for (const auto& [key, value] : before)
+    {
+        keys.push_back(key);
+    }
+    for (const auto& [key, value] : after)
+    {
+        if (before.find(key) == before.end())
+        {
+            keys.push_back(key);
+        }
+    }
+    std::sort(keys.begin(), keys.end());
+
+    std::size_t changes = 0;
+    for (const std::string& path : keys)
+    {
+        const auto old_entry = before.find(path);
+        const auto new_entry = after.find(path);
+        const std::string old_text = old_entry != before.end() ? old_entry->second : std::string();
+        const std::string new_text = new_entry != after.end() ? new_entry->second : std::string();
+        if (old_text == new_text &&
+            (old_entry != before.end()) == (new_entry != after.end()))
+        {
+            continue;
+        }
+        ++changes;
+        if (change_ == nullptr)
+        {
+            continue;
+        }
+        /* The event's value is empty for a key the file no longer sets; the
+           reader falls back to the declaration default, like value() does. */
+        const std::size_t separator = path.rfind('.');
+        const std::string section =
+            separator == std::string::npos ? std::string() : path.substr(0U, separator);
+        const std::string key =
+            separator == std::string::npos ? path : path.substr(separator + 1U);
+        change_(change_user_, section.c_str(), key.c_str(), new_text.c_str());
+    }
+    say("config: reloaded, " + std::to_string(changes) + " value(s) changed");
+}
+
+void ConfigStore::closeWatches()
+{
+    for (std::unique_ptr<Watch>& watch : watches_)
+    {
+        resonate_pal_watch_close(&watch->handle);
+    }
+    watches_.clear();
+}
+
+void ConfigStore::captureStamps()
+{
+    stamps_.clear();
+    stamps_.reserve(layer_paths_.size());
+    for (const std::string& path : layer_paths_)
+    {
+        stamps_.push_back(stampOf(path));
+    }
+}
+
+void ConfigStore::say(const std::string& text) const
+{
+    if (message_ != nullptr)
+    {
+        message_(message_user_, text.c_str());
+        return;
+    }
+    std::cerr << "resonate: " << text << "\n";
 }
 
 void ConfigStore::setOverride(const char* section, const char* key, std::string value)

@@ -17,5 +17,6 @@
 #include "resonate/pal/memory.h"
 #include "resonate/pal/sync.h"
 #include "resonate/pal/thread.h"
+#include "resonate/pal/watch.h"
 
 #endif /* RESONATE_PAL_PAL_H */

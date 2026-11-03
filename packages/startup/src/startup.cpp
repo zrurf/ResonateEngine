@@ -192,6 +192,85 @@ std::string readBloomThreshold(void* context)
     return formatFloat(static_cast<const renderer::RenderSystem*>(context)->bloomThreshold());
 }
 
+/* The hot-reload sinks: a changed key reaches the same appliers a console
+   command does, so the file and the console cannot drift apart. */
+struct LiveConfig
+{
+    startup::CVarHost* cvars = nullptr;
+    Application::Config* config = nullptr;
+    const SettingsSchema* schema = nullptr;
+};
+
+std::string dottedName(const char* section, const char* key)
+{
+    std::string full = section != nullptr ? section : "";
+    if (key != nullptr)
+    {
+        if (!full.empty())
+        {
+            full.push_back('.');
+        }
+        full.append(key);
+    }
+    return full;
+}
+
+void applyLiveSetting(void* user, const char* section, const char* key, const char* value)
+{
+    auto* live = static_cast<LiveConfig*>(user);
+    const std::string full = dottedName(section, key);
+    std::string text = value != nullptr ? value : "";
+    if (text.empty())
+    {
+        /* The key lost its value: the declaration's default applies. A key
+           nothing declares has no default and is left alone. */
+        const SettingDecl* declaration = live->schema->find(full.c_str());
+        if (declaration == nullptr)
+        {
+            return;
+        }
+        text = declaration->default_value;
+    }
+    if (full == "resonate.loop.max-fps")
+    {
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(text.c_str(), &end, 10);
+        live->config->max_fps = end != text.c_str() && *end == '\0' ? parsed : 0U;
+        return;
+    }
+    /* Only bound keys have a live applier; the rest apply at the next start. */
+    std::string probe;
+    if (!live->cvars->read(full, probe))
+    {
+        return;
+    }
+    std::string error;
+    if (!live->cvars->apply(full, text, error))
+    {
+        std::fprintf(stderr, "resonate: config: %s: %s\n", full.c_str(), error.c_str());
+    }
+}
+
+/* Unknown keys warn and pass (a stale name must not block a reload); a bad
+   value refuses it, which is what validate() does at start-up. */
+bool validateLiveSetting(void* user, const char* section, const char* key, const char* value,
+                         std::string& error)
+{
+    auto* live = static_cast<LiveConfig*>(user);
+    const std::string full = dottedName(section, key);
+    if (live->schema->find(full.c_str()) == nullptr)
+    {
+        std::fprintf(stderr, "resonate: config: unknown key '%s'\n", full.c_str());
+        return true;
+    }
+    return live->schema->checkValue(full.c_str(), value != nullptr ? value : "", error);
+}
+
+void reportConfigMessage(void*, const char* message)
+{
+    std::fprintf(stderr, "resonate: %s\n", message != nullptr ? message : "");
+}
+
 /* The input system: one sample per frame, before anything gameplay reads the
    actions. A run without the input capability (headless) releases everything. */
 /* Drives the demo machine's parameters from the keyboard: holding right
@@ -1406,6 +1485,15 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
     {
         *extension.cvars = cvars;
     }
+
+    /* Hot reload: the watched layer files feed the same appliers. The sinks
+       and `schema` outlive the run (they end with this function, after
+       Application::run returns). */
+    LiveConfig live{&cvars, &config, &schema};
+    config.settings.setChangeSink(&live, &applyLiveSetting);
+    config.settings.setValidation(&live, &validateLiveSetting);
+    config.settings.setMessageSink(&live, &reportConfigMessage);
+    config.settings.watchFiles();
 
 #if defined(RESONATE_WITH_CSHARP)
     /* An optional managed assembly: its systems register alongside the C++

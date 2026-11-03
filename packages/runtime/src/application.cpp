@@ -114,7 +114,7 @@ Application::Config Application::configFromCommandLine(const std::vector<std::st
     return config;
 }
 
-int Application::run(const Config& config)
+int Application::run(Config& config)
 {
     /* The world is the run's state, declared before the host because the host
        borrows it: its systems' command buffers release reservations through it,
@@ -207,6 +207,11 @@ int Application::run(const Config& config)
         {
             break;
         }
+
+        /* A watched config file changed: reload, validate and apply now, so
+           this frame's systems see the new values. Cheap when nothing
+           happened (one non-blocking wait per watched file). */
+        config.settings.poll();
 
         float elapsed_seconds = 0.0F;
         if (config.frame_elapsed)
