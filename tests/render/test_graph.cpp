@@ -253,6 +253,22 @@ TEST_CASE("render graph: declaration errors are named, not guessed at", "[render
     CHECK(error.find("undeclared resource") != std::string::npos);
 }
 
+TEST_CASE("render graph: an export nobody writes is a compile error", "[render][graph]")
+{
+    RenderGraph graph;
+    const ResourceId backbuffer = graph.importImage("backbuffer", kLayoutUndefined, kLayoutPresent);
+    const ResourceId hdr = graph.declareImage("hdr", RESONATE_RENDER_FORMAT_R16G16B16A16_SFLOAT,
+                                              1600U, 900U, RESONATE_RENDER_IMAGE_COLOR_ATTACHMENT);
+    const Use hdr_write = write(hdr, kStageColorOutput, kAccessColorWrite, kLayoutColorAttachment);
+    graph.addPass({"scene", Queue::Graphics, 0U, nullptr, 0U, &hdr_write, 1U, nullptr, nullptr});
+    graph.exportResource(backbuffer);
+
+    GraphPlan plan;
+    std::string error;
+    CHECK_FALSE(graph.compile(plan, error));
+    CHECK(error.find("'backbuffer' has no live writer") != std::string::npos);
+}
+
 TEST_CASE("render graph: compilation is deterministic", "[render][graph]")
 {
     auto build = []()

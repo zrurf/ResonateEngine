@@ -293,6 +293,34 @@ bool RenderGraph::compile(GraphPlan& out_plan, std::string& out_error,
         }
     }
 
+    /* An export nobody writes presents stale memory — the frame's contract is
+       that a live pass fills every exported target (R3). */
+    for (ResourceId exported : exports_)
+    {
+        bool written = false;
+        for (const PlanPass& pass : out_plan.passes)
+        {
+            for (const Use& write : pass.writes)
+            {
+                if (write.resource == exported)
+                {
+                    written = true;
+                    break;
+                }
+            }
+            if (written)
+            {
+                break;
+            }
+        }
+        if (!written)
+        {
+            out_error = std::string("export '") + out_plan.resources[exported].name +
+                        "' has no live writer";
+            return false;
+        }
+    }
+
     /* Transient resources are materialized once and reused every frame, so no
        alias groups are computed (IGL/Daxa R11: the field was dead; a
        memory-aliasing pass is a later slice if a target run needs it). */
