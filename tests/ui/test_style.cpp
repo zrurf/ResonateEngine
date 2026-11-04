@@ -377,51 +377,188 @@ TEST_CASE("ui style: an external stylesheet imports into the document", "[ui][st
     CHECK_FALSE(missing.empty());
 }
 
-TEST_CASE("ui style: a transition tweens the hover colour instead of jumping",
-          "[ui][style]")
+namespace
 {
-    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
-  <Screen key="hud">
-    <StyleSheet key="styles">
-      <StyleRule selector=".action">
-        <Background color="0.25 0.25 0.25 1"/>
-        <ColorTransition duration_ms="100"/>
-      </StyleRule>
-      <StyleRule selector=".action:hover">
-        <Background color="0.75 0.75 0.75 1"/>
-      </StyleRule>
-    </StyleSheet>
-    <Button key="action" class="action" x="0" y="0" width="100" height="40"/>
-  </Screen>
-</document>)xml";
+
+/* A document whose only interactive widget carries one transition; the
+   normal and hover Background attribute lists are the test's parameters. */
+std::string transitionSheet(const std::string& transition_attributes,
+                            const std::string& normal, const std::string& hover)
+{
+    return "<document version=\"1\" schemas=\"resonate.ui\">\n"
+           "  <Screen key=\"hud\">\n"
+           "    <StyleSheet key=\"styles\">\n"
+           "      <StyleRule selector=\".action\">\n"
+           "        <Background " +
+           normal +
+           "/>\n"
+           "        <Transition " +
+           transition_attributes +
+           "/>\n"
+           "      </StyleRule>\n"
+           "      <StyleRule selector=\".action:hover\">\n"
+           "        <Background " +
+           hover +
+           "/>\n"
+           "      </StyleRule>\n"
+           "    </StyleSheet>\n"
+           "    <Button key=\"action\" class=\"action\" x=\"0\" y=\"0\" width=\"100\" "
+           "height=\"40\"/>\n"
+           "  </Screen>\n"
+           "</document>\n";
+}
+
+Entity instantiateTransition(World& world, const std::string& transition_attributes,
+                             const std::string& normal = "color=\"0.25 0.25 0.25 1\"",
+                             const std::string& hover = "color=\"0.75 0.75 0.75 1\"")
+{
+    const std::string text = transitionSheet(transition_attributes, normal, hover);
     std::vector<resonate::dom::Diagnostic> diagnostics;
-    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+    auto document = resonate::dom::Document::parse(text.c_str(), &resonate::ui::documentSchema(),
                                                    diagnostics);
     REQUIRE(document != nullptr);
-    CHECK(diagnostics.empty());
-
-    Fixture fixture;
-    const Entity root = resonate::ui::instantiate(fixture.world, *document);
+    REQUIRE(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
     REQUIRE(root.valid());
-    REQUIRE(resonate::ui::layout(fixture.world, root, 200.0F, 200.0F));
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 200.0F));
+    return root;
+}
+
+float backgroundChannel(World& world, Entity entity, float resonate::Vec4::*channel)
+{
+    const Background* background = world.get<Background>(entity);
+    REQUIRE(background != nullptr);
+    return background->color.*channel;
+}
+
+} // namespace
+
+TEST_CASE("ui style: a transition eases the hover colour along its curve", "[ui][style]")
+{
+    struct Case
+    {
+        const char* ease;
+        float at_mid; /* amount of the way to the target at half the duration */
+    };
+    const Case cases[] = {
+        {"Linear", 0.5F},
+        {"In", 0.25F},
+        {"Out", 0.75F},
+        {"InOut", 0.5F},
+    };
+    for (const Case& entry : cases)
+    {
+        Fixture fixture;
+        const Entity root = instantiateTransition(
+            fixture.world, std::string("duration_ms=\"100\" ease=\"") + entry.ease + "\"");
+        const Entity action = resonate::hierarchy::children(fixture.world, root)[0];
+
+        resonate::ui::TransitionSystem transitions;
+        REQUIRE(transitions.bind(fixture.world));
+
+        /* Hovering does not jump: the colour holds until the system walks it. */
+        REQUIRE(resonate::ui::updateInput(fixture.world, root, 50.0F, 20.0F, false));
+        CHECK(std::fabs(backgroundChannel(fixture.world, action, &resonate::Vec4::x) - 0.25F) <
+              0.001F);
+        REQUIRE(fixture.world.get<resonate::ui::TransitionState>(action) != nullptr);
+
+        transitions.advance(fixture.world, 0.05F);
+        const float mid = 0.25F + 0.5F * entry.at_mid;
+        INFO("ease " << entry.ease);
+        CHECK(std::fabs(backgroundChannel(fixture.world, action, &resonate::Vec4::x) - mid) <
+              0.01F);
+
+        transitions.advance(fixture.world, 0.05F);
+        CHECK(std::fabs(backgroundChannel(fixture.world, action, &resonate::Vec4::x) - 0.75F) <
+              0.001F);
+        CHECK(fixture.world.get<resonate::ui::TransitionState>(action) == nullptr);
+    }
+}
+
+TEST_CASE("ui style: leaving mid-transition walks back from the colour on screen",
+          "[ui][style]")
+{
+    Fixture fixture;
+    const Entity root =
+        instantiateTransition(fixture.world, "duration_ms=\"100\" ease=\"Linear\"");
     const Entity action = resonate::hierarchy::children(fixture.world, root)[0];
 
-    resonate::ui::ColorTransitionSystem transitions;
+    resonate::ui::TransitionSystem transitions;
     REQUIRE(transitions.bind(fixture.world));
 
-    /* Hovering does not jump: the tween starts and the colour walks. */
     REQUIRE(resonate::ui::updateInput(fixture.world, root, 50.0F, 20.0F, false));
+    transitions.advance(fixture.world, 0.05F);
+    REQUIRE(std::fabs(backgroundChannel(fixture.world, action, &resonate::Vec4::x) - 0.50F) <
+            0.01F);
+
+    /* The pointer leaves at the halfway colour: the retargeted transition
+       starts from what is on screen, so nothing jumps. */
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, 300.0F, 300.0F, false));
+    CHECK(std::fabs(backgroundChannel(fixture.world, action, &resonate::Vec4::x) - 0.50F) <
+          0.01F);
+    const auto* state = fixture.world.get<resonate::ui::TransitionState>(action);
+    REQUIRE(state != nullptr);
+    CHECK(std::fabs(state->from.x - 0.50F) < 0.01F);
+    CHECK(std::fabs(state->to.x - 0.25F) < 0.01F);
+
+    transitions.advance(fixture.world, 0.05F);
+    CHECK(std::fabs(backgroundChannel(fixture.world, action, &resonate::Vec4::x) - 0.375F) <
+          0.01F);
+    transitions.advance(fixture.world, 0.05F);
+    CHECK(std::fabs(backgroundChannel(fixture.world, action, &resonate::Vec4::x) - 0.25F) <
+          0.001F);
+    CHECK(fixture.world.get<resonate::ui::TransitionState>(action) == nullptr);
+}
+
+TEST_CASE("ui style: a transition delay holds the old value first", "[ui][style]")
+{
+    Fixture fixture;
+    const Entity root = instantiateTransition(
+        fixture.world, "duration_ms=\"100\" delay_ms=\"100\" ease=\"Linear\"");
+    const Entity action = resonate::hierarchy::children(fixture.world, root)[0];
+
+    resonate::ui::TransitionSystem transitions;
+    REQUIRE(transitions.bind(fixture.world));
+
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, 50.0F, 20.0F, false));
+    transitions.advance(fixture.world, 0.08F);
+    CHECK(std::fabs(backgroundChannel(fixture.world, action, &resonate::Vec4::x) - 0.25F) <
+          0.001F);
+
+    /* Past the delay the walk starts; half of the duration has elapsed. */
+    transitions.advance(fixture.world, 0.07F);
+    CHECK(std::fabs(backgroundChannel(fixture.world, action, &resonate::Vec4::x) - 0.50F) <
+          0.01F);
+
+    transitions.advance(fixture.world, 0.05F);
+    CHECK(std::fabs(backgroundChannel(fixture.world, action, &resonate::Vec4::x) - 0.75F) <
+          0.001F);
+    CHECK(fixture.world.get<resonate::ui::TransitionState>(action) == nullptr);
+}
+
+TEST_CASE("ui style: any vec4 field a state overrides animates, not just the colour",
+          "[ui][style]")
+{
+    Fixture fixture;
+    const Entity root = instantiateTransition(
+        fixture.world, "duration_ms=\"100\" ease=\"Linear\"",
+        "color=\"0.25 0.25 0.25 1\" border_color=\"0 0 0 1\"",
+        "border_color=\"1 0 0 1\"");
+    const Entity action = resonate::hierarchy::children(fixture.world, root)[0];
+
+    resonate::ui::TransitionSystem transitions;
+    REQUIRE(transitions.bind(fixture.world));
+
+    REQUIRE(resonate::ui::updateInput(fixture.world, root, 50.0F, 20.0F, false));
+    transitions.advance(fixture.world, 0.05F);
     const Background* background = fixture.world.get<Background>(action);
     REQUIRE(background != nullptr);
-    CHECK(std::fabs(background->color.x - 0.25F) < 0.01F);
-    REQUIRE(fixture.world.get<resonate::ui::ColorTween>(action) != nullptr);
+    CHECK(std::fabs(background->border_color.x - 0.50F) < 0.01F);
+    /* The background colour did not change in this state, so it stayed. */
+    CHECK(std::fabs(background->color.x - 0.25F) < 0.001F);
 
     transitions.advance(fixture.world, 0.05F);
     background = fixture.world.get<Background>(action);
-    CHECK(std::fabs(background->color.x - 0.50F) < 0.01F);
-
-    transitions.advance(fixture.world, 0.05F);
-    background = fixture.world.get<Background>(action);
-    CHECK(std::fabs(background->color.x - 0.75F) < 0.01F);
-    CHECK(fixture.world.get<resonate::ui::ColorTween>(action) == nullptr);
+    CHECK(std::fabs(background->border_color.x - 1.0F) < 0.001F);
+    CHECK(fixture.world.get<resonate::ui::TransitionState>(action) == nullptr);
 }

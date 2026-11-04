@@ -24,11 +24,15 @@ void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state
     }
     const std::size_t count = world.blobSize(styles->records) / sizeof(StateStyleRecord);
 
-    /* A widget carrying ColorTransition animates its Background colour instead of
-       jumping: the target is recorded here and the tween system walks the
-       colour over, starting from what is on screen. */
-    const ColorTransition* transition = world.get<ColorTransition>(entity);
+    /* A widget carrying Transition animates the first vec4 property a state
+       override changes instead of jumping: the target is recorded here and the
+       transition system walks the value over, starting from what is on
+       screen. The record itself is not written, so the old value holds until
+       the transition starts. */
+    const Transition* transition = world.get<Transition>(entity);
     const bool animates = transition != nullptr && transition->duration_ms > 0U;
+    ecs::ComponentIndex tween_component = ecs::kInvalidComponent;
+    std::uint32_t tween_offset = 0U;
     Vec4 tween_target{0.0F, 0.0F, 0.0F, 0.0F};
     bool wants_tween = false;
 
@@ -37,17 +41,14 @@ void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state
     const auto apply = [&](const StateStyleRecord& record)
     {
         const auto component = static_cast<ecs::ComponentIndex>(record.component);
-        if (animates && record.size == sizeof(Vec4) && record.component != 0U)
+        if (animates && !wants_tween && record.component != 0U &&
+            record.size == sizeof(Vec4) && world.get(entity, component) != nullptr)
         {
-            void* data = world.get(entity, component);
-            const Background* background = world.get<Background>(entity);
-            if (data != nullptr && background != nullptr &&
-                record.offset == offsetof(Background, color))
-            {
-                std::memcpy(&tween_target, record.value, sizeof(Vec4));
-                wants_tween = true;
-                return;
-            }
+            std::memcpy(&tween_target, record.value, sizeof(Vec4));
+            tween_component = component;
+            tween_offset = record.offset;
+            wants_tween = true;
+            return;
         }
         void* data = world.get(entity, component);
         if (data == nullptr)
@@ -100,30 +101,38 @@ void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state
         }
     }
 
-    /* The tween is attached after the record loop: attaching it moves the
-       entity to another archetype, which would invalidate nothing held here but
-       is cheaper done once. It starts from the colour on screen (a mid-tween
-       change starts from where the last one got to). */
+    /* The transition is attached after the record loop: attaching it moves the
+       entity to another archetype, and retargeting keeps `from` at what is on
+       screen, so a state change mid-tween does not jump. */
     if (wants_tween)
     {
-        const Background* background = world.get<Background>(entity);
-        if (background == nullptr)
+        void* data = world.get(entity, tween_component);
+        if (data == nullptr)
         {
             return;
         }
+        const Vec4 current =
+            *reinterpret_cast<const Vec4*>(static_cast<const std::byte*>(data) + tween_offset);
         const float duration = static_cast<float>(transition->duration_ms) * 0.001F;
-        ColorTween* tween = world.get<ColorTween>(entity);
+        const float delay = static_cast<float>(transition->delay_ms) * 0.001F;
+        TransitionState* tween = world.get<TransitionState>(entity);
         if (tween == nullptr)
         {
-            (void)world.add(entity, ColorTween{background->color, tween_target, 0.0F, duration});
+            (void)world.add(entity, TransitionState{tween_component, tween_offset, current,
+                                                    tween_target, 0.0F, duration, delay,
+                                                    transition->ease});
         }
         else
         {
-            tween->from = background->color;
+            tween->component = tween_component;
+            tween->offset = tween_offset;
+            tween->from = current;
             tween->to = tween_target;
             tween->elapsed = 0.0F;
             tween->duration = duration;
-            world.markChanged<ColorTween>(entity);
+            tween->delay = delay;
+            tween->ease = transition->ease;
+            world.markChanged<TransitionState>(entity);
         }
     }
 }

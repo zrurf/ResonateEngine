@@ -43,6 +43,15 @@
     <value name="Stretch"/>
   </enum>
 
+  <!-- The curves a transition may walk: linear, and the quadratic in/out pair
+       with their symmetric blend. Names match CSS's ease-in/ease-out sense. -->
+  <enum name="Ease" width="u8">
+    <value name="Linear"/>
+    <value name="In"/>
+    <value name="Out"/>
+    <value name="InOut"/>
+  </enum>
+
   <enum name="TextAlign" width="u8">
     <value name="Start"/>
     <value name="Center"/>
@@ -392,19 +401,30 @@
     <field name="hash" type="u64"/>
   </component>
 
-  <!-- Animates state changes: a widget carrying ColorTransition tweens its
-       Background colour over `duration_ms` instead of jumping. Authored through
-       style rules like any other component. -->
-  <component name="ColorTransition" version="1">
+  <!-- Animates state changes: a widget carrying Transition walks a property
+       override from the value on screen to the state's value instead of
+       jumping, after `delay_ms` and along `ease`. One property animates per
+       widget — the first vec4 field a state overrides; the rest still jump.
+       Authored through style rules like any other component. -->
+  <component name="Transition" version="1">
     <field name="duration_ms" type="u32" default="120"/>
+    <field name="delay_ms" type="u32" default="0"/>
+    <field name="ease" type="Ease" default="Out"/>
   </component>
 
-  <!-- One in-flight colour tween, derived by the state machinery. -->
-  <component name="ColorTween" version="1" derived="true">
+  <!-- One in-flight property transition, derived by the state machinery: the
+       property is the field at `component` + `offset`, and the system writes
+       the eased value there each frame. Retargeting keeps `from` at what is on
+       screen, so a hover that reverses mid-way does not jump. -->
+  <component name="TransitionState" version="1" derived="true">
+    <field name="component" type="u32"/>
+    <field name="offset" type="u32"/>
     <field name="from" type="vec4"/>
     <field name="to" type="vec4"/>
     <field name="elapsed" type="f32"/>
     <field name="duration" type="f32"/>
+    <field name="delay" type="f32"/>
+    <field name="ease" type="Ease" default="Out"/>
   </component>
 
   <!-- State-style overrides, compiled at instantiation; a blob on the canvas. -->
