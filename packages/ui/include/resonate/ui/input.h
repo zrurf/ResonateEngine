@@ -98,6 +98,19 @@ enum class CursorShape : std::uint8_t
 [[nodiscard]] bool scrollInput(ecs::World& world, ecs::Entity canvas, float x, float y,
                                float detents);
 
+/* The first active, shown Modal node in the canvas tree, or an invalid handle.
+   While one exists, hits, clicks and wheel routing refuse points outside its
+   subtree, Tab traversal stays inside, and a press outside neither moves nor
+   clears the focus. One active modal at a time is the supported shape. */
+[[nodiscard]] ecs::Entity activeModal(ecs::World& world, ecs::Entity canvas);
+
+/* Whether `entity` is `modal` itself or inside its subtree. */
+[[nodiscard]] bool insideModal(ecs::World& world, ecs::Entity modal, ecs::Entity entity);
+
+/* Moves the focused slider a twentieth of its range toward `forward`, clamped
+   to the authored span. Answers false when the focus is not on a slider. */
+[[nodiscard]] bool stepSlider(ecs::World& world, ecs::Entity canvas, bool forward);
+
 } // namespace resonate::ui
 
 namespace resonate::ecs

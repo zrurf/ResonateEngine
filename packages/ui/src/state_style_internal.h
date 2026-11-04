@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <resonate/core/span.h>
 #include <resonate/ecs/entity.h>
 #include <resonate/ecs/world.h>
 
@@ -25,9 +26,12 @@ struct StateStyleRecord
 
 inline constexpr std::uint32_t kStateStyleValueSize = sizeof(StateStyleRecord::value);
 
-/* Writes the records for `state`, after restoring the normal values, and marks
-   every component whose bytes moved. A widget without StateStyles is a no-op. */
-void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state);
+/* Writes the records for `states`, after restoring the normal values, and marks
+   every component whose bytes moved. The states are applied in order, so a
+   later one wins where two touch the same field — :focus-visible layers over
+   :focus that way. A widget without StateStyles is a no-op. */
+void applyStateStyles(ecs::World& world, ecs::Entity entity,
+                      resonate::Span<const std::uint32_t> states);
 
 } // namespace resonate::ui::detail
 

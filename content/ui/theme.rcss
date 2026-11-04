@@ -134,6 +134,10 @@
     <StyleRule selector=".button:pressed">
       <Background color="var(--pressed)"/>
     </StyleRule>
+    <!-- Keyboard focus wears the accent ring; a click does not. -->
+    <StyleRule selector=".button:focus-visible">
+      <Background border_color="var(--accent)"/>
+    </StyleRule>
     <StyleRule selector=".tool">
       <Background color="0 0 0 0" border_color="var(--border)" border_width="0"
                   radius="var(--radius-sm)"/>
@@ -144,6 +148,9 @@
     </StyleRule>
     <StyleRule selector=".tool:pressed">
       <Background color="var(--pressed)"/>
+    </StyleRule>
+    <StyleRule selector=".tool:focus-visible">
+      <Background border_color="var(--accent)" border_width="1"/>
     </StyleRule>
     <StyleRule selector=".row">
       <Background color="var(--panel)"/>

@@ -1244,7 +1244,9 @@ bool collectStateStyles(World& world, const dom::Document& document, dom::NodeHa
 
     const std::vector<dom::Component> normal = styles.resolve(document, node, 0U);
     std::vector<detail::StateStyleRecord> records;
-    for (std::uint32_t state = 1U; state <= 4U; ++state)
+    /* Every state a selector can name, in WidgetState's order: hovered,
+       pressed, disabled, focus, focus-visible. */
+    for (std::uint32_t state = 1U; state <= 5U; ++state)
     {
         for (const dom::Component& styled : styles.resolve(document, node, state))
         {
@@ -1638,7 +1640,8 @@ Entity instantiateNode(World& world, CommandBuffer& commands, const dom::Documen
     {
         input->state = WidgetState::Disabled;
         world.markChanged<Input>(entity);
-        detail::applyStateStyles(world, entity, static_cast<std::uint32_t>(WidgetState::Disabled));
+        const std::uint32_t disabled = static_cast<std::uint32_t>(WidgetState::Disabled);
+        detail::applyStateStyles(world, entity, Span<const std::uint32_t>(&disabled, 1U));
     }
     if (!buildTextRun(world, document, node, entity, bindings))
     {

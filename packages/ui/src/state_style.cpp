@@ -10,7 +10,7 @@
 namespace resonate::ui::detail
 {
 
-void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state)
+void applyStateStyles(ecs::World& world, ecs::Entity entity, Span<const std::uint32_t> states)
 {
     const StateStyles* styles = world.get<StateStyles>(entity);
     if (styles == nullptr || !world.alive(styles->records))
@@ -36,19 +36,28 @@ void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state
     Vec4 tween_target{0.0F, 0.0F, 0.0F, 0.0F};
     bool wants_tween = false;
 
-    /* A field the target state overrides is written once, straight to the state
-       value; the others return to their normal value. */
+    /* A field the target states override is written once, straight to the state
+       value; the others return to their normal value. The first vec4 property
+       a state changes becomes the transition's target; a later state touching
+       the same property replaces the target rather than starting a second
+       tween. */
     const auto apply = [&](const StateStyleRecord& record)
     {
         const auto component = static_cast<ecs::ComponentIndex>(record.component);
-        if (animates && !wants_tween && record.component != 0U &&
-            record.size == sizeof(Vec4) && world.get(entity, component) != nullptr)
+        if (animates && record.component != 0U && record.size == sizeof(Vec4) &&
+            world.get(entity, component) != nullptr)
         {
-            std::memcpy(&tween_target, record.value, sizeof(Vec4));
-            tween_component = component;
-            tween_offset = record.offset;
-            wants_tween = true;
-            return;
+            if (!wants_tween)
+            {
+                tween_component = component;
+                tween_offset = record.offset;
+            }
+            if (tween_component == component && tween_offset == record.offset)
+            {
+                std::memcpy(&tween_target, record.value, sizeof(Vec4));
+                wants_tween = true;
+                return;
+            }
         }
         void* data = world.get(entity, component);
         if (data == nullptr)
@@ -64,34 +73,43 @@ void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state
         world.markChanged(entity, component);
     };
 
-    for (std::size_t index = 0; index < count; ++index)
+    /* Restore the normal value unless a target state sets the same field. A
+       restore record is never overridden by another restore record. */
+    const auto overridden = [&](const StateStyleRecord& record)
     {
-        const StateStyleRecord& record = records[index];
-        if (record.state != 0U)
+        for (std::size_t index = 0; index < count; ++index)
         {
-            continue;
-        }
-        bool overridden = false;
-        if (state != 0U)
-        {
-            for (std::size_t candidate = 0; candidate < count; ++candidate)
+            const StateStyleRecord& other = records[index];
+            if (other.state == 0U || other.component != record.component ||
+                other.offset != record.offset)
             {
-                const StateStyleRecord& other = records[candidate];
-                if (other.state == state && other.component == record.component &&
-                    other.offset == record.offset)
+                continue;
+            }
+            for (const std::uint32_t state : states)
+            {
+                if (other.state == state)
                 {
-                    overridden = true;
-                    break;
+                    return true;
                 }
             }
         }
-        if (!overridden)
+        return false;
+    };
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const StateStyleRecord& record = records[index];
+        if (record.state == 0U && !overridden(record))
         {
             apply(record);
         }
     }
-    if (state != 0U)
+    /* In order, so a layered state (:focus-visible over :focus) wins. */
+    for (const std::uint32_t state : states)
     {
+        if (state == 0U)
+        {
+            continue;
+        }
         for (std::size_t index = 0; index < count; ++index)
         {
             if (records[index].state == state)

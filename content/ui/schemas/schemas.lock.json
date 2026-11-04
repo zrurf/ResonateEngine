@@ -175,7 +175,7 @@
         "  field state resonate.ui.WidgetState @0 size 1 default=Normal",
         "  field focusable bool @1 size 1 default=true",
         "  field activated bool @2 size 1 default=false",
-        "  enum WidgetState u8 values Normal=0, Hovered=1, Pressed=2, Disabled=3, Focused=4"
+        "  enum WidgetState u8 values Normal=0, Hovered=1, Pressed=2, Disabled=3, Focused=4, FocusedVisible=5"
       ]
     },
     {
@@ -238,6 +238,16 @@
       ]
     },
     {
+      "name": "Modal",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component Modal version 1",
+        "  size 1 align 1",
+        "  field active bool @0 size 1 default=true"
+      ]
+    },
+    {
       "name": "NodeIndex",
       "kind": "component",
       "version": 1,
@@ -281,16 +291,17 @@
     {
       "name": "PointerState",
       "kind": "component",
-      "version": 2,
+      "version": 3,
       "shape": [
-        "component PointerState version 2",
+        "component PointerState version 3",
         "  size 44 align 4",
         "  field hover entity @0 size 8",
         "  field press entity @8 size 8",
         "  field activated entity @16 size 8",
         "  field focused entity @24 size 8",
         "  field capture entity @32 size 8",
-        "  field down bool @40 size 1"
+        "  field down bool @40 size 1",
+        "  field focus_visible bool @41 size 1"
       ]
     },
     {

@@ -70,6 +70,9 @@
     <value name="Pressed"/>
     <value name="Disabled"/>
     <value name="Focused"/>
+    <!-- Focus that arrived from the keyboard: :focus-visible rules layer on
+         top of :focus ones. -->
+    <value name="FocusedVisible"/>
   </enum>
 
   <!-- The root marker. Its rectangle is the target the layout pass is given;
@@ -282,16 +285,20 @@
 
   <!-- The pointer's current target, derived by the input system. `capture` is
        the widget an application handler took the pointer for on press: moves
-       and the release route to it and the built-in gestures stand aside. -->
-  <component name="PointerState" version="2" derived="true">
+       and the release route to it and the built-in gestures stand aside.
+       `focus_visible` says the focus came from the keyboard, which is what
+       :focus-visible rules turn on. -->
+  <component name="PointerState" version="3" derived="true">
     <field name="hover" type="entity"/>
     <field name="press" type="entity"/>
     <field name="activated" type="entity"/>
     <field name="focused" type="entity"/>
     <field name="capture" type="entity"/>
     <field name="down" type="bool"/>
+    <field name="focus_visible" type="bool"/>
 
     <migrate from="1" to="2"/>
+    <migrate from="2" to="3"/>
   </component>
 
   <!-- The caret of an editable text field: a byte offset into the UTF-8
@@ -393,6 +400,14 @@
   <component name="Scrubber" version="1">
     <field name="step" type="f32" default="1.0"/>
     <field name="value" type="f32" default="0.0"/>
+  </component>
+
+  <!-- Marks a subtree as modal while `active` and shown: hit testing, clicks
+       and wheel routing refuse points outside it, and Tab traversal stays
+       inside. Authored as a component element on the panel that is the
+       dialog; one active modal at a time is the supported shape. -->
+  <component name="Modal" version="1">
+    <field name="active" type="bool" default="true"/>
   </component>
 
   <!-- Marks a node as the tooltip of its parent: the node starts hidden and

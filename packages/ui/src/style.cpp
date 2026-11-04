@@ -170,6 +170,11 @@ bool parseSelector(dom::Document& document, std::string_view text, Selector& out
             {
                 out.state = 4U;
             }
+            else if (state == "focus-visible")
+            {
+                /* Layers over :focus; only keyboard focus turns it on. */
+                out.state = 5U;
+            }
             else
             {
                 error = "unknown state pseudo-class ':" + std::string(state) + "'";

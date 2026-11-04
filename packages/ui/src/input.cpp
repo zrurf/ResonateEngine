@@ -24,6 +24,13 @@ namespace
    click; under it the gesture stays a tap. In logical pixels like the pointer. */
 constexpr float kDragSlop = 8.0F;
 
+/* The focus state the pointer's history implies: keyboard focus layers
+   :focus-visible over :focus, a click sets the plain focus. */
+WidgetState focusState(const PointerState& pointer)
+{
+    return pointer.focus_visible ? WidgetState::FocusedVisible : WidgetState::Focused;
+}
+
 void setState(ecs::World& world, ecs::Entity entity, WidgetState state)
 {
     Input* input = world.get<Input>(entity);
@@ -33,7 +40,19 @@ void setState(ecs::World& world, ecs::Entity entity, WidgetState state)
     }
     input->state = state;
     world.markChanged<Input>(entity);
-    detail::applyStateStyles(world, entity, static_cast<std::uint32_t>(state));
+    /* :focus-visible layers over :focus, so keyboard focus applies both; every
+       other state stands alone. */
+    if (state == WidgetState::FocusedVisible)
+    {
+        const std::uint32_t layered[] = {static_cast<std::uint32_t>(WidgetState::Focused),
+                                         static_cast<std::uint32_t>(WidgetState::FocusedVisible)};
+        detail::applyStateStyles(world, entity, Span<const std::uint32_t>(layered, 2U));
+    }
+    else
+    {
+        const std::uint32_t alone[] = {static_cast<std::uint32_t>(state)};
+        detail::applyStateStyles(world, entity, Span<const std::uint32_t>(alone, 1U));
+    }
 }
 
 /* The nearest Input-bearing ancestor of the hit widget. A non-focusable Input
@@ -42,6 +61,13 @@ void setState(ecs::World& world, ecs::Entity entity, WidgetState state)
 ecs::Entity interactiveAt(ecs::World& world, ecs::Entity canvas, float x, float y)
 {
     ecs::Entity entity = hitTest(world, canvas, x, y);
+    /* An active modal owns the pointer: a hit outside its subtree reaches
+       nothing. */
+    const ecs::Entity modal = activeModal(world, canvas);
+    if (modal.valid() && !insideModal(world, modal, entity))
+    {
+        return ecs::Entity{};
+    }
     for (std::uint32_t depth = 0U; entity.valid() && depth <= hierarchy::kMaxDepth; ++depth)
     {
         const Input* input = world.get<Input>(entity);
@@ -209,6 +235,30 @@ ecs::Entity scrollThumbAt(ecs::World& world, ecs::Entity entity, float x, float 
     return {};
 }
 
+/* The nearest viewport on the hit chain whose scrollbar *track* the point is
+   inside: the thumb's column, outside the thumb itself. Clicking it pages. */
+ecs::Entity scrollTrackAt(ecs::World& world, ecs::Entity entity, float x, float y)
+{
+    for (std::uint32_t depth = 0U; entity.valid() && depth <= hierarchy::kMaxDepth; ++depth)
+    {
+        const ScrollView* view = world.get<ScrollView>(entity);
+        const ComputedRect* rect = world.get<ComputedRect>(entity);
+        if (view != nullptr && rect != nullptr)
+        {
+            const detail::ScrollThumb thumb = detail::scrollThumbOf(*rect, *view);
+            const bool in_column = thumb.visible && x >= thumb.x && x <= thumb.x + thumb.width;
+            const bool in_view = y >= rect->y && y <= rect->y + rect->height;
+            const bool on_thumb = y >= thumb.y && y <= thumb.y + thumb.height;
+            if (in_column && in_view && !on_thumb)
+            {
+                return entity;
+            }
+        }
+        entity = hierarchy::parentOf(world, entity);
+    }
+    return {};
+}
+
 /* The nearest widget on the hit chain that carries a Scrubber. */
 ecs::Entity scrubberAt(ecs::World& world, ecs::Entity entity)
 {
@@ -297,6 +347,86 @@ void collectFocusable(ecs::World& world, ecs::Entity entity, std::vector<ecs::En
 
 } // namespace
 
+ecs::Entity activeModal(ecs::World& world, ecs::Entity canvas)
+{
+    if (!canvas.valid() || !world.alive(canvas))
+    {
+        return ecs::Entity{};
+    }
+    /* Depth-first in document order: one active modal at a time is the
+       supported shape, so the first is the gate. A hidden modal is not
+       active. */
+    const auto find = [&](auto&& self, ecs::Entity entity, std::uint32_t depth) -> ecs::Entity
+    {
+        if (depth > hierarchy::kMaxDepth)
+        {
+            return ecs::Entity{};
+        }
+        if (const Modal* modal = world.get<Modal>(entity);
+            modal != nullptr && modal->active)
+        {
+            return entity;
+        }
+        for (const ecs::Entity child : hierarchy::children(world, entity))
+        {
+            if (!detail::childShown(world, entity, child))
+            {
+                continue;
+            }
+            const ecs::Entity found = self(self, child, depth + 1U);
+            if (found.valid())
+            {
+                return found;
+            }
+        }
+        return ecs::Entity{};
+    };
+    return find(find, canvas, 0U);
+}
+
+bool insideModal(ecs::World& world, ecs::Entity modal, ecs::Entity entity)
+{
+    if (!modal.valid() || !entity.valid())
+    {
+        return false;
+    }
+    for (std::uint32_t depth = 0U; entity.valid() && depth <= hierarchy::kMaxDepth; ++depth)
+    {
+        if (entity == modal)
+        {
+            return true;
+        }
+        entity = hierarchy::parentOf(world, entity);
+    }
+    return false;
+}
+
+bool stepSlider(ecs::World& world, ecs::Entity canvas, bool forward)
+{
+    const PointerState* pointer = world.get<PointerState>(canvas);
+    if (pointer == nullptr || !pointer->focused.valid())
+    {
+        return false;
+    }
+    const ecs::Entity entity = sliderAt(world, pointer->focused);
+    Slider* slider = entity.valid() ? world.get<Slider>(entity) : nullptr;
+    if (slider == nullptr || !(slider->max > slider->min))
+    {
+        return false;
+    }
+    /* A twentieth of the range is the keyboard's step; the value stays inside
+       the authored span. */
+    const float step = (slider->max - slider->min) / 20.0F;
+    const float value = std::clamp(forward ? slider->value + step : slider->value - step,
+                                   slider->min, slider->max);
+    if (value != slider->value)
+    {
+        slider->value = value;
+        world.markChanged<Slider>(entity);
+    }
+    return true;
+}
+
 bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool down,
                  double seconds)
 {
@@ -367,7 +497,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         world.markChanged<PointerState>(canvas);
         if (previous.valid() && world.alive(previous))
         {
-            setState(world, previous, previous == pointer->focused ? WidgetState::Focused
+            setState(world, previous, previous == pointer->focused ? focusState(*pointer)
                                                                    : WidgetState::Normal);
             if (!refresh())
             {
@@ -401,7 +531,26 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         {
             return false;
         }
-        if (pointer->focused != hover && pointer->focused.valid() &&
+        /* A pointer press is not a keyboard focus: the :focus-visible layer
+           comes off the widget that holds focus. */
+        if (pointer->focus_visible)
+        {
+            pointer->focus_visible = false;
+            world.markChanged<PointerState>(canvas);
+            if (pointer->focused.valid() && world.alive(pointer->focused))
+            {
+                setState(world, pointer->focused, WidgetState::Focused);
+                if (!refresh())
+                {
+                    return false;
+                }
+            }
+        }
+        /* A press outside an active modal neither moves nor clears focus: the
+           dialog keeps it. */
+        const ecs::Entity modal = activeModal(world, canvas);
+        const bool gated = modal.valid() && !insideModal(world, modal, hover);
+        if (!gated && pointer->focused != hover && pointer->focused.valid() &&
             world.alive(pointer->focused))
         {
             setState(world, pointer->focused, WidgetState::Normal);
@@ -410,7 +559,10 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                 return false;
             }
         }
-        pointer->focused = hover;
+        if (!gated)
+        {
+            pointer->focused = hover;
+        }
         pointer->down = true;
         pointer->press = hover;
         world.markChanged<PointerState>(canvas);
@@ -492,6 +644,29 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
                 pointer->press = ecs::Entity{};
                 world.markChanged<PointerState>(canvas);
             }
+            else if (const ecs::Entity track = scrollTrackAt(world, hit, x, y); track.valid())
+            {
+                /* A track click pages toward the click: one viewport per click,
+                   clamped to the content. */
+                ScrollView* track_view = world.get<ScrollView>(track);
+                const ComputedRect* track_rect = world.get<ComputedRect>(track);
+                if (track_view != nullptr && track_rect != nullptr)
+                {
+                    const detail::ScrollThumb thumb = detail::scrollThumbOf(*track_rect, *track_view);
+                    const float max_scroll =
+                        std::fmax(0.0F, track_view->content_height - track_rect->height);
+                    const float page = y < thumb.y ? -track_rect->height : track_rect->height;
+                    const float wanted =
+                        std::clamp(track_view->scroll + page, 0.0F, max_scroll);
+                    if (wanted != track_view->scroll)
+                    {
+                        track_view->scroll = wanted;
+                        world.markChanged<ScrollView>(track);
+                    }
+                }
+                pointer->press = ecs::Entity{};
+                world.markChanged<PointerState>(canvas);
+            }
         }
         drag->pressed = true;
         drag->dragging = false;
@@ -553,7 +728,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
             }
             setState(world, press, press == hover
                                       ? WidgetState::Hovered
-                                      : (press == pointer->focused ? WidgetState::Focused
+                                      : (press == pointer->focused ? focusState(*pointer)
                                                                    : WidgetState::Normal));
             if (!refresh())
             {
@@ -569,7 +744,7 @@ bool updateInput(ecs::World& world, ecs::Entity canvas, float x, float y, bool d
         setState(world, pointer->press,
                  pointer->press == hover
                      ? WidgetState::Pressed
-                     : (pointer->press == pointer->focused ? WidgetState::Focused
+                     : (pointer->press == pointer->focused ? focusState(*pointer)
                                                            : WidgetState::Normal));
         if (!refresh())
         {
@@ -739,8 +914,10 @@ bool focusNext(ecs::World& world, ecs::Entity canvas, bool backwards)
     {
         return false;
     }
+    /* An active modal traps Tab: traversal runs over its subtree only. */
+    const ecs::Entity modal = activeModal(world, canvas);
     std::vector<ecs::Entity> focusable;
-    collectFocusable(world, canvas, focusable, 0U);
+    collectFocusable(world, modal.valid() ? modal : canvas, focusable, 0U);
     if (focusable.empty())
     {
         return false;
@@ -778,10 +955,12 @@ bool focusNext(ecs::World& world, ecs::Entity canvas, bool backwards)
             }
         }
         pointer->focused = target;
+        /* Tab is the keyboard: the new focus wears :focus-visible. */
+        pointer->focus_visible = true;
         world.markChanged<PointerState>(canvas);
     }
-    setState(world, target,
-             pointer->hover == target ? WidgetState::Hovered : WidgetState::Focused);
+    setState(world, target, pointer->hover == target ? WidgetState::Hovered
+                                                     : focusState(*pointer));
     return true;
 }
 

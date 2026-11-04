@@ -6,6 +6,7 @@
 
 #include <resonate/hierarchy/tree.h>
 #include <resonate/ui/hit_test.h>
+#include <resonate/ui/input.h>
 
 #include "resonate.ui/components.gen.h"
 
@@ -33,6 +34,13 @@ std::vector<ecs::Entity>& scratch()
 ecs::Entity eventTarget(ecs::World& world, ecs::Entity canvas, float x, float y)
 {
     ecs::Entity hit = hitTest(world, canvas, x, y);
+    /* An active modal owns the pointer: a point outside its subtree reaches
+       nothing. */
+    const ecs::Entity modal = activeModal(world, canvas);
+    if (modal.valid() && !insideModal(world, modal, hit))
+    {
+        return ecs::Entity{};
+    }
     for (std::uint32_t depth = 0U; hit.valid() && depth <= hierarchy::kMaxDepth; ++depth)
     {
         const Input* input = world.get<Input>(hit);

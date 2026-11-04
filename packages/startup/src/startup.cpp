@@ -502,9 +502,19 @@ struct UiFrame
                 {
                     if (frame->input->key_pressed(frame->input->self, caret_key.key) != 0)
                     {
-                        (void)ui::moveCaret(world, frame->canvas,
-                                            ctrl ? caret_key.word : caret_key.plain, shift);
-                        text_activity = true;
+                        if (ui::moveCaret(world, frame->canvas,
+                                          ctrl ? caret_key.word : caret_key.plain, shift))
+                        {
+                            text_activity = true;
+                        }
+                        else if (caret_key.key == RESONATE_KEY_LEFT ||
+                                 caret_key.key == RESONATE_KEY_RIGHT)
+                        {
+                            /* The caret is not on a text field: a focused slider
+                               takes the horizontal arrows. */
+                            (void)ui::stepSlider(world, frame->canvas,
+                                                 caret_key.key == RESONATE_KEY_RIGHT);
+                        }
                     }
                 }
                 if (ctrl &&

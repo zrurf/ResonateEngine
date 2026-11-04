@@ -204,7 +204,11 @@ TEST_CASE("ui input: Tab moves focus in tree order and wraps", "[ui][input]")
 
     REQUIRE(resonate::ui::focusNext(fixture.world, fixture.root, false));
     CHECK(pointer->focused == fixture.buttons[0]);
-    CHECK(fixture.world.get<Input>(fixture.buttons[0])->state == WidgetState::Focused);
+    /* Tab is keyboard focus: the state carries the :focus-visible layer, and
+       the plain :focus rule still applies underneath (this sheet has no
+       :focus-visible rule). */
+    CHECK(fixture.world.get<Input>(fixture.buttons[0])->state ==
+          WidgetState::FocusedVisible);
     CHECK(near(fixture.red(fixture.buttons[0]), 0.7F));
 
     /* The disabled button's non-focusable Input is skipped. */
@@ -520,6 +524,56 @@ TEST_CASE("ui input: dragging the scrollbar thumb moves the scroll", "[ui][input
     const resonate::ui::Input* first_row = world.get<resonate::ui::Input>(rows[0]);
     REQUIRE(first_row != nullptr);
     CHECK_FALSE(first_row->activated);
+}
+
+TEST_CASE("ui input: a scrollbar track click pages toward the click", "[ui][input]")
+{
+    const char* const text = R"xml(<document version="1" schemas="resonate.ui">
+  <Screen key="hud">
+    <Scroll key="list" x="0" y="0" width="100" height="100"
+            direction="Column" align="Stretch">
+      <Button key="row0" height="40" color="0.1 0.1 0.1 1"/>
+      <Button key="row1" height="40" color="0.1 0.1 0.1 1"/>
+      <Button key="row2" height="40" color="0.1 0.1 0.1 1"/>
+      <Button key="row3" height="40" color="0.1 0.1 0.1 1"/>
+    </Scroll>
+  </Screen>
+</document>)xml";
+    World world{resonate::systemAllocator()};
+    REQUIRE(resonate::hierarchy::registerComponents(world));
+    REQUIRE(resonate::ui::registerComponents(world));
+    std::vector<resonate::dom::Diagnostic> diagnostics;
+    auto document = resonate::dom::Document::parse(text, &resonate::ui::documentSchema(),
+                                                   diagnostics);
+    REQUIRE(document != nullptr);
+    CHECK(diagnostics.empty());
+    const Entity root = resonate::ui::instantiate(world, *document);
+    REQUIRE(root.valid());
+    REQUIRE(resonate::ui::layout(world, root, 200.0F, 200.0F));
+    const Entity list = resonate::hierarchy::children(world, root)[0];
+    const resonate::ui::ScrollView* view = world.get<resonate::ui::ScrollView>(list);
+    REQUIRE(view != nullptr);
+    CHECK(near(view->scroll, 0.0F));
+
+    /* The thumb starts at the top; a click below it pages down by one viewport,
+       clamped to the 60 px of range. */
+    REQUIRE(resonate::ui::updateInput(world, root, 95.0F, 80.0F, true));
+    view = world.get<resonate::ui::ScrollView>(list);
+    CHECK(near(view->scroll, 60.0F));
+
+    /* The click belonged to the bar: no row was activated. */
+    const auto rows = resonate::hierarchy::children(world, list);
+    REQUIRE(rows.size() == 4U);
+    const resonate::ui::Input* first_row = world.get<resonate::ui::Input>(rows[0]);
+    REQUIRE(first_row != nullptr);
+    REQUIRE(resonate::ui::updateInput(world, root, 95.0F, 80.0F, false));
+    CHECK_FALSE(first_row->activated);
+
+    /* The thumb now sits at the bottom; a click above it pages back up. */
+    REQUIRE(resonate::ui::updateInput(world, root, 95.0F, 10.0F, true));
+    view = world.get<resonate::ui::ScrollView>(list);
+    CHECK(near(view->scroll, 0.0F));
+    REQUIRE(resonate::ui::updateInput(world, root, 95.0F, 10.0F, false));
 }
 
 TEST_CASE("ui input: the cursor follows the widget and the gesture", "[ui][input]")
