@@ -54,6 +54,7 @@
 #include <resonate/ui/string_table.h>
 #include <resonate/ui/style.h>
 #include <resonate/ui/text_runtime.h>
+#include <resonate/ui/tooltip.h>
 #include <resonate/ui/transition.h>
 #include <resonate/window/input.h>
 #include <resonate/window/session.hpp>
@@ -367,6 +368,8 @@ struct UiFrame
     ui::TextRuntime* text = nullptr;
     /* Animated state changes advance before layout each frame. */
     ui::TransitionSystem* transitions = nullptr;
+    /* The dwell timer of the hovered widget's tooltip; also before layout. */
+    ui::TooltipSystem* tooltips = nullptr;
     /* The field the platform editor mirrored on the previous frame, so a field
        that takes focus fills the editor once — a direct move between fields
        must not leave the previous field's buffer behind. */
@@ -402,9 +405,10 @@ struct UiFrame
         }
         frame->input_clock += delta_seconds;
         bool text_activity = false;
+        /* The pointer sample the input system and the tooltip dwell share. */
+        ResonateVec2 position{};
         if (frame->input != nullptr)
         {
-            ResonateVec2 position{};
             frame->input->pointer_position(frame->input->self, &position);
             const bool down =
                 frame->input->mouse_down(frame->input->self, RESONATE_MOUSE_LEFT) != 0;
@@ -690,6 +694,12 @@ struct UiFrame
             {
                 std::fprintf(stderr, "resonate: ui dropdown: %s\n", error.c_str());
             }
+        }
+        /* The dwell is sampled after the pointer's target: a tooltip that just
+           appeared is placed and laid out in this same frame. */
+        if (frame->tooltips != nullptr)
+        {
+            frame->tooltips->advance(world, frame->canvas, position.x, position.y, delta_seconds);
         }
         ui::layout(world, frame->canvas, static_cast<float>(width), static_cast<float>(height));
     }
@@ -1578,6 +1588,7 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
     /* Bound to the world inside the systems hook; the frame keeps the raw
        pointer, so the owner lives as long as the run. */
     std::unique_ptr<ui::TransitionSystem> ui_transitions;
+    std::unique_ptr<ui::TooltipSystem> ui_tooltips;
     const EngineSystemDesc ui_desc{"ui.layout", RESONATE_STAGE_LATE_UPDATE, &UiFrame::invoke,
                                    &ui_frame};
 #if defined(RESONATE_WITH_CSHARP)
@@ -1667,6 +1678,12 @@ int run(const std::vector<std::string>& arguments, const char* default_title,
             if (ui_transitions->bind(world))
             {
                 ui_frame.transitions = ui_transitions.get();
+            }
+            ui_frame.tooltips = nullptr;
+            ui_tooltips = std::make_unique<ui::TooltipSystem>();
+            if (ui_tooltips->bind(world))
+            {
+                ui_frame.tooltips = ui_tooltips.get();
             }
             /* Picture images: every file under content/ui/images registers
                under its file name; sorted, so the ids are deterministic. */

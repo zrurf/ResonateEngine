@@ -24,12 +24,12 @@ void applyStateStyles(ecs::World& world, ecs::Entity entity, std::uint32_t state
     }
     const std::size_t count = world.blobSize(styles->records) / sizeof(StateStyleRecord);
 
-    /* A widget carrying Transition animates the first vec4 property a state
+    /* A widget carrying StyleTransition animates the first vec4 property a state
        override changes instead of jumping: the target is recorded here and the
        transition system walks the value over, starting from what is on
        screen. The record itself is not written, so the old value holds until
        the transition starts. */
-    const Transition* transition = world.get<Transition>(entity);
+    const StyleTransition* transition = world.get<StyleTransition>(entity);
     const bool animates = transition != nullptr && transition->duration_ms > 0U;
     ecs::ComponentIndex tween_component = ecs::kInvalidComponent;
     std::uint32_t tween_offset = 0U;

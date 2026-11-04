@@ -128,12 +128,18 @@ class DisplayList
 
     static Clip intersect(const Clip& outer, float x, float y, float width, float height);
     static bool visible(const Clip& clip, float x, float y, float width, float height);
-    bool paint(ecs::World& world, ecs::Entity entity, std::uint32_t depth, const Clip& clip);
+    /* `defer_tooltips` records a Tooltip subtree instead of painting it in
+       place; the root walk sets it, and the overlay pass paints each recorded
+       tooltip unclipped after the tree. */
+    bool paint(ecs::World& world, ecs::Entity entity, std::uint32_t depth, const Clip& clip,
+               bool defer_tooltips);
     friend bool buildDisplayList(ecs::World& world, ecs::Entity root, DisplayList& out);
 
     std::vector<Quad> quads_;
     std::vector<TextRun> texts_;
     std::vector<OrderEntry> order_;
+    /* Tooltip roots met during the walk, painted after it. */
+    std::vector<ecs::Entity> tooltips_;
     ecs::Entity focused_{};
     ecs::Entity blink_source_{};
 };

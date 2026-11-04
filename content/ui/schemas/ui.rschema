@@ -395,18 +395,31 @@
     <field name="value" type="f32" default="0.0"/>
   </component>
 
+  <!-- Marks a node as the tooltip of its parent: the node starts hidden and
+       out of flow, and after the pointer dwells on the parent for `delay_ms`
+       it is shown at the pointer plus the offsets, clamped to the canvas and
+       painted over the whole tree. The text is the node's own Text; the
+       display list defers the subtree, and hit testing passes through it. -->
+  <component name="Tooltip" version="1">
+    <field name="delay_ms" type="u32" default="500"/>
+    <field name="offset_x" type="f32" default="12"/>
+    <field name="offset_y" type="f32" default="18"/>
+  </component>
+
   <!-- The document key an instantiated widget was authored under, hashed, so
        application code reaches a named widget after the document is gone. -->
   <component name="WidgetKey" version="1" derived="true">
     <field name="hash" type="u64"/>
   </component>
 
-  <!-- Animates state changes: a widget carrying Transition walks a property
-       override from the value on screen to the state's value instead of
-       jumping, after `delay_ms` and along `ease`. One property animates per
+  <!-- Animates state-style changes: a widget carrying StyleTransition walks a
+       property override from the value on screen to the state's value instead
+       of jumping, after `delay_ms` and along `ease`. One property animates per
        widget — the first vec4 field a state overrides; the rest still jump.
-       Authored through style rules like any other component. -->
-  <component name="Transition" version="1">
+       Authored through style rules like any other component. (The animation
+       module owns the node type named Transition; a document element cannot
+       be both.) -->
+  <component name="StyleTransition" version="1">
     <field name="duration_ms" type="u32" default="120"/>
     <field name="delay_ms" type="u32" default="0"/>
     <field name="ease" type="Ease" default="Out"/>

@@ -7,7 +7,7 @@
 namespace resonate::ui
 {
 
-/* Advances the animated state changes: a widget carrying Transition walks the
+/* Advances the animated state changes: a widget carrying StyleTransition walks the
    property a state style overrode from the value on screen to the state's
    value, after the authored delay and along its easing curve. One instance per
    world: bind once, advance every frame before layout. */

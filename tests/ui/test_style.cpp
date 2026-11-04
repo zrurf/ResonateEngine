@@ -392,7 +392,7 @@ std::string transitionSheet(const std::string& transition_attributes,
            "        <Background " +
            normal +
            "/>\n"
-           "        <Transition " +
+           "        <StyleTransition " +
            transition_attributes +
            "/>\n"
            "      </StyleRule>\n"

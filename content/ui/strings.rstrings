@@ -3,6 +3,9 @@
 <strings locale="zh-Hans">
   <entry key="ui.demo.title">动作演示</entry>
   <entry key="ui.demo.action">开始游戏</entry>
+  <entry key="ui.demo.action_tip">点击开始一段新的游戏</entry>
+  <entry key="editor.tool.open">打开场景</entry>
+  <entry key="editor.tool.save">保存场景</entry>
 
   <!-- The editor's runtime messages. Code composes them with the object name
        it reports; the properties and axes name the undo entries. -->

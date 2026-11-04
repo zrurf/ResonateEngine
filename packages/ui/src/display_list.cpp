@@ -55,11 +55,18 @@ bool DisplayList::visible(const Clip& clip, float x, float y, float width, float
 }
 
 bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t depth,
-                        const Clip& outer)
+                        const Clip& outer, bool defer_tooltips)
 {
     if (depth > hierarchy::kMaxDepth)
     {
         return report(world, entity, "sits below the UI tree's depth limit");
+    }
+    /* A tooltip floats over everything it covers: the walk records it and the
+       overlay pass paints it after the tree, unclipped. */
+    if (defer_tooltips && world.get<Tooltip>(entity) != nullptr)
+    {
+        tooltips_.push_back(entity);
+        return true;
     }
     /* Clips travel with every draw so a rasterizer can confine it. */
     const auto clip_of = [](const Clip& clip) -> ClipRect
@@ -521,7 +528,7 @@ bool DisplayList::paint(ecs::World& world, ecs::Entity entity, std::uint32_t dep
     for (std::size_t index = start; index < end; ++index)
     {
         const ecs::Entity child = order_[index].entity;
-        if (!paint(world, child, depth + 1U, clip))
+        if (!paint(world, child, depth + 1U, clip, defer_tooltips))
         {
             return false;
         }
@@ -593,6 +600,7 @@ void DisplayList::clear()
     quads_.clear();
     texts_.clear();
     order_.clear();
+    tooltips_.clear();
     focused_ = ecs::Entity{};
 }
 
@@ -630,7 +638,19 @@ bool buildDisplayList(ecs::World& world, ecs::Entity root, DisplayList& out)
     {
         out.focused_ = pointer->focused;
     }
-    return out.paint(world, root, 0U, DisplayList::Clip{});
+    if (!out.paint(world, root, 0U, DisplayList::Clip{}, true))
+    {
+        return false;
+    }
+    /* Tooltips paint last, with nothing clipping them. */
+    for (const ecs::Entity tooltip : out.tooltips_)
+    {
+        if (!out.paint(world, tooltip, 0U, DisplayList::Clip{}, false))
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace resonate::ui

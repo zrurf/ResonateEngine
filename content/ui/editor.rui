@@ -18,15 +18,29 @@
       <Button key="tb-open" class="tool" width="24" height="24">
         <Icon key="tb-open-icon" class="icon" x="4" y="4" width="16" height="16"
               icon="folder-open"/>
+        <Label key="tb-open-tip" class="tooltip" width="64" height="22"
+               text="#editor.tool.open">
+          <Tooltip/>
+        </Label>
       </Button>
       <Button key="tb-save" class="tool" width="24" height="24">
         <Icon key="tb-save-icon" class="icon" x="4" y="4" width="16" height="16" icon="save"/>
+        <Label key="tb-save-tip" class="tooltip" width="64" height="22"
+               text="#editor.tool.save">
+          <Tooltip/>
+        </Label>
       </Button>
       <Button key="tb-undo" class="tool" width="24" height="24">
         <Icon key="tb-undo-icon" class="icon" x="4" y="4" width="16" height="16" icon="undo-2"/>
+        <Label key="tb-undo-tip" class="tooltip" width="48" height="22" text="#editor.undo">
+          <Tooltip/>
+        </Label>
       </Button>
       <Button key="tb-redo" class="tool" width="24" height="24">
         <Icon key="tb-redo-icon" class="icon" x="4" y="4" width="16" height="16" icon="redo-2"/>
+        <Label key="tb-redo-tip" class="tooltip" width="48" height="22" text="#editor.redo">
+          <Tooltip/>
+        </Label>
       </Button>
       <Box key="tb-sep-edit" class="separator" width="1" height="18"/>
       <Button key="tb-duplicate" class="tool" width="24" height="24">

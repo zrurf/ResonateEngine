@@ -59,6 +59,13 @@
     <StyleRule selector=".label">
       <Text text_color="var(--text)"/>
     </StyleRule>
+    <!-- A tooltip node: a small floating box; the runtime places and shows it. -->
+    <StyleRule selector=".tooltip">
+      <Background color="var(--header)" border_color="var(--border-strong)" border_width="1"
+                  radius="var(--radius)"/>
+      <Text font_size="var(--font-ui)" text_color="var(--text)" v_align="Middle"
+            padding_left="8" ellipsis="true"/>
+    </StyleRule>
     <StyleRule selector=".label-dim">
       <Text text_color="var(--text-dim)"/>
     </StyleRule>
@@ -108,7 +115,7 @@
     <StyleRule selector=".field">
       <Background color="var(--field)" border_color="var(--border)" border_width="0"
                   radius="var(--radius-sm)"/>
-      <Transition duration_ms="100" ease="Out"/>
+      <StyleTransition duration_ms="100" ease="Out"/>
     </StyleRule>
     <StyleRule selector=".field:hover">
       <Background border_color="var(--border-strong)"/>
@@ -119,7 +126,7 @@
     <StyleRule selector=".button">
       <Background color="var(--surface)" border_color="var(--border)" border_width="1"
                   radius="var(--radius-sm)"/>
-      <Transition duration_ms="100" ease="Out"/>
+      <StyleTransition duration_ms="100" ease="Out"/>
     </StyleRule>
     <StyleRule selector=".button:hover">
       <Background color="var(--hover)"/>
@@ -130,7 +137,7 @@
     <StyleRule selector=".tool">
       <Background color="0 0 0 0" border_color="var(--border)" border_width="0"
                   radius="var(--radius-sm)"/>
-      <Transition duration_ms="100" ease="Out"/>
+      <StyleTransition duration_ms="100" ease="Out"/>
     </StyleRule>
     <StyleRule selector=".tool:hover">
       <Background color="var(--hover)"/>
@@ -140,7 +147,7 @@
     </StyleRule>
     <StyleRule selector=".row">
       <Background color="var(--panel)"/>
-      <Transition duration_ms="100" ease="Out"/>
+      <StyleTransition duration_ms="100" ease="Out"/>
     </StyleRule>
     <StyleRule selector=".row:hover">
       <Background color="var(--hover)"/>
@@ -150,7 +157,7 @@
     </StyleRule>
     <StyleRule selector=".outliner-row">
       <Background color="var(--panel)"/>
-      <Transition duration_ms="100" ease="Out"/>
+      <StyleTransition duration_ms="100" ease="Out"/>
     </StyleRule>
     <StyleRule selector=".outliner-row:hover">
       <Background color="var(--hover)"/>

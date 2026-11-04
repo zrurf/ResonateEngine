@@ -472,6 +472,19 @@
       ]
     },
     {
+      "name": "StyleTransition",
+      "kind": "component",
+      "version": 1,
+      "shape": [
+        "component StyleTransition version 1",
+        "  size 12 align 4",
+        "  field duration_ms u32 @0 size 4 default=120",
+        "  field delay_ms u32 @4 size 4 default=0",
+        "  field ease resonate.ui.Ease @8 size 1 default=Out",
+        "  enum Ease u8 values Linear=0, In=1, Out=2, InOut=3"
+      ]
+    },
+    {
       "name": "Tab",
       "kind": "component",
       "version": 1,
@@ -571,16 +584,15 @@
       ]
     },
     {
-      "name": "Transition",
+      "name": "Tooltip",
       "kind": "component",
       "version": 1,
       "shape": [
-        "component Transition version 1",
+        "component Tooltip version 1",
         "  size 12 align 4",
-        "  field duration_ms u32 @0 size 4 default=120",
-        "  field delay_ms u32 @4 size 4 default=0",
-        "  field ease resonate.ui.Ease @8 size 1 default=Out",
-        "  enum Ease u8 values Linear=0, In=1, Out=2, InOut=3"
+        "  field delay_ms u32 @0 size 4 default=500",
+        "  field offset_x f32 @4 size 4 default=12",
+        "  field offset_y f32 @8 size 4 default=18"
       ]
     },
     {

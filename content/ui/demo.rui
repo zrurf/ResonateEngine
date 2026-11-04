@@ -42,6 +42,10 @@
       <Button key="action" name="Action" class="action" width="140" height="36">
         <Label key="action-label" text="#ui.demo.action" font_size="16" align="Center"
                x="10" y="7" width="120" height="24" color="0 0 0 0"/>
+        <Label key="action-tip" class="tooltip" width="136" height="22"
+               text="#ui.demo.action_tip">
+          <Tooltip/>
+        </Label>
       </Button>
       <Picture key="icon" name="Icon" path="logo.png" x="276" y="96" width="48" height="48"
                position="Absolute"/>

@@ -1561,6 +1561,25 @@ bool applyComponents(World& world, const dom::Document& document, dom::NodeHandl
     {
         return report(world, document, node, "ComputedRect could not be attached");
     }
+    /* A tooltip is placed by the runtime, never by the flow: it is absolute,
+       anchored at its parent's origin, and starts hidden. */
+    if (world.get<Tooltip>(entity) != nullptr)
+    {
+        if (RectTransform* transform = world.get<RectTransform>(entity))
+        {
+            transform->position = PositionMode::Absolute;
+            transform->anchor_min = Vec2{0.0F, 0.0F};
+            transform->anchor_max = Vec2{0.0F, 0.0F};
+        }
+        if (Shown* shown = world.get<Shown>(entity))
+        {
+            shown->shown = false;
+        }
+        else
+        {
+            (void)world.add(entity, Shown{false});
+        }
+    }
     if (entity == bindings.canvas)
     {
         bindings.data_component = ecs::ComponentTraits<DataContext>::index;

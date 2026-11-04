@@ -42,6 +42,13 @@ ecs::Entity hit(ecs::World& world, ecs::Entity entity, float x, float y, std::ui
         return ecs::Entity{};
     }
 
+    /* A tooltip is for reading, not for pointing: a hit passes through it to
+       whatever it covers. */
+    if (world.get<Tooltip>(entity) != nullptr)
+    {
+        return ecs::Entity{};
+    }
+
     /* A ScrollView clips its subtree: a point outside its viewport reaches
        neither the widget itself nor anything scrolled under it. */
     const ComputedRect* entity_rect = world.get<ComputedRect>(entity);
